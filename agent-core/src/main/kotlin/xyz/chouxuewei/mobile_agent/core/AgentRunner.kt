@@ -19,10 +19,10 @@ data class AgentRunRequest(
     val stepTimeoutMs: Long = 120_000,
 ) {
     init {
-        require(taskId.isNotBlank()) { "任务 ID 不能为空" }
-        require(instruction.isNotBlank()) { "任务指令不能为空" }
-        require(maxSteps in 1..999) { "步骤上限必须在 1..100 之间" }
-        require(stepTimeoutMs in 100..300_000) { "单步超时必须在 100..300000 毫秒之间" }
+        require(taskId.isNotBlank()) { localizedText("任务 ID 不能为空", "Task ID cannot be empty.") }
+        require(instruction.isNotBlank()) { localizedText("任务指令不能为空", "Task instructions cannot be empty.") }
+        require(maxSteps in 1..999) { localizedText("步骤上限必须在 1..100 之间", "The step limit must be between 1 and 100.") }
+        require(stepTimeoutMs in 100..300_000) { localizedText("单步超时必须在 100..300000 毫秒之间", "The per-step timeout must be between 100 and 300000 milliseconds.") }
     }
 }
 
@@ -40,7 +40,7 @@ data class AgentRunState(
     val mode: ExecutionMode? = null,
     val status: TaskStatus? = null,
     val stepsExecuted: Int = 0,
-    val message: String = "尚未运行任务",
+    val message: String = localizedText("尚未运行任务", "No task has run yet"),
     val observation: Observation? = null,
 ) {
     val isRunning: Boolean
@@ -67,25 +67,25 @@ class AgentRunner(
             return AgentRunResult.Busy(activeTaskId ?: "unknown")
         }
         activeTaskId = request.taskId
-        publish(request, TaskStatus.CREATED, 0, "正在准备手机操作", observation = null)
+        publish(request, TaskStatus.CREATED, 0, localizedText("正在准备手机操作", "Preparing phone operation"), observation = null)
         var session: ExecutionSession? = null
         try {
             saveTask(request, TaskStatus.CREATED)
-            publish(request, TaskStatus.CREATED, 0, "正在启动手机操作")
+            publish(request, TaskStatus.CREATED, 0, localizedText("正在启动手机操作", "Starting phone operation"))
             val opened = device.openSession(request.mode)
             if (opened !is DeviceResult.Success) {
                 return persist(request, AgentRunResult.Failed(opened.reason(), 0))
             }
             session = opened.value
             saveTask(request, TaskStatus.RUNNING)
-            publish(request, TaskStatus.RUNNING, 0, "手机操作已开始")
+            publish(request, TaskStatus.RUNNING, 0, localizedText("手机操作已开始", "Phone operation started"))
 
             var outcome = runLoop(request, session)
             val closeResult = device.closeSession(session.id)
             session = null
             if (closeResult !is DeviceResult.Success) {
                 outcome = AgentRunResult.Failed(
-                    userFacingMessage(closeResult.reason(), "手机操作未能正常结束"),
+                    userFacingMessage(closeResult.reason(), localizedText("手机操作未能正常结束", "Phone operation did not end normally")),
                     outcome.steps(),
                 )
             }
@@ -93,15 +93,15 @@ class AgentRunner(
         } catch (_: CancellationException) {
             val result = AgentRunResult.Cancelled(mutableState.value.stepsExecuted)
             withContext(NonCancellable) {
-                saveTask(request, TaskStatus.CANCELLED, "任务已取消")
+                saveTask(request, TaskStatus.CANCELLED, localizedText("任务已取消", "Task cancelled"))
             }
-            publish(request, TaskStatus.CANCELLED, result.stepsExecuted, "任务已取消")
+            publish(request, TaskStatus.CANCELLED, result.stepsExecuted, localizedText("任务已取消", "Task cancelled"))
             return result
         } catch (error: Exception) {
             return persist(
                 request,
                 AgentRunResult.Failed(
-                    userFacingMessage(error, "任务未完成，请重试"),
+                    userFacingMessage(error, localizedText("任务未完成，请重试", "The task was not completed. Please try again.")),
                     mutableState.value.stepsExecuted,
                 ),
             )
@@ -125,11 +125,17 @@ class AgentRunner(
                     runStep(request, session, stepIndex, recentResults)
                 }
             } catch (_: TimeoutCancellationException) {
-                AgentRunResult.Failed("手机操作超时，已完成 $stepIndex 个动作", stepIndex)
+                AgentRunResult.Failed(
+                    localizedText(
+                        "手机操作超过 ${request.stepTimeoutMs} 毫秒未完成，已完成 $stepIndex 个动作",
+                        "Phone operation did not finish within ${request.stepTimeoutMs} ms; $stepIndex actions completed.",
+                    ),
+                    stepIndex,
+                )
             }
             if (outcome != null) return outcome
         }
-        return AgentRunResult.Failed("已达到操作次数上限，任务仍未完成", request.maxSteps)
+        return AgentRunResult.Failed(localizedText("已达到操作次数上限，任务仍未完成", "The action limit was reached before the task completed"), request.maxSteps)
     }
 
     private suspend fun runStep(
@@ -138,11 +144,11 @@ class AgentRunner(
         stepIndex: Int,
         recentResults: MutableList<ActionResult>,
     ): AgentRunResult? {
-        publish(request, TaskStatus.RUNNING, stepIndex, "正在识别手机界面")
+        publish(request, TaskStatus.RUNNING, stepIndex, localizedText("正在识别手机界面", "Inspecting the phone screen"))
         val observed = device.observe(session.id)
         if (observed !is DeviceResult.Success) {
             return AgentRunResult.Failed(
-                userFacingMessage(observed.reason(), "无法识别手机界面，请重试"),
+                userFacingMessage(observed.reason(), localizedText("无法识别手机界面，请重试", "Could not inspect the phone screen. Please try again.")),
                 stepIndex,
             )
         }
@@ -151,7 +157,7 @@ class AgentRunner(
             request,
             TaskStatus.RUNNING,
             stepIndex,
-            "正在分析下一步操作",
+            localizedText("正在分析下一步操作", "Analyzing the next action"),
             observation,
         )
         val decision = model.decide(
@@ -182,7 +188,7 @@ class AgentRunner(
                 )
                 if (result !is ActionResult.Performed) {
                     AgentRunResult.Failed(
-                        userFacingMessage(result.reason(), "手机操作未完成，请重试"),
+                        userFacingMessage(result.reason(), localizedText("手机操作未完成，请重试", "Phone operation was not completed. Please try again.")),
                         stepIndex + 1,
                     )
                 } else {
@@ -209,8 +215,8 @@ class AgentRunner(
                 publish(request, TaskStatus.FAILED, result.stepsExecuted, result.reason)
             }
             is AgentRunResult.Cancelled -> {
-                saveTask(request, TaskStatus.CANCELLED, "任务已取消")
-                publish(request, TaskStatus.CANCELLED, result.stepsExecuted, "任务已取消")
+                saveTask(request, TaskStatus.CANCELLED, localizedText("任务已取消", "Task cancelled"))
+                publish(request, TaskStatus.CANCELLED, result.stepsExecuted, localizedText("任务已取消", "Task cancelled"))
             }
             is AgentRunResult.Busy -> Unit
         }
@@ -264,28 +270,28 @@ class AgentRunner(
     }
 
     private fun Action.progressText(): String = when (this) {
-        is Action.Tap -> "正在点击目标位置"
-        is Action.LongPress -> "正在长按目标位置"
-        is Action.Swipe -> "正在滑动屏幕"
-        is Action.InputText -> "输入文本"
-        is Action.PerformNodeAction -> "正在操作界面元素"
-        is Action.MultiStrokeGesture -> "正在执行复杂触控"
-        is Action.PressKey -> "正在执行系统导航"
-        is Action.OpenApp -> "正在打开应用"
-        is Action.Wait -> "正在等待界面响应"
-        Action.EnableNodeAccess -> "正在准备界面识别"
+        is Action.Tap -> localizedText("正在点击目标位置", "Tapping target position")
+        is Action.LongPress -> localizedText("正在长按目标位置", "Long-pressing target position")
+        is Action.Swipe -> localizedText("正在滑动屏幕", "Swiping the screen")
+        is Action.InputText -> localizedText("输入文本", "Enter text")
+        is Action.PerformNodeAction -> localizedText("正在操作界面元素", "Operating a screen element")
+        is Action.MultiStrokeGesture -> localizedText("正在执行复杂触控", "Running complex touch gesture")
+        is Action.PressKey -> localizedText("正在执行系统导航", "Running system navigation")
+        is Action.OpenApp -> localizedText("正在打开应用", "Opening app")
+        is Action.Wait -> localizedText("正在等待界面响应", "Waiting for the screen to respond")
+        Action.EnableNodeAccess -> localizedText("正在准备界面识别", "Preparing screen inspection")
     }
 
     private fun Action.completedText(): String = when (this) {
-        is Action.Tap -> "已点击目标位置"
-        is Action.LongPress -> "已长按目标位置"
-        is Action.Swipe -> "已滑动屏幕"
-        is Action.InputText -> "已输入文本"
-        is Action.PerformNodeAction -> "已操作界面元素"
-        is Action.MultiStrokeGesture -> "已完成复杂触控"
-        is Action.PressKey -> "已完成系统导航"
-        is Action.OpenApp -> "已打开应用"
-        is Action.Wait -> "界面已响应"
-        Action.EnableNodeAccess -> "界面识别已准备完成"
+        is Action.Tap -> localizedText("已点击目标位置", "Target position tapped")
+        is Action.LongPress -> localizedText("已长按目标位置", "Target position long-pressed")
+        is Action.Swipe -> localizedText("已滑动屏幕", "Screen swiped")
+        is Action.InputText -> localizedText("已输入文本", "Text entered")
+        is Action.PerformNodeAction -> localizedText("已操作界面元素", "Screen element operated")
+        is Action.MultiStrokeGesture -> localizedText("已完成复杂触控", "Complex touch gesture completed")
+        is Action.PressKey -> localizedText("已完成系统导航", "System navigation completed")
+        is Action.OpenApp -> localizedText("已打开应用", "App opened")
+        is Action.Wait -> localizedText("界面已响应", "The screen responded")
+        Action.EnableNodeAccess -> localizedText("界面识别已准备完成", "Screen inspection is ready")
     }
 }

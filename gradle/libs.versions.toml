@@ -9,6 +9,7 @@ testRunner = "1.7.0"
 espressoCore = "3.7.0"
 lifecycleRuntimeKtx = "2.9.1"
 activityCompose = "1.10.1"
+appcompat = "1.7.1"
 # UI/Foundation/Runtime 统一到 1.7.6；旧组合在真实帧时钟下出现关闭抽屉仍占屏的布局问题。
 composeBom = "2024.12.01"
 libsu = "6.0.0"
@@ -44,6 +45,7 @@ androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-co
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
 androidx-lifecycle-service = { group = "androidx.lifecycle", name = "lifecycle-service", version.ref = "lifecycleRuntimeKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }

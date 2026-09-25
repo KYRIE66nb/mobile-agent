@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.model
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import java.io.File
 import java.net.URI
 import java.time.ZoneOffset
@@ -52,7 +53,7 @@ class IflytekSpeechTranscriptionGateway(
     )
     suspend fun transcribe(config: IflytekSpeechTranscriptionConfig, audioFile: File): String {
         val text = request(config, audioFile).trim()
-        require(text.isNotEmpty()) { "没有识别到有效语音，请重试" }
+        require(text.isNotEmpty()) { localizedText("没有识别到有效语音，请重试", "No speech was recognized. Please try again.") }
         return text
     }
 
@@ -84,7 +85,7 @@ class IflytekSpeechTranscriptionGateway(
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         sender = Thread({
                             runCatching { sendAudio(webSocket, config, audioFile) }
-                                .onFailure { fail("科大讯飞音频发送失败，请重试", it) }
+                                .onFailure { fail(localizedText("科大讯飞音频发送失败，请重试", "Failed to send audio to iFLYTEK. Please try again."), it) }
                         }, "iflytek-audio-sender").apply { start() }
                     }
 
@@ -109,19 +110,19 @@ class IflytekSpeechTranscriptionGateway(
                                 succeed()
                                 webSocket.close(1000, null)
                             }
-                        }.onFailure { fail("科大讯飞返回格式不兼容", it) }
+                        }.onFailure { fail(localizedText("科大讯飞返回格式不兼容", "The iFLYTEK response format is incompatible."), it) }
                     }
 
                     override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
                         val message = when (response?.code) {
-                            401, 403 -> "科大讯飞鉴权失败，请检查 AppID、APIKey、APISecret 和设备时间"
-                            else -> "无法连接科大讯飞语音服务，请检查网络和接口地址"
+                            401, 403 -> localizedText("科大讯飞鉴权失败，请检查 AppID、APIKey、APISecret 和设备时间", "iFLYTEK authentication failed. Check AppID, APIKey, APISecret, and device time.")
+                            else -> localizedText("无法连接科大讯飞语音服务，请检查网络和接口地址", "Could not connect to iFLYTEK speech service. Check your network and API URL.")
                         }
                         fail(message, error)
                     }
 
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                        if (!finished.get()) fail("科大讯飞语音连接提前关闭，请重试")
+                        if (!finished.get()) fail(localizedText("科大讯飞语音连接提前关闭，请重试", "The iFLYTEK speech connection closed early. Please try again."))
                     }
                 },
             )
@@ -160,7 +161,7 @@ class IflytekSpeechTranscriptionGateway(
                     put("audio", audio)
                 })
             }
-            check(webSocket.send(payload.toString())) { "WebSocket 已关闭" }
+            check(webSocket.send(payload.toString())) { localizedText("WebSocket 已关闭", "WebSocket closed") }
             position = end
             status = 1
             Thread.sleep(FRAME_INTERVAL_MILLIS)
@@ -172,12 +173,12 @@ class IflytekSpeechTranscriptionGateway(
                 put("encoding", "raw")
                 put("audio", "")
             })
-        }.toString())) { "WebSocket 已关闭" }
+        }.toString())) { localizedText("WebSocket 已关闭", "WebSocket closed") }
     }
 
     internal fun signedUrl(config: IflytekSpeechTranscriptionConfig): String {
         val uri = URI(config.endpointUrl)
-        val host = uri.host ?: error("科大讯飞接口地址缺少主机名")
+        val host = uri.host ?: error(localizedText("科大讯飞接口地址缺少主机名", "The iFLYTEK API URL is missing a host."))
         val path = uri.rawPath?.takeIf(String::isNotBlank) ?: "/"
         val date = DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC))
         val signatureOrigin = "host: $host\ndate: $date\nGET $path HTTP/1.1"
@@ -208,19 +209,19 @@ class IflytekSpeechTranscriptionGateway(
 
     private fun validate(config: IflytekSpeechTranscriptionConfig, audioFile: File) {
         require(config.endpointUrl.startsWith("ws://") || config.endpointUrl.startsWith("wss://")) {
-            "科大讯飞接口地址格式不正确"
+            localizedText("科大讯飞接口地址格式不正确", "The iFLYTEK API URL format is invalid.")
         }
-        require(config.appId.isNotBlank()) { "请填写科大讯飞 AppID" }
-        require(config.apiKey.isNotBlank()) { "请填写科大讯飞 APIKey" }
-        require(config.apiSecret.isNotBlank()) { "请填写科大讯飞 APISecret" }
-        require(audioFile.isFile && audioFile.length() > WAV_HEADER_BYTES) { "录音文件不可用，请重新录音" }
+        require(config.appId.isNotBlank()) { localizedText("请填写科大讯飞 AppID", "Enter the iFLYTEK AppID.") }
+        require(config.apiKey.isNotBlank()) { localizedText("请填写科大讯飞 APIKey", "Enter the iFLYTEK APIKey.") }
+        require(config.apiSecret.isNotBlank()) { localizedText("请填写科大讯飞 APISecret", "Enter the iFLYTEK APISecret.") }
+        require(audioFile.isFile && audioFile.length() > WAV_HEADER_BYTES) { localizedText("录音文件不可用，请重新录音", "The recording file is unavailable. Record again.") }
     }
 
     private fun iflytekError(code: Int): String = when (code) {
-        10005, 10010, 10110, 11200, 11201, 11202, 11203 -> "科大讯飞服务未授权、额度不足或配置不匹配（$code）"
-        10007, 10009, 10043, 10044 -> "科大讯飞无法识别当前音频格式（$code）"
-        10114, 10200, 10222, 10700 -> "科大讯飞服务响应超时，请重试（$code）"
-        else -> "科大讯飞语音转写失败（$code）"
+        10005, 10010, 10110, 11200, 11201, 11202, 11203 -> localizedText("科大讯飞服务未授权、额度不足或配置不匹配（$code）", "The iFLYTEK service is unauthorized, out of quota, or misconfigured ($code).")
+        10007, 10009, 10043, 10044 -> localizedText("科大讯飞无法识别当前音频格式（$code）", "iFLYTEK cannot recognize the current audio format ($code).")
+        10114, 10200, 10222, 10700 -> localizedText("科大讯飞服务响应超时，请重试（$code）", "The iFLYTEK service timed out. Please try again ($code).")
+        else -> localizedText("科大讯飞语音转写失败（$code）", "iFLYTEK speech transcription failed ($code).")
     }
 
     private companion object {

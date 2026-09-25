@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.model
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
@@ -54,7 +55,7 @@ class OpenAiCompatibleModelGatewayFactory : ModelGatewayFactory {
                 config.reasoningEffortField,
             )
             val request = ModelRequest(
-                instruction = "这是连接测试。请观察输入，只返回 needs_user，reason 简短说明已读取到的内容。不要返回设备动作。",
+                instruction = localizedText("这是连接测试。请观察输入，只返回 needs_user，reason 简短说明已读取到的内容。不要返回设备动作。", "This is a connection test. Inspect the input and return only needs_user with a brief reason confirming what you read. Do not return a device action."),
                 observation = observation ?: emptyObservation(),
                 recentResults = emptyList(),
             )
@@ -70,7 +71,7 @@ class OpenAiCompatibleModelGatewayFactory : ModelGatewayFactory {
         }
 
     private fun selectModel(requested: String?, models: List<String>): String {
-        require(models.isNotEmpty()) { "模型服务没有返回可用模型" }
+        require(models.isNotEmpty()) { localizedText("模型服务没有返回可用模型", "The model service returned no available models.") }
         if (!requested.isNullOrBlank()) {
             // 一些兼容服务会接受 local 之类的路由别名，但模型列表只返回实际后端 ID。
             return requested
@@ -92,9 +93,9 @@ class OpenAiCompatibleModelGatewayFactory : ModelGatewayFactory {
     )
 
     private fun Decision.summary(): String = when (this) {
-        is Decision.Execute -> "动作格式有效：${action.javaClass.simpleName}"
-        is Decision.Completed -> "模型返回完成：$summary"
-        is Decision.NeedsUser -> "模型返回：$reason"
+        is Decision.Execute -> localizedText("动作格式有效：${action.javaClass.simpleName}", "Valid action format: ${action.javaClass.simpleName}")
+        is Decision.Completed -> localizedText("模型返回完成：$summary", "Model completed: $summary")
+        is Decision.NeedsUser -> localizedText("模型返回：$reason", "Model response: $reason")
     }
 
     companion object {
@@ -118,12 +119,12 @@ private class OpenAiCompatibleModelGateway(
             // 停止任务和单步超时都依赖协程取消，不能把它误报成“需要用户处理”。
             throw cancelled
         } catch (error: Exception) {
-            return Decision.NeedsUser(userFacingMessage(error, "模型请求失败，请稍后重试"))
+            return Decision.NeedsUser(userFacingMessage(error, localizedText("模型请求失败，请稍后重试", "The model request failed. Please try again later.")))
         }
         return try {
             ModelDecisionParser.parse(raw, request.observation.viewport)
         } catch (error: Exception) {
-            Decision.NeedsUser("模型返回了无法识别的操作指令，请重试")
+            Decision.NeedsUser(localizedText("模型返回了无法识别的操作指令，请重试", "The model returned an unrecognized action. Please try again."))
         }
     }
 }
@@ -144,7 +145,7 @@ private class OpenAiApiClient(private val client: OkHttpClient) {
 
     suspend fun complete(config: ModelConfig, request: ModelRequest): String {
         validate(config)
-        val model = requireNotNull(config.model?.takeIf { it.isNotBlank() }) { "尚未选择模型" }
+        val model = requireNotNull(config.model?.takeIf { it.isNotBlank() }) { localizedText("尚未选择模型", "No model is selected.") }
         val payload = buildJsonObject {
             put("model", model)
             put("stream", false)
@@ -175,14 +176,14 @@ private class OpenAiApiClient(private val client: OkHttpClient) {
         val body = client.newCall(httpRequest).awaitBody()
         val choice = json.parseToJsonElement(body).jsonObject["choices"]
             ?.jsonArray?.firstOrNull()?.jsonObject
-            ?: throw IOException("模型响应缺少 choices[0]")
+            ?: throw IOException(localizedText("模型响应缺少 choices[0]", "The model response is missing choices[0]."))
         val message = choice["message"]?.jsonObject
-            ?: throw IOException("模型响应缺少 choices[0].message")
+            ?: throw IOException(localizedText("模型响应缺少 choices[0].message", "The model response is missing choices[0].message."))
         val content = message["content"]?.jsonPrimitive?.contentOrNull
         if (content.isNullOrBlank()) {
-            val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull ?: "未知"
+            val finishReason = choice["finish_reason"]?.jsonPrimitive?.contentOrNull ?: localizedText("未知", "Unknown")
             val reasoningLength = message["reasoning_content"]?.jsonPrimitive?.contentOrNull?.length ?: 0
-            throw IOException("模型最终输出为空，finish_reason=$finishReason，reasoning_chars=$reasoningLength")
+            throw IOException(localizedText("模型最终输出为空，finish_reason=$finishReason，reasoning_chars=$reasoningLength", "The final model output is empty; finish_reason=$finishReason, reasoning_chars=$reasoningLength"))
         }
         return content
     }
@@ -194,9 +195,9 @@ private class OpenAiApiClient(private val client: OkHttpClient) {
             .header("Accept", "application/json")
 
     private fun validate(config: ModelConfig) {
-        require(config.apiKey.isNotBlank()) { "尚未配置 API 密钥" }
+        require(config.apiKey.isNotBlank()) { localizedText("尚未配置 API 密钥", "No API key is configured.") }
         require(config.baseUrl.startsWith("http://") || config.baseUrl.startsWith("https://")) {
-            "服务地址必须以 http:// 或 https:// 开头"
+            localizedText("服务地址必须以 http:// 或 https:// 开头", "The service URL must begin with http:// or https://.")
         }
     }
 
@@ -222,18 +223,21 @@ private class OpenAiApiClient(private val client: OkHttpClient) {
     }
 
     private fun ModelRequest.promptText(): String = buildString {
-        appendLine("用户目标：$instruction")
-        appendLine("识别结果ID：${observation.id}")
-        appendLine("屏幕：${observation.viewport.width}x${observation.viewport.height}，旋转 ${observation.rotationDegrees}°")
-        appendLine("前台包名：${observation.foregroundPackage ?: "未知"}")
-        appendLine("可见节点：")
+        appendLine(localizedText("用户目标：$instruction", "User goal: $instruction"))
+        appendLine(localizedText("识别结果ID：${observation.id}", "Observation ID: ${observation.id}"))
+        appendLine(localizedText("屏幕：${observation.viewport.width}x${observation.viewport.height}，旋转 ${observation.rotationDegrees}°", "Screen: ${observation.viewport.width}x${observation.viewport.height}, rotation ${observation.rotationDegrees}°"))
+        appendLine(
+            localizedText("前台包名：", "Foreground package: ") +
+                (observation.foregroundPackage ?: localizedText("未知", "Unknown")),
+        )
+        appendLine(localizedText("可见节点：", "Visible nodes:"))
         observation.nodes.take(80).forEach { node ->
             append("- ref=${node.ref.value}, bounds=[${node.bounds.left},${node.bounds.top}][${node.bounds.right},${node.bounds.bottom}], ")
             append("editable=${node.editable}, focused=${node.focused}, text=")
             appendLine((node.text ?: node.contentDescription ?: "").take(160))
         }
         if (recentResults.isNotEmpty()) {
-            appendLine("最近动作结果：")
+            appendLine(localizedText("最近动作结果：", "Latest action result:"))
             recentResults.takeLast(4).forEach { appendLine("- $it") }
         }
     }
@@ -251,7 +255,7 @@ private class OpenAiApiClient(private val client: OkHttpClient) {
                     val body = it.body?.string().orEmpty()
                     if (!it.isSuccessful) {
                         val reason = serverError(body)
-                        continuation.resumeWith(Result.failure(IOException("模型服务 HTTP ${it.code}：$reason")))
+                        continuation.resumeWith(Result.failure(IOException(localizedText("模型服务 HTTP ${it.code}：$reason", "Model service HTTP ${it.code}: $reason"))))
                     } else {
                         continuation.resumeWith(Result.success(body))
                     }
@@ -264,10 +268,12 @@ private class OpenAiApiClient(private val client: OkHttpClient) {
         val root = json.parseToJsonElement(body).jsonObject
         root["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
             ?: root["detail"]?.jsonPrimitive?.contentOrNull
-    }.getOrNull()?.take(300) ?: body.take(300).ifBlank { "无错误正文" }
+    }.getOrNull()?.take(300) ?: body.take(300).ifBlank { localizedText("无错误正文", "No error body") }
 
     companion object {
-        private const val SYSTEM_PROMPT = """
+        private val SYSTEM_PROMPT: String
+            get() = localizedText(
+            """
 你是 Android 手机操作代理。你只能返回一个 JSON 对象，不能添加 Markdown 或解释文字。
 动作名称必须放在 type 字段，不能使用 action 字段。例如：
 {"type":"open_app","package_name":"com.android.settings"}
@@ -290,7 +296,32 @@ private class OpenAiApiClient(private val client: OkHttpClient) {
 completed 的 summary 不超过 80 个汉字，只概括完成证据，不罗列搜索结果标题，不在字符串内容中使用英文双引号。
 可见节点提供 bounds 时，优先点击目标文字对应矩形的中心，避免凭截图估算相邻项目的坐标。
 需要在多级页面中查找信息而“可见节点”为空时，先返回 enable_node_access，再依据下一次识别结果导航。
-"""
+            """.trimIndent(),
+            """
+You are an Android phone-operation agent. Return exactly one JSON object with no Markdown or explanatory text.
+Put the action name in the type field, never in an action field. Examples:
+{"type":"open_app","package_name":"com.android.settings"}
+{"type":"completed","summary":"Done"}
+Allowed type values and fields:
+- tap: x, y
+- long_press: x, y, duration_ms
+- swipe: start_x, start_y, end_x, end_y, duration_ms
+- input_text: text, with optional node_ref
+- press_key: key, which must be back or enter
+- open_app: package_name containing a real Android package name
+- wait: duration_ms in the range 0..5000
+- enable_node_access
+- completed: summary
+- needs_user: reason
+Coordinates must be inside the provided screen dimensions. Return only one action at a time; return needs_user when information is insufficient.
+The current observation is the only source of truth. Return completed only when the current screenshot or visible nodes directly prove the user's full goal.
+For information-reading tasks, summary must include the exact visible labels and values from the current observation. Never treat a device model, page title, or inferred value as the system version.
+If the target information is not visible yet, keep navigating. If it is unreadable or cannot be verified, return needs_user instead of guessing completion.
+Keep a completed summary under 80 words. State only the evidence of completion, do not list search-result titles, and do not use double quotes inside string values.
+When visible nodes provide bounds, prefer the center of the rectangle for the target text instead of estimating coordinates from nearby screenshot items.
+When searching through nested pages and visible nodes are empty, return enable_node_access first, then navigate from the next observation.
+            """.trimIndent(),
+        )
     }
 }
 
@@ -300,7 +331,7 @@ internal object ModelDecisionParser {
     fun parse(raw: String, viewport: Viewport): Decision {
         val value = json.parseToJsonElement(extractObject(raw)).jsonObject
         val rawType = value.string("type") ?: value.string("action") ?: value.string("status")
-            ?: error("缺少字段 type")
+            ?: error(localizedText("缺少字段 type", "Missing field: type"))
         return when (rawType.lowercase().replace('-', '_')) {
             "tap" -> Decision.Execute(Action.Tap(value.x("x", viewport), value.y("y", viewport)))
             "long_press" -> Decision.Execute(Action.LongPress(
@@ -316,60 +347,60 @@ internal object ModelDecisionParser {
                 value.duration(),
             ))
             "input_text" -> Decision.Execute(Action.InputText(
-                text = value.requiredString("text").also { require(it.length <= 2_000) { "输入文本过长" } },
+                text = value.requiredString("text").also { require(it.length <= 2_000) { localizedText("输入文本过长", "Input text is too long.") } },
                 node = value["node_ref"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                     ?.let { xyz.chouxuewei.mobile_agent.core.NodeRef(it) },
             ))
             "press_key" -> Decision.Execute(Action.PressKey(when (value.requiredString("key").lowercase()) {
                 "back" -> DeviceKey.BACK
                 "enter" -> DeviceKey.ENTER
-                else -> error("不支持的按键")
+                else -> error(localizedText("不支持的按键", "Unsupported key."))
             }))
             "open_app", "launch_app" -> Decision.Execute(Action.OpenApp(
                 AppTarget(value.requiredString("package_name")),
             ))
             "wait" -> Decision.Execute(Action.Wait(value.requiredLong("duration_ms").also {
-                require(it in 0..5_000) { "等待时间超出范围" }
+                require(it in 0..5_000) { localizedText("等待时间超出范围", "Wait duration is out of range.") }
             }))
             "enable_node_access" -> Decision.Execute(Action.EnableNodeAccess)
             "completed", "complete", "done", "finish" -> Decision.Completed(
-                value.string("summary") ?: value.string("message") ?: "任务已完成",
+                value.string("summary") ?: value.string("message") ?: localizedText("任务已完成", "Task completed"),
             )
             "needs_user", "need_user", "ask_user" -> Decision.NeedsUser(
-                value.string("reason") ?: value.string("message") ?: "需要用户处理",
+                value.string("reason") ?: value.string("message") ?: localizedText("需要用户处理", "User action required"),
             )
-            else -> error("未知动作类型")
+            else -> error(localizedText("未知动作类型", "Unknown action type"))
         }
     }
 
     private fun JsonObject.x(name: String, viewport: Viewport): Int = requiredInt(name).also {
-        require(it in 0 until viewport.width) { "$name 超出屏幕宽度" }
+        require(it in 0 until viewport.width) { localizedText("$name 超出屏幕宽度", "$name is outside the screen width.") }
     }
 
     private fun JsonObject.y(name: String, viewport: Viewport): Int = requiredInt(name).also {
-        require(it in 0 until viewport.height) { "$name 超出屏幕高度" }
+        require(it in 0 until viewport.height) { localizedText("$name 超出屏幕高度", "$name is outside the screen height.") }
     }
 
     private fun JsonObject.duration(): Int = (this["duration_ms"]?.jsonPrimitive?.intOrNull ?: 350).also {
-        require(it in 100..5_000) { "动作时长超出范围" }
+        require(it in 100..5_000) { localizedText("动作时长超出范围", "Action duration is out of range.") }
     }
 
     private fun JsonObject.requiredString(name: String): String =
-        string(name) ?: error("缺少字段 $name")
+        string(name) ?: error(localizedText("缺少字段 $name", "Missing field: $name"))
 
     private fun JsonObject.string(name: String): String? =
         this[name]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 
     private fun JsonObject.requiredInt(name: String): Int =
-        this[name]?.jsonPrimitive?.intOrNull ?: error("字段 $name 不是整数")
+        this[name]?.jsonPrimitive?.intOrNull ?: error(localizedText("字段 $name 不是整数", "Field $name is not an integer."))
 
     private fun JsonObject.requiredLong(name: String): Long =
-        this[name]?.jsonPrimitive?.longOrNull ?: error("字段 $name 不是整数")
+        this[name]?.jsonPrimitive?.longOrNull ?: error(localizedText("字段 $name 不是整数", "Field $name is not an integer."))
 
     /** 兼容模型偶尔包裹的代码块，同时仍只接受第一个完整 JSON 对象。 */
     private fun extractObject(raw: String): String {
         val start = raw.indexOf('{')
-        require(start >= 0) { "响应中没有 JSON 对象" }
+        require(start >= 0) { localizedText("响应中没有 JSON 对象", "The response contains no JSON object.") }
         var depth = 0
         var quoted = false
         var escaped = false
@@ -389,7 +420,7 @@ internal object ModelDecisionParser {
                 }
             }
         }
-        error("JSON 对象不完整")
+        error(localizedText("JSON 对象不完整", "Incomplete JSON object."))
     }
 }
 

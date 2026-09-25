@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.device.root
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -39,7 +40,7 @@ internal class RootBridge(private val context: Context) {
 
                         override fun onNullBinding(name: ComponentName) {
                             if (continuation.isActive) {
-                                continuation.resumeWithException(IllegalStateException("Root 服务未返回 Binder"))
+                                continuation.resumeWithException(IllegalStateException(localizedText("Root 服务未返回 Binder", "The Root service returned no Binder.")))
                             }
                         }
                     }
@@ -61,7 +62,7 @@ internal class RootBridge(private val context: Context) {
         }
     }
 
-    fun service(): IRootDevice = checkNotNull(remote) { "Root 连接已断开" }
+    fun service(): IRootDevice = checkNotNull(remote) { localizedText("Root 连接已断开", "Root connection disconnected.") }
 
     fun enableNodeService() = service().enableNodeService()
     fun createDisplay(surface: Surface): Int = service().createDisplay(surface)

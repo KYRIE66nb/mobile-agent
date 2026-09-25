@@ -6,6 +6,7 @@
  */
 package xyz.chouxuewei.mobile_agent.device.root
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -20,7 +21,7 @@ internal object DisplayAdapter {
     const val DENSITY = 240
 
     fun create(context: Context, surface: Surface): VirtualDisplay {
-        check(Build.VERSION.SDK_INT >= 34) { "系统原型需要 Android 14 或以上" }
+        check(Build.VERSION.SDK_INT >= 34) { localizedText("系统原型需要 Android 14 或以上", "This system prototype requires Android 14 or later.") }
         var flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
             DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION or
             DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
@@ -37,7 +38,7 @@ internal object DisplayAdapter {
         val manager = constructor.newInstance(context)
         val display = checkNotNull(manager.createVirtualDisplay(
             "MobileAgent", WIDTH, HEIGHT, DENSITY, surface, flags
-        )) { "系统未返回虚拟屏" }
+        )) { localizedText("系统未返回虚拟屏", "The system returned no virtual display.") }
         try {
             // 虚拟屏通过节点写入文字，隐藏该屏 IME，避免回退到主屏弹出键盘。
             val serviceManager = Class.forName("android.os.ServiceManager")

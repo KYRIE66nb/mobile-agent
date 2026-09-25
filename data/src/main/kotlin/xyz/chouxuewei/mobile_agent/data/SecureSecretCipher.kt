@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -24,7 +25,7 @@ internal class SecureSecretCipher(private val keyAlias: String) {
 
     fun decrypt(secret: EncryptedSecret): String {
         val key = keyStore().getKey(keyAlias, null) as? SecretKey
-            ?: error("Keystore 中不存在加密密钥")
+            ?: error(localizedText("Keystore 中不存在加密密钥", "The encryption key is missing from Keystore."))
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(
             Cipher.DECRYPT_MODE,

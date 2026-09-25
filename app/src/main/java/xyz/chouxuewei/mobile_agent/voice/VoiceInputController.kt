@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.voice
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -69,14 +70,14 @@ class VoiceInputController(
 
     fun start(target: VoiceInputTarget): Result<Unit> = runCatching {
         check(_state.value is VoiceInputState.Idle || _state.value is VoiceInputState.Failed) {
-            "已有语音输入正在处理"
+            localizedText("已有语音输入正在处理", "Another voice input is already being processed.")
         }
         val minBuffer = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
-        check(minBuffer > 0) { "当前设备不支持 16 kHz 单声道录音" }
+        check(minBuffer > 0) { localizedText("当前设备不支持 16 kHz 单声道录音", "This device does not support 16 kHz mono recording.") }
         val bufferSize = maxOf(minBuffer, FRAME_BYTES * 4)
         @Suppress("DEPRECATION")
         val created = AudioRecord(
@@ -88,7 +89,7 @@ class VoiceInputController(
         )
         check(created.state == AudioRecord.STATE_INITIALIZED) {
             created.release()
-            "无法初始化麦克风"
+            localizedText("无法初始化麦克风", "Could not initialize the microphone.")
         }
         val directory = File(appContext.cacheDir, "voice-input").apply { mkdirs() }
         val file = File(directory, "voice-${UUID.randomUUID()}.wav")
@@ -103,7 +104,7 @@ class VoiceInputController(
         check(created.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
             created.release()
             file.delete()
-            "麦克风没有开始录音"
+            localizedText("麦克风没有开始录音", "The microphone did not start recording.")
         }
         audioRecord = created
         recordingFile = file
@@ -135,7 +136,7 @@ class VoiceInputController(
             writer?.join()
             if (duration < MIN_RECORDING_MILLIS || file.length() <= WAV_HEADER_BYTES) {
                 file.delete()
-                _state.value = VoiceInputState.Failed("录音时间太短，请按住说话")
+                _state.value = VoiceInputState.Failed(localizedText("录音时间太短，请按住说话", "The recording is too short. Hold the button while speaking."))
                 return@launch
             }
             try {
@@ -159,7 +160,7 @@ class VoiceInputController(
                 onTranscript(target, text)
                 _state.value = VoiceInputState.Idle
             } catch (failure: Exception) {
-                _state.value = VoiceInputState.Failed(failure.message ?: "语音转写失败，请重试")
+                _state.value = VoiceInputState.Failed(failure.message ?: localizedText("语音转写失败，请重试", "Speech transcription failed. Please try again."))
             } finally {
                 file.delete()
             }
@@ -242,8 +243,8 @@ class VoiceInputController(
     }
 
     private fun recordingError(failure: Throwable): String = when (failure) {
-        is SecurityException -> "没有麦克风权限，请先在设置中允许录音"
-        else -> failure.message?.takeIf(String::isNotBlank) ?: "无法启动录音，请重试"
+        is SecurityException -> localizedText("没有麦克风权限，请先在设置中允许录音", "Microphone permission is required. Allow recording in Settings first.")
+        else -> failure.message?.takeIf(String::isNotBlank) ?: localizedText("无法启动录音，请重试", "Could not start recording. Please try again.")
     }
 
     private companion object {

@@ -33,7 +33,7 @@ fun interface ChatAttachmentLoader {
 }
 data class Conversation(
     val id: String,
-    val title: String = "新对话",
+    val title: String = localizedText("新对话", "New conversation"),
     val createdAt: Long,
     val updatedAt: Long = createdAt,
     val draft: String = "",
@@ -201,8 +201,8 @@ data class ContextPolicy(
     val safetyTokens: Int get() = maxOf(512, windowTokens / 100)
     val inputBudget: Int get() = windowTokens - outputReserve - safetyTokens
     fun validate() {
-        require(windowTokens in 2048..2_000_000) { "请填写模型支持的上下文长度，至少为 2048 Token" }
-        require(outputReserve in 256 until windowTokens && inputBudget >= 1024) { "最大输出过大，请减小数值或增加上下文长度" }
+        require(windowTokens in 2048..2_000_000) { localizedText("请填写模型支持的上下文长度，至少为 2048 Token", "Enter a context length supported by the model, at least 2048 tokens.") }
+        require(outputReserve in 256 until windowTokens && inputBudget >= 1024) { localizedText("最大输出过大，请减小数值或增加上下文长度", "Maximum output is too large. Reduce it or increase the context length.") }
     }
 }
 

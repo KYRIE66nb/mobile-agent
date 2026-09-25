@@ -61,6 +61,7 @@ import xyz.chouxuewei.mobile_agent.core.ToolCallRecord
 import xyz.chouxuewei.mobile_agent.core.ToolCallStatus
 import xyz.chouxuewei.mobile_agent.core.UserQuestionRequest
 import xyz.chouxuewei.mobile_agent.core.userFacingMessage
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import xyz.chouxuewei.mobile_agent.data.ModelSettings
 import xyz.chouxuewei.mobile_agent.data.SpeechSettings
 import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
@@ -442,26 +443,27 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
     private fun summaryText(conversation: Conversation?): Pair<String, String> {
         val selected = conversationId
         approvals.firstOrNull { it.conversationId == selected }?.let {
-            return (conversation?.title ?: "需要授权") to "需要授权 · ${it.actionTitle}"
+            return (conversation?.title ?: localizedText("需要授权", "Authorization required")) to localizedText("需要授权 · ${it.actionTitle}", "Authorization required · ${it.actionTitle}")
         }
         questions.firstOrNull { it.conversationId == selected }?.let {
-            return (conversation?.title ?: "等待回答") to it.question
+            return (conversation?.title ?: localizedText("等待回答", "Waiting for answer")) to it.question
         }
-        if (stopping) return (conversation?.title ?: "当前任务") to "正在停止任务…"
-        if (selected in activeConversations) return (conversation?.title ?: "当前任务") to currentHeadline()
+        if (stopping) return (conversation?.title ?: localizedText("当前任务", "Current task")) to localizedText("正在停止任务…", "Stopping task…")
+        if (selected in activeConversations) return (conversation?.title ?: localizedText("当前任务", "Current task")) to currentHeadline()
         if (selected == completionConversationId) {
             val detail = responseText.trim().lineSequence().lastOrNull()?.take(90)
-                ?.takeIf(String::isNotBlank) ?: "任务已经完成"
-            return (conversation?.title ?: "任务已完成") to detail
+                ?.takeIf(String::isNotBlank) ?: localizedText("任务已经完成", "The task is already complete")
+            return (conversation?.title ?: localizedText("任务已完成", "Task completed")) to detail
         }
-        return "悬浮助手" to "暂无进行中的任务"
+        return localizedText("悬浮助手", "Floating assistant") to localizedText("暂无进行中的任务", "No active tasks")
     }
 
     private fun currentHeadline(): String {
         val step = steps.lastOrNull()
-        if (step == null) return if (mode == null) "正在等待 AI 完成任务" else "正在准备手机操作"
-        return if (step.state == "已完成" && step.title != "结束手机操作") {
-            "${step.detail}，正在分析下一步"
+        if (step == null) return if (mode == null) localizedText("正在等待 AI 完成任务", "Waiting for AI to complete the task") else localizedText("正在准备手机操作", "Preparing phone operation")
+        // 执行记录可能来自切换系统语言之前，控制判断不能只认当前语言的展示文本。
+        return if (step.state in setOf("已完成", "Completed") && step.title !in setOf("结束手机操作", "End phone operation")) {
+            localizedText("${step.detail}，正在分析下一步", "${step.detail}, analyzing the next step")
         } else step.detail
     }
 
@@ -733,7 +735,7 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
             maximumX = maximumX.toFloat(),
             threshold = dp(FULL_DRAG_DOCK_THRESHOLD_DP).toFloat(),
         )
-        val nextHint = target?.let { "松手收起到侧边" }
+        val nextHint = target?.let { localizedText("松手收起到侧边", "Release to dock at the edge") }
         if (resizeHint != nextHint) {
             resizeHint = nextHint
             publishState()
@@ -783,8 +785,8 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
             val minThreshold = dp(MIN_RESIZE_TRANSITION_DP)
             val maxThreshold = dp(MAX_RESIZE_TRANSITION_DP)
             resizeHint = when {
-                minWidth - rawWidth >= minThreshold && minHeight - rawHeight >= minThreshold -> "松手收起为摘要"
-                rawWidth - maxWidth >= maxThreshold && rawHeight - maxHeight >= maxThreshold -> "松手打开 Mobile Agent"
+                minWidth - rawWidth >= minThreshold && minHeight - rawHeight >= minThreshold -> localizedText("松手收起为摘要", "Release to collapse to summary")
+                rawWidth - maxWidth >= maxThreshold && rawHeight - maxHeight >= maxThreshold -> localizedText("松手打开 Mobile Agent", "Release to open Mobile Agent")
                 else -> null
             }
             publishState()
@@ -820,24 +822,24 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
     private fun startVoiceInput(): Boolean {
         val id = conversationId
         if (id == null) {
-            openSpeechSettings("请先打开一段对话")
+            openSpeechSettings(localizedText("请先打开一段对话", "Open a conversation first"))
             return false
         }
         val profile = settings.selectedModel
         if (profile == null) {
-            openSpeechSettings("请先配置并选择聊天模型")
+            openSpeechSettings(localizedText("请先配置并选择聊天模型", "Configure and select a chat model first"))
             return false
         }
         if (!speechSettings.configured) {
-            openSpeechSettings("请先配置语音转写服务")
+            openSpeechSettings(localizedText("请先配置语音转写服务", "Configure a speech transcription service first"))
             return false
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            openSpeechSettings("请先允许麦克风权限")
+            openSpeechSettings(localizedText("请先允许麦克风权限", "Allow microphone permission first"))
             return false
         }
         if (!updateForegroundType(microphone = true)) {
-            openSpeechSettings("系统暂时不允许后台录音，请打开 App 后重试")
+            openSpeechSettings(localizedText("系统暂时不允许后台录音，请打开 App 后重试", "Background recording is temporarily unavailable. Open the app and try again."))
             return false
         }
         return app.voiceInput.start(
@@ -846,7 +848,7 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
             onSuccess = { true },
             onFailure = {
                 updateForegroundType(microphone = false)
-                app.chatWorkspace.error.value = it.message ?: "无法启动录音，请重试"
+                app.chatWorkspace.error.value = it.message ?: localizedText("无法启动录音，请重试", "Could not start recording. Please try again.")
                 false
             },
         )
@@ -928,24 +930,24 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
         val interactionPending = approval != null || question != null
         val channelId = if (interactionPending) INTERACTION_CHANNEL_ID else CHANNEL_ID
         val title = when {
-            voiceInputState is VoiceInputState.Recording -> "Mobile Agent 正在录音"
-            voiceInputState is VoiceInputState.Transcribing -> "Mobile Agent 正在转写语音"
-            approval != null -> "Mobile Agent 需要你的授权"
-            question != null -> "Mobile Agent 需要你的回答"
-            activeConversations.isNotEmpty() -> "Mobile Agent 正在处理任务"
-            completionHold -> "Mobile Agent 已完成任务"
-            persistentOverlay -> "Mobile Agent 悬浮助手已开启"
-            else -> "Mobile Agent 正在准备"
+            voiceInputState is VoiceInputState.Recording -> localizedText("Mobile Agent 正在录音", "Mobile Agent is recording")
+            voiceInputState is VoiceInputState.Transcribing -> localizedText("Mobile Agent 正在转写语音", "Mobile Agent is transcribing speech")
+            approval != null -> localizedText("Mobile Agent 需要你的授权", "Mobile Agent needs your authorization")
+            question != null -> localizedText("Mobile Agent 需要你的回答", "Mobile Agent needs your answer")
+            activeConversations.isNotEmpty() -> localizedText("Mobile Agent 正在处理任务", "Mobile Agent is processing a task")
+            completionHold -> localizedText("Mobile Agent 已完成任务", "Mobile Agent completed the task")
+            persistentOverlay -> localizedText("Mobile Agent 悬浮助手已开启", "Mobile Agent floating assistant is enabled")
+            else -> localizedText("Mobile Agent 正在准备", "Mobile Agent is preparing")
         }
         val content = when {
-            voiceInputState is VoiceInputState.Recording -> "松开贴边按钮后自动转写并发送"
-            voiceInputState is VoiceInputState.Transcribing -> "识别完成后会自动发送给当前模型"
+            voiceInputState is VoiceInputState.Recording -> localizedText("松开贴边按钮后自动转写并发送", "Release the edge handle to transcribe and send")
+            voiceInputState is VoiceInputState.Transcribing -> localizedText("识别完成后会自动发送给当前模型", "The transcription will be sent to the current model automatically")
             approval != null -> approval.actionTitle
             question != null -> question.question
             activeConversations.isNotEmpty() -> currentHeadline()
             completionHold -> summaryText(conversations.firstOrNull { it.id == conversationId }).second
-            persistentOverlay -> "悬浮按钮会在离开应用后保持可用"
-            else -> "正在准备后台控制"
+            persistentOverlay -> localizedText("悬浮按钮会在离开应用后保持可用", "The floating button remains available after you leave the app")
+            else -> localizedText("正在准备后台控制", "Preparing background control")
         }
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.lucide_brain_circuit)
@@ -965,7 +967,7 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
         if (selected != null && selected in activeConversations) {
             builder.addAction(
                 R.drawable.lucide_square,
-                "停止当前任务",
+                localizedText("停止当前任务", "Stop current task"),
                 PendingIntent.getService(
                     this,
                     1,
@@ -995,35 +997,35 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
         getSystemService(NotificationManager::class.java).apply {
             createNotificationChannel(NotificationChannel(
                 CHANNEL_ID,
-                "悬浮助手与 AI 任务",
+                localizedText("悬浮助手与 AI 任务", "Floating assistant and AI tasks"),
                 NotificationManager.IMPORTANCE_LOW,
             ))
             createNotificationChannel(NotificationChannel(
                 INTERACTION_CHANNEL_ID,
-                "需要确认或回答",
+                localizedText("需要确认或回答", "Approval or answer required"),
                 NotificationManager.IMPORTANCE_HIGH,
-            ).apply { description = "工具授权和 AI 询问等待处理时提醒" })
+            ).apply { description = localizedText("工具授权和 AI 询问等待处理时提醒", "Alerts for pending tool approvals and AI questions") })
         }
     }
 
     private fun ToolCallRecord.overlayStep(titles: Map<String, String>) = OverlayStep(
-        title = titles[toolId] ?: "手机操作",
+        title = titles[toolId] ?: localizedText("手机操作", "Phone operation"),
         state = when (status) {
-            ToolCallStatus.RECEIVED -> "准备中"
-            ToolCallStatus.WAITING_APPROVAL -> "等待确认"
-            ToolCallStatus.EXECUTING -> "执行中"
-            ToolCallStatus.SUCCEEDED -> "已完成"
-            ToolCallStatus.FAILED -> "未完成"
-            ToolCallStatus.DENIED -> "未授权"
-            ToolCallStatus.CANCELLED -> "已停止"
-            ToolCallStatus.INTERRUPTED -> "已中断"
+            ToolCallStatus.RECEIVED -> localizedText("准备中", "Preparing")
+            ToolCallStatus.WAITING_APPROVAL -> localizedText("等待确认", "Waiting for approval")
+            ToolCallStatus.EXECUTING -> localizedText("执行中", "Running")
+            ToolCallStatus.SUCCEEDED -> localizedText("已完成", "Completed")
+            ToolCallStatus.FAILED -> localizedText("未完成", "Not completed")
+            ToolCallStatus.DENIED -> localizedText("未授权", "Not authorized")
+            ToolCallStatus.CANCELLED -> localizedText("已停止", "Stopped")
+            ToolCallStatus.INTERRUPTED -> localizedText("已中断", "Interrupted")
         },
         detail = when (status) {
             ToolCallStatus.FAILED, ToolCallStatus.DENIED, ToolCallStatus.CANCELLED,
             ToolCallStatus.INTERRUPTED -> displaySummary
-                ?: error?.let { userFacingMessage(it, "操作未完成") }
-                ?: "操作未完成"
-            else -> operationDetail() ?: displaySummary ?: "准备中"
+                ?: error?.let { userFacingMessage(it, localizedText("操作未完成", "Operation not completed")) }
+                ?: localizedText("操作未完成", "Operation not completed")
+            else -> operationDetail() ?: displaySummary ?: localizedText("准备中", "Preparing")
         },
     )
 
@@ -1031,39 +1033,39 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
     private fun ToolCallRecord.operationDetail(): String? {
         val completed = status == ToolCallStatus.SUCCEEDED
         return when (toolId) {
-            "device_open" -> if (completed) "手机操作已开始" else "正在启动手机操作"
-            "device_observe" -> if (completed) "已识别当前界面" else "正在识别当前界面"
-            "device_close" -> if (completed) "手机操作已结束" else "正在结束手机操作"
+            "device_open" -> if (completed) localizedText("手机操作已开始", "Phone operation started") else localizedText("正在启动手机操作", "Starting phone operation")
+            "device_observe" -> if (completed) localizedText("已识别当前界面", "Inspected the current screen") else localizedText("正在识别当前界面", "Inspecting the current screen")
+            "device_close" -> if (completed) localizedText("手机操作已结束", "Phone operation ended") else localizedText("正在结束手机操作", "Ending phone operation")
             "device_action" -> {
                 val action = runCatching {
                     Json.parseToJsonElement(argumentsJson).jsonObject["action"]?.jsonPrimitive?.contentOrNull
                 }.getOrNull()
                 when (action) {
-                    "open_app" -> if (completed) "已打开目标应用" else "正在打开目标应用"
-                    "click_node" -> if (completed) "已点击界面元素" else "正在点击界面元素"
-                    "long_click_node" -> if (completed) "已长按界面元素" else "正在长按界面元素"
-                    "scroll_node" -> if (completed) "已滚动界面内容" else "正在滚动界面内容"
-                    "tap" -> if (completed) "已点击当前界面" else "正在点击当前界面"
-                    "long_press" -> if (completed) "已完成长按" else "正在长按当前界面"
-                    "swipe" -> if (completed) "已完成滑动" else "正在滑动当前界面"
-                    "input_text" -> if (completed) "已填写文字" else "正在填写文字"
-                    "back" -> if (completed) "已返回上一页" else "正在返回上一页"
-                    "enter" -> if (completed) "已执行确认" else "正在执行确认"
-                    "home" -> if (completed) "已返回系统桌面" else "正在返回系统桌面"
-                    "recents" -> if (completed) "已打开最近任务" else "正在打开最近任务"
-                    "wait" -> if (completed) "界面已响应" else "正在等待界面响应"
-                    else -> if (completed) "手机操作已完成" else "正在操作当前界面"
+                    "open_app" -> if (completed) localizedText("已打开目标应用", "Opened target app") else localizedText("正在打开目标应用", "Opening target app")
+                    "click_node" -> if (completed) localizedText("已点击界面元素", "Tapped a screen element") else localizedText("正在点击界面元素", "Tapping a screen element")
+                    "long_click_node" -> if (completed) localizedText("已长按界面元素", "Long-pressed a screen element") else localizedText("正在长按界面元素", "Long-pressing a screen element")
+                    "scroll_node" -> if (completed) localizedText("已滚动界面内容", "Scrolled the screen") else localizedText("正在滚动界面内容", "Scrolling the screen")
+                    "tap" -> if (completed) localizedText("已点击当前界面", "Tapped the current screen") else localizedText("正在点击当前界面", "Tapping the current screen")
+                    "long_press" -> if (completed) localizedText("已完成长按", "Long press completed") else localizedText("正在长按当前界面", "Long-pressing the current screen")
+                    "swipe" -> if (completed) localizedText("已完成滑动", "Swipe completed") else localizedText("正在滑动当前界面", "Swiping the current screen")
+                    "input_text" -> if (completed) localizedText("已填写文字", "Entered text") else localizedText("正在填写文字", "Entering text")
+                    "back" -> if (completed) localizedText("已返回上一页", "Returned to the previous screen") else localizedText("正在返回上一页", "Returning to the previous screen")
+                    "enter" -> if (completed) localizedText("已执行确认", "Confirmation completed") else localizedText("正在执行确认", "Confirming")
+                    "home" -> if (completed) localizedText("已返回系统桌面", "Returned to the home screen") else localizedText("正在返回系统桌面", "Returning to the home screen")
+                    "recents" -> if (completed) localizedText("已打开最近任务", "Opened recent apps") else localizedText("正在打开最近任务", "Opening recent apps")
+                    "wait" -> if (completed) localizedText("界面已响应", "The screen responded") else localizedText("正在等待界面响应", "Waiting for the screen to respond")
+                    else -> if (completed) localizedText("手机操作已完成", "Phone operation completed") else localizedText("正在操作当前界面", "Operating the current screen")
                 }
             }
-            "device_gesture" -> if (completed) "已完成复杂触控" else "正在执行连续轨迹"
+            "device_gesture" -> if (completed) localizedText("已完成复杂触控", "Completed complex touch gesture") else localizedText("正在执行连续轨迹", "Running continuous gesture")
             "device_batch" -> {
                 val count = runCatching {
                     Json.parseToJsonElement(argumentsJson).jsonObject["steps"]?.jsonArray?.size
                 }.getOrNull()
-                val suffix = count?.let { " $it 步" }.orEmpty()
-                if (completed) "已连续执行${suffix}手机操作" else "正在连续执行${suffix}手机操作"
+                val suffix = count?.let { localizedText(" $it 步", " $it steps") }.orEmpty()
+                if (completed) localizedText("已连续执行${suffix}手机操作", "Completed ${suffix}phone operations") else localizedText("正在连续执行${suffix}手机操作", "Running ${suffix}phone operations")
             }
-            "device_wait_for" -> if (completed) "界面已达到目标状态" else "正在等待界面状态"
+            "device_wait_for" -> if (completed) localizedText("界面已达到目标状态", "The screen has reached the target state") else localizedText("正在等待界面状态", "Waiting for screen state")
             else -> null
         }
     }

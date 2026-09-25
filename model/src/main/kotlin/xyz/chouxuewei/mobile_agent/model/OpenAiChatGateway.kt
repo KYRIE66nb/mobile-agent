@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.model
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
@@ -28,7 +29,7 @@ class OpenAiChatGateway(
     override fun stream(request: ChatRequest): Flow<ModelEvent> = callbackFlow {
         val model = config.model?.takeIf { it.isNotBlank() }
         if (model == null) {
-            send(ModelEvent.Error("请在模型设置中填写模型 ID")); close(); return@callbackFlow
+            send(ModelEvent.Error(localizedText("请在模型设置中填写模型 ID", "Enter a model ID in Model settings."))); close(); return@callbackFlow
         }
         val payload = buildJsonObject {
             put("model", model); put("stream", true); put("max_tokens", request.maxOutputTokens)
@@ -105,7 +106,7 @@ class OpenAiChatGateway(
                 AgentLog.e("Model", e) {
                     "request_failed model=$model cancelled=${call.isCanceled()} duration_ms=${System.currentTimeMillis() - requestStartedAt}"
                 }
-                if (!call.isCanceled()) trySend(ModelEvent.Error("无法连接模型服务，请检查网络和服务地址"))
+                if (!call.isCanceled()) trySend(ModelEvent.Error(localizedText("无法连接模型服务，请检查网络和服务地址", "Could not connect to the model service. Check your network and service URL.")))
                 close()
             }
             override fun onResponse(call: Call, response: Response) {
@@ -117,19 +118,20 @@ class OpenAiChatGateway(
                                 val hasImages = request.messages.any { turn -> turn.images.isNotEmpty() }
                                 val message = when {
                                     it.code == 401 || it.code == 403 ->
-                                        "API 密钥无效或没有访问权限，请检查模型设置"
+                                        localizedText("API 密钥无效或没有访问权限，请检查模型设置", "The API key is invalid or lacks access. Check Model settings.")
                                     it.code == 404 ->
-                                        "没有找到该服务或模型，请检查服务地址和模型 ID"
-                                    it.code == 408 -> "请求超时，请稍后重试"
-                                    it.code == 413 -> "本次发送的内容过大，请减少附件或缩短输入后重试"
+                                        localizedText("没有找到该服务或模型，请检查服务地址和模型 ID", "The service or model was not found. Check the service URL and model ID.")
+                                    it.code == 408 -> localizedText("请求超时，请稍后重试", "The request timed out. Please try again later.")
+                                    it.code == 413 -> localizedText("本次发送的内容过大，请减少附件或缩短输入后重试", "This message is too large. Remove attachments or shorten the input and try again.")
                                     it.code == 429 ->
-                                        "请求过于频繁或账户额度不足，请稍后重试或检查账户额度"
-                                    it.code in 500..599 -> "模型服务暂时不可用，请稍后重试"
+                                        localizedText("请求过于频繁或账户额度不足，请稍后重试或检查账户额度", "Too many requests or insufficient account quota. Try again later or check your quota.")
+                                    it.code in 500..599 -> localizedText("模型服务暂时不可用，请稍后重试", "The model service is temporarily unavailable. Please try again later.")
                                     hasImages && it.code in 400..422 ->
-                                        "当前模型不支持图片理解，请更换支持图片的模型"
-                                    else -> "模型服务拒绝了本次请求，请检查模型设置后重试"
+                                        localizedText("当前模型不支持图片理解，请更换支持图片的模型", "The current model does not support image understanding. Choose a vision-capable model.")
+                                    else -> localizedText("模型服务拒绝了本次请求，请检查模型设置后重试", "The model service rejected this request. Check Model settings and try again.")
                                 }
-                                send(ModelEvent.Error(message)); return@use
+                                // 保留 HTTP 状态码便于用户排查，同时不回显可能包含密钥或隐私的服务端响应正文。
+                                send(ModelEvent.Error("$message (HTTP ${it.code})")); return@use
                             }
                             val source = it.body?.source() ?: throw IOException("empty body")
                             val data = StringBuilder()
@@ -175,7 +177,7 @@ class OpenAiChatGateway(
                                     line.isEmpty() -> dispatch()
                                     line.startsWith("data:") -> { if (data.isNotEmpty()) data.append('\n'); data.append(line.removePrefix("data:").trimStart()) }
                                 }
-                                check(data.length <= 1_000_000) { "模型事件过大" }
+                                check(data.length <= 1_000_000) { localizedText("模型事件过大", "The model event is too large.") }
                             }
                             if (data.isNotEmpty()) dispatch()
                             pendingCalls.values.forEach { pending ->
@@ -188,8 +190,8 @@ class OpenAiChatGateway(
                             AgentLog.i("Model") {
                                 "response_complete model=$model finish=${finish ?: if (done) "stop" else "interrupted"} tool_calls=${pendingCalls.size} duration_ms=${System.currentTimeMillis() - requestStartedAt}"
                             }
-                            if (!done && finish == null) send(ModelEvent.Error("回复意外中断，已生成的内容已保留"))
-                            else if (finish != null && finish !in setOf("stop", "length", "tool_calls")) send(ModelEvent.Error("模型提前结束，已生成的内容已保留"))
+                            if (!done && finish == null) send(ModelEvent.Error(localizedText("回复意外中断，已生成的内容已保留", "The response was interrupted. Generated content was preserved.")))
+                            else if (finish != null && finish !in setOf("stop", "length", "tool_calls")) send(ModelEvent.Error(localizedText("模型提前结束，已生成的内容已保留", "The model ended early. Generated content was preserved.")))
                             else send(ModelEvent.Completed(finish ?: "stop"))
                         }
                     } catch (cancelled: CancellationException) {
@@ -198,7 +200,7 @@ class OpenAiChatGateway(
                         AgentLog.e("Model", error) {
                             "response_failed model=$model duration_ms=${System.currentTimeMillis() - requestStartedAt}"
                         }
-                        if (!call.isCanceled()) send(ModelEvent.Error("回复意外中断，已生成的内容已保留"))
+                        if (!call.isCanceled()) send(ModelEvent.Error(localizedText("回复意外中断，已生成的内容已保留", "The response was interrupted. Generated content was preserved.")))
                     } finally { response.close(); close() }
                 }
             }

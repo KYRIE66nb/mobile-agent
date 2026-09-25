@@ -21,7 +21,7 @@ data class ExecutionSession(
 
 data class Viewport(val width: Int, val height: Int) {
     init {
-        require(width > 0 && height > 0) { "显示尺寸必须大于 0" }
+        require(width > 0 && height > 0) { localizedText("显示尺寸必须大于 0", "Display dimensions must be greater than 0.") }
     }
 }
 
@@ -35,7 +35,7 @@ data class NodeBounds(
     val bottom: Int,
 ) {
     init {
-        require(right >= left && bottom >= top) { "节点边界无效" }
+        require(right >= left && bottom >= top) { localizedText("节点边界无效", "Invalid node bounds.") }
     }
 }
 
@@ -81,7 +81,7 @@ data class Observation(
     val nodes: List<NodeSnapshot>,
 ) {
     init {
-        require(rotationDegrees in setOf(0, 90, 180, 270)) { "旋转角度无效" }
+        require(rotationDegrees in setOf(0, 90, 180, 270)) { localizedText("旋转角度无效", "Invalid rotation.") }
     }
 }
 
@@ -122,9 +122,9 @@ data class GestureStroke(
     val durationMs: Long = 500,
 ) {
     init {
-        require(points.size >= 2) { "每条轨迹至少需要两个点" }
-        require(points.drop(1).any { it != points.first() }) { "轨迹必须产生实际位移；点击请使用 tap" }
-        require(startTimeMs >= 0 && durationMs in 1..10_000) { "轨迹时间参数无效" }
+        require(points.size >= 2) { localizedText("每条轨迹至少需要两个点", "Each gesture path requires at least two points.") }
+        require(points.drop(1).any { it != points.first() }) { localizedText("轨迹必须产生实际位移；点击请使用 tap", "A gesture path must include movement; use tap for a tap.") }
+        require(startTimeMs >= 0 && durationMs in 1..10_000) { localizedText("轨迹时间参数无效", "Invalid gesture timing.") }
     }
 }
 
@@ -136,7 +136,7 @@ data class LaunchableApp(
 /** Android 应用包名；实际启动入口仍由设备端 PackageManager 解析，模型不能传入组件名。 */
 data class AppTarget(val packageName: String) {
     init {
-        require(packageName.length <= 255 && PACKAGE_PATTERN.matches(packageName)) { "应用包名格式无效" }
+        require(packageName.length <= 255 && PACKAGE_PATTERN.matches(packageName)) { localizedText("应用包名格式无效", "Invalid app package name.") }
     }
 
     private companion object {
@@ -188,7 +188,7 @@ interface DeviceGateway {
     suspend fun availability(): DeviceResult<Unit> = DeviceResult.Success(Unit)
     /** 返回本机具有普通启动入口的应用；调用方使用返回的真实包名启动，不能自行猜测。 */
     suspend fun listApps(): DeviceResult<List<LaunchableApp>> =
-        DeviceResult.Unsupported("当前设备不支持读取应用列表")
+        DeviceResult.Unsupported(localizedText("当前设备不支持读取应用列表", "This device does not support listing apps."))
     suspend fun openSession(mode: ExecutionMode): DeviceResult<ExecutionSession>
     suspend fun observe(sessionId: String): DeviceResult<Observation>
     /**

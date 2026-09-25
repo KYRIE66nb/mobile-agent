@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.model
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -39,7 +40,7 @@ class SpeechTranscriptionGateway(
     )
     suspend fun transcribe(config: SpeechTranscriptionConfig, audioFile: File): String {
         val text = request(config, audioFile).trim()
-        require(text.isNotEmpty()) { "没有识别到有效语音，请重试" }
+        require(text.isNotEmpty()) { localizedText("没有识别到有效语音，请重试", "No speech was recognized. Please try again.") }
         return text
     }
 
@@ -50,12 +51,12 @@ class SpeechTranscriptionGateway(
 
     private suspend fun request(config: SpeechTranscriptionConfig, audioFile: File): String {
         require(config.endpointUrl.startsWith("http://") || config.endpointUrl.startsWith("https://")) {
-            "语音 API 地址格式不正确"
+            localizedText("语音 API 地址格式不正确", "The speech API URL format is invalid.")
         }
-        require(config.model.isNotBlank()) { "请填写语音模型 ID" }
-        require(config.apiKey.isNotBlank()) { "请填写语音 API 密钥" }
-        require(audioFile.isFile && audioFile.length() > 0L) { "录音文件不可用，请重新录音" }
-        require(audioFile.length() <= MAX_AUDIO_BYTES) { "录音文件超过 25 MB，请缩短录音" }
+        require(config.model.isNotBlank()) { localizedText("请填写语音模型 ID", "Enter a speech model ID.") }
+        require(config.apiKey.isNotBlank()) { localizedText("请填写语音 API 密钥", "Enter the speech API key.") }
+        require(audioFile.isFile && audioFile.length() > 0L) { localizedText("录音文件不可用，请重新录音", "The recording file is unavailable. Record again.") }
+        require(audioFile.length() <= MAX_AUDIO_BYTES) { localizedText("录音文件超过 25 MB，请缩短录音", "The recording exceeds 25 MB. Shorten it.") }
 
         val mimeType = when (audioFile.extension.lowercase()) {
             "wav" -> "audio/wav"
@@ -81,17 +82,17 @@ class SpeechTranscriptionGateway(
             val raw = it.body?.string().orEmpty()
             return runCatching {
                 Json.parseToJsonElement(raw).jsonObject["text"]?.jsonPrimitive?.contentOrNull
-            }.getOrNull() ?: throw IllegalStateException("语音接口返回格式不兼容，需要 JSON 文本字段 text")
+            }.getOrNull() ?: throw IllegalStateException(localizedText("语音接口返回格式不兼容，需要 JSON 文本字段 text", "The speech API response is incompatible; it must contain the JSON text field."))
         }
     }
 
     private fun httpErrorMessage(code: Int): String = when (code) {
-        400 -> "语音接口拒绝了请求，请检查 API 地址和模型 ID"
-        401, 403 -> "语音 API 鉴权失败，请检查密钥"
-        404 -> "找不到语音转写接口，请填写完整的 /v1/audio/transcriptions 地址"
-        408, 429 -> "语音接口繁忙，请稍后重试"
-        in 500..599 -> "语音服务暂时不可用，请稍后重试"
-        else -> "语音转写失败（HTTP $code）"
+        400 -> localizedText("语音接口拒绝了请求，请检查 API 地址和模型 ID", "The speech API rejected the request. Check the API URL and model ID.")
+        401, 403 -> localizedText("语音 API 鉴权失败，请检查密钥", "Speech API authentication failed. Check the key.")
+        404 -> localizedText("找不到语音转写接口，请填写完整的 /v1/audio/transcriptions 地址", "The transcription endpoint was not found. Enter the full /v1/audio/transcriptions URL.")
+        408, 429 -> localizedText("语音接口繁忙，请稍后重试", "The speech API is busy. Please try again later.")
+        in 500..599 -> localizedText("语音服务暂时不可用，请稍后重试", "The speech service is temporarily unavailable. Please try again later.")
+        else -> localizedText("语音转写失败（HTTP $code）", "Speech transcription failed (HTTP $code).")
     }
 
     private companion object {
@@ -104,7 +105,7 @@ private suspend fun Call.await(): Response = suspendCancellableCoroutine { conti
     enqueue(object : Callback {
         override fun onFailure(call: Call, error: IOException) {
             if (continuation.isActive) continuation.resumeWithException(
-                IOException("无法连接语音服务，请检查网络和 API 地址", error),
+                IOException(localizedText("无法连接语音服务，请检查网络和 API 地址", "Could not connect to the speech service. Check your network and API URL."), error),
             )
         }
 

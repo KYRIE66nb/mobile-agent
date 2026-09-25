@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -84,7 +85,7 @@ class ModelSettingsRepository(
             val encrypted = defaults.apiKey.takeIf(String::isNotBlank)?.let(secretCipher::encrypt)
             StoredModelProfile(
                 id = DEFAULT_PROFILE_ID,
-                name = defaults.model?.takeIf(String::isNotBlank)?.trim() ?: "默认模型",
+                name = defaults.model?.takeIf(String::isNotBlank)?.trim() ?: localizedText("默认模型", "Default model"),
                 baseUrl = normalizeBaseUrl(defaults.baseUrl),
                 model = defaults.model?.trim().orEmpty(),
                 apiKeyCiphertext = encrypted?.ciphertext,
@@ -123,32 +124,32 @@ class ModelSettingsRepository(
         val normalizedModel = model.trim()
         val normalizedReasoningField = reasoningEffortField.trim()
         val normalizedEfforts = normalizeReasoningEfforts(reasoningEfforts)
-        require(normalizedName.isNotEmpty()) { "请填写配置名称" }
-        require(normalizedName.length <= 80) { "配置名称过长" }
-        require(normalizedModel.isNotEmpty()) { "请填写模型 ID" }
-        require(normalizedModel.length <= 200) { "模型 ID 过长" }
-        require(newApiKey == null || newApiKey.length <= 4_096) { "API 密钥过长" }
+        require(normalizedName.isNotEmpty()) { localizedText("请填写配置名称", "Enter a configuration name.") }
+        require(normalizedName.length <= 80) { localizedText("配置名称过长", "The configuration name is too long.") }
+        require(normalizedModel.isNotEmpty()) { localizedText("请填写模型 ID", "Enter a model ID.") }
+        require(normalizedModel.length <= 200) { localizedText("模型 ID 过长", "The model ID is too long.") }
+        require(newApiKey == null || newApiKey.length <= 4_096) { localizedText("API 密钥过长", "The API key is too long.") }
         require(normalizedReasoningField.isEmpty() ||
             normalizedReasoningField.matches(Regex("[A-Za-z_][A-Za-z0-9_.-]{0,99}"))) {
-            "思考强度字段只能包含字母、数字、下划线、点和短横线"
+            localizedText("思考强度字段只能包含字母、数字、下划线、点和短横线", "The reasoning effort field may contain only letters, numbers, underscores, periods, and hyphens.")
         }
         require(normalizedEfforts.all {
             it.length <= 40 && it.matches(Regex("[A-Za-z0-9_.-]+"))
-        }) { "思考强度只能包含字母、数字、下划线、点和短横线" }
+        }) { localizedText("思考强度只能包含字母、数字、下划线、点和短横线", "Reasoning effort may contain only letters, numbers, underscores, periods, and hyphens.") }
         val encrypted = newApiKey?.takeIf(String::isNotBlank)?.let(secretCipher::encrypt)
         dataStore.edit { values ->
             val profiles = storedProfiles(values).toMutableList()
             val index = profiles.indexOfFirst { it.id == id }
             val existing = profiles.getOrNull(index)
             require(profiles.none { it.id != id && it.name.equals(normalizedName, ignoreCase = true) }) {
-                "已经存在同名模型配置"
+                localizedText("已经存在同名模型配置", "A model configuration with this name already exists.")
             }
             require(existing != null || profiles.size < MAX_MODEL_PROFILES) {
-                "最多保存 $MAX_MODEL_PROFILES 个模型配置"
+                localizedText("最多保存 $MAX_MODEL_PROFILES 个模型配置", "You can save up to $MAX_MODEL_PROFILES model configurations.")
             }
             val ciphertext = encrypted?.ciphertext ?: existing?.apiKeyCiphertext
             val iv = encrypted?.iv ?: existing?.apiKeyIv
-            require(!ciphertext.isNullOrBlank() && !iv.isNullOrBlank()) { "请填写 API 密钥" }
+            require(!ciphertext.isNullOrBlank() && !iv.isNullOrBlank()) { localizedText("请填写 API 密钥", "Enter an API key.") }
             val selectedEffort = when {
                 existing == null -> REASONING_EFFORT_OFF
                 existing.selectedReasoningEffort == null -> null
@@ -181,7 +182,7 @@ class ModelSettingsRepository(
     suspend fun deleteModel(id: String) {
         dataStore.edit { values ->
             val profiles = storedProfiles(values)
-            require(profiles.any { it.id == id }) { "找不到要删除的模型配置" }
+            require(profiles.any { it.id == id }) { localizedText("找不到要删除的模型配置", "The model configuration to delete was not found.") }
             val remaining = profiles.filterNot { it.id == id }
             values[Keys.MODEL_PROFILES] = encodeProfiles(remaining)
             if (values[Keys.SELECTED_MODEL_ID] == id) {
@@ -194,7 +195,7 @@ class ModelSettingsRepository(
 
     suspend fun setSelectedModel(id: String) {
         dataStore.edit { values ->
-            require(storedProfiles(values).any { it.id == id }) { "所选模型已不存在" }
+            require(storedProfiles(values).any { it.id == id }) { localizedText("所选模型已不存在", "The selected model no longer exists.") }
             values[Keys.SELECTED_MODEL_ID] = id
         }
     }
@@ -208,13 +209,13 @@ class ModelSettingsRepository(
             val profiles = storedProfiles(values).toMutableList()
             val selectedId = selectedProfileId(values, profiles)
             val index = profiles.indexOfFirst { it.id == selectedId }
-            require(index >= 0) { "请先配置模型" }
+            require(index >= 0) { localizedText("请先配置模型", "Configure a model first.") }
             val profile = profiles[index]
             require(
                 normalized == null ||
                     normalized == REASONING_EFFORT_OFF ||
                     normalized in profile.reasoningEfforts,
-            ) { "所选思考强度已不可用" }
+            ) { localizedText("所选思考强度已不可用", "The selected reasoning effort is no longer available.") }
             profiles[index] = profile.copy(selectedReasoningEffort = normalized)
             values[Keys.MODEL_PROFILES] = encodeProfiles(profiles)
         }
@@ -245,7 +246,7 @@ class ModelSettingsRepository(
             val profiles = storedProfiles(values).toMutableList()
             val selectedId = selectedProfileId(values, profiles)
             val index = profiles.indexOfFirst { it.id == selectedId }
-            require(index >= 0) { "请先配置模型" }
+            require(index >= 0) { localizedText("请先配置模型", "Configure a model first.") }
             profiles[index] = profiles[index].copy(
                 contextWindow = policy.windowTokens,
                 outputReserve = policy.outputReserve,
@@ -282,7 +283,7 @@ class ModelSettingsRepository(
             selectedProfile(values)
         } else {
             storedProfiles(values).firstOrNull { it.id == modelProfileId }
-                ?: error("发送时选择的模型已不存在，请重新选择后发送")
+                ?: error(localizedText("发送时选择的模型已不存在，请重新选择后发送", "The selected model no longer exists. Select another model before sending."))
         }
         return ResolvedModelConfiguration(
             profileId = profile.id,
@@ -301,7 +302,7 @@ class ModelSettingsRepository(
     private fun selectedProfile(values: Preferences): StoredModelProfile {
         val profiles = storedProfiles(values)
         val selectedId = selectedProfileId(values, profiles)
-        return profiles.firstOrNull { it.id == selectedId } ?: error("尚未配置模型")
+        return profiles.firstOrNull { it.id == selectedId } ?: error(localizedText("尚未配置模型", "No model is configured."))
     }
 
     private fun selectedProfileId(values: Preferences, profiles: List<StoredModelProfile>): String? {
@@ -311,13 +312,13 @@ class ModelSettingsRepository(
 
     private fun configFrom(profile: StoredModelProfile): ModelConfig {
         val ciphertext = profile.apiKeyCiphertext?.takeIf(String::isNotBlank)
-            ?: error("“${profile.name}”尚未配置 API 密钥")
+            ?: error(localizedText("“${profile.name}”尚未配置 API 密钥", "No API key is configured for “${profile.name}”."))
         val iv = profile.apiKeyIv?.takeIf(String::isNotBlank)
-            ?: error("“${profile.name}”保存的 API 密钥不完整，请重新填写")
+            ?: error(localizedText("“${profile.name}”保存的 API 密钥不完整，请重新填写", "The saved API key for “${profile.name}” is incomplete. Enter it again."))
         val apiKey = try {
             secretCipher.decrypt(EncryptedSecret(ciphertext, iv))
         } catch (error: Exception) {
-            throw IllegalStateException("无法读取“${profile.name}”的 API 密钥，请重新填写", error)
+            throw IllegalStateException(localizedText("无法读取“${profile.name}”的 API 密钥，请重新填写", "Could not read the API key for “${profile.name}”. Enter it again."), error)
         }
         return ModelConfig(
             baseUrl = profile.baseUrl,
@@ -338,7 +339,7 @@ class ModelSettingsRepository(
         val efforts = decodeReasoningEfforts(values[Keys.LEGACY_REASONING_EFFORTS])
         return StoredModelProfile(
             id = DEFAULT_PROFILE_ID,
-            name = model.ifBlank { "默认模型" },
+            name = model.ifBlank { localizedText("默认模型", "Default model") },
             baseUrl = baseUrl,
             model = model,
             apiKeyCiphertext = values[Keys.LEGACY_API_KEY_CIPHERTEXT],
@@ -356,9 +357,9 @@ class ModelSettingsRepository(
     private fun normalizeBaseUrl(value: String): String {
         val normalized = value.trim().trimEnd('/')
         require(normalized.startsWith("http://") || normalized.startsWith("https://")) {
-            "服务地址必须以 http:// 或 https:// 开头"
+            localizedText("服务地址必须以 http:// 或 https:// 开头", "The service URL must begin with http:// or https://.")
         }
-        require(normalized.length <= 2_000) { "服务地址过长" }
+        require(normalized.length <= 2_000) { localizedText("服务地址过长", "The service URL is too long.") }
         return normalized
     }
 

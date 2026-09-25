@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.room.Room
 import kotlinx.coroutines.flow.map
@@ -29,7 +30,7 @@ class RoomTaskStore(context: Context) : TaskStore {
         records.steps(taskId).map { it.toRecord() }
 
     override fun observeRecentTasks(limit: Int) = records.observeRecentTasks(
-        limit.also { require(it in 1..100) { "任务记录数量必须在 1..100 之间" } },
+        limit.also { require(it in 1..100) { localizedText("任务记录数量必须在 1..100 之间", "The task record limit must be between 1 and 100.") } },
     ).map { tasks -> tasks.map { it.toRecord() } }
 
     private fun TaskRecord.toEntity() = TaskEntity(

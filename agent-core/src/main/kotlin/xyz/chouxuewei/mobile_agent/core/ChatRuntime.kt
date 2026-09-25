@@ -29,10 +29,25 @@ data class ModelUsageRecord(
 private const val MAX_INLINE_TOOL_RESULT_BYTES = 12_000
 private const val TOOL_RESULT_EXCERPT_BYTES = 8_000
 private const val MAX_INLINE_IMAGE_BYTES = 20L * 1024 * 1024
-private const val TOOL_IMAGE_MARKER = "[设备识别图片，仅作为上一组工具结果"
-private const val ACTIVE_COMPACTION_MARKER = "[较早执行步骤已自动压缩"
-private const val SINGLE_STEP_RESULT_PLACEHOLDER =
-    "{\"expired\":true,\"message\":\"界面识别结果仅在紧接着的一次模型决策中有效；节点和图片已自动清除，需要继续操作时请重新识别界面。\"}"
+private val TOOL_IMAGE_MARKER: String
+    get() = localizedText(
+        "[设备识别图片，仅作为上一组工具结果",
+        "[Device screenshot from the preceding tool results",
+    )
+private val ACTIVE_COMPACTION_MARKER: String
+    get() = localizedText("[较早执行步骤已自动压缩", "[Earlier execution steps were compressed automatically")
+private val SINGLE_STEP_RESULT_PLACEHOLDER: String
+    get() {
+        val message = localizedText(
+            "界面识别结果仅在紧接着的一次模型决策中有效；节点和图片已自动清除，需要继续操作时请重新识别界面。",
+            "A screen observation is valid only for the immediately following model decision. Its nodes and image were cleared; inspect the screen again before continuing.",
+        )
+        return "{\"expired\":true,\"message\":\"$message\"}"
+    }
+
+private fun isSingleStepResultPlaceholder(value: String): Boolean =
+    value == "{\"expired\":true,\"message\":\"界面识别结果仅在紧接着的一次模型决策中有效；节点和图片已自动清除，需要继续操作时请重新识别界面。\"}" ||
+        value == "{\"expired\":true,\"message\":\"A screen observation is valid only for the immediately following model decision. Its nodes and image were cleared; inspect the screen again before continuing.\"}"
 
 private data class RequestPreferences(
     val reasoningEffort: String?,
@@ -80,7 +95,7 @@ class ChatRuntime(
         modelProfileId: String? = null,
     ) {
         require(text.isNotBlank() || attachments.any(AttachmentRef::isImage)) {
-            "请输入文字说明你想如何处理附件"
+            localizedText("请输入文字说明你想如何处理附件", "Describe how you want to handle the attachment.")
         }
         recovery.await()
         gate.withLock {
@@ -106,10 +121,10 @@ class ChatRuntime(
                     publishContextUsage(id, c.policy, c.modelProfileId, turns, definitions, compacted = true)
                 } else drain(id)
             } catch (cancelled: CancellationException) {
-                notice(id, "已停止回复，已生成内容和对话记录均已保留")
+                notice(id, localizedText("已停止回复，已生成内容和对话记录均已保留", "Response stopped. Generated content and conversation history were preserved."))
             } catch (error: Exception) {
                 continueQueued = false
-                notice(id, userFacingMessage(error, "请求未完成，请重试"))
+                notice(id, userFacingMessage(error, localizedText("请求未完成，请重试", "The request was not completed. Please try again.")))
             } finally {
                 withContext(NonCancellable) {
                     gate.withLock {
@@ -141,7 +156,7 @@ class ChatRuntime(
                 stepsSnapshot(now).mapNotNull(AssistantStep::reasoningDurationMillis).sum().takeIf { it > 0L }
             try {
                 // 配置失败也要消费本次排队并保留失败记录，避免无限重试循环。
-                val startedRun = withContext(NonCancellable) { store.beginRun(id, trigger.id, "待连接") }
+                val startedRun = withContext(NonCancellable) { store.beginRun(id, trigger.id, localizedText("待连接", "Waiting to connect")) }
                 run = startedRun
                 currentCoroutineContext().ensureActive()
                 val c = connection(preferences?.modelProfileId)
@@ -164,7 +179,7 @@ class ChatRuntime(
                 var toolRound = 0
                 while (true) {
                     check(toolRound <= maxSteps) {
-                        "已达到单轮最大步骤（$maxSteps），可在设置中调整后重试"
+                        localizedText("已达到单轮最大步骤（$maxSteps），可在设置中调整后重试", "The maximum steps for one run ($maxSteps) was reached. Adjust it in Settings and try again.")
                     }
                     var finished = false
                     var finishReason = ""
@@ -173,7 +188,7 @@ class ChatRuntime(
                     val requestedCalls = mutableListOf<RequestedToolCall>()
                     if (compactActiveContext(workingTurns, activeBaseTurnCount, c.policy, definitions)) {
                         contextWasCompacted = true
-                        notice(id, "上下文已自动压缩，任务继续执行")
+                        notice(id, localizedText("上下文已自动压缩，任务继续执行", "Context was compressed automatically and the task will continue."))
                     }
                     context.requireRequestFits(workingTurns, c.policy, definitions)
                     publishContextUsage(
@@ -243,15 +258,15 @@ class ChatRuntime(
                         "model_response run=${activeRun.id} round=$toolRound duration_ms=${System.currentTimeMillis() - requestStartedAt} tool_calls=${requestedCalls.size} finish=$finishReason"
                     }
                     step.finishReasoning()
-                    check(finished) { "回复意外中断，已生成的内容已保留" }
+                    check(finished) { localizedText("回复意外中断，已生成的内容已保留", "The response was interrupted. Generated content was preserved.") }
                     if (requestedCalls.isEmpty()) {
                         store.updateReply(activeRun, output.toString(), stepsSnapshot())
-                        if (finishReason == "length") notice(id, "本次回复已达到长度上限，你可以继续追问")
+                        if (finishReason == "length") notice(id, localizedText("本次回复已达到长度上限，你可以继续追问", "This response reached the length limit. You can ask a follow-up."))
                         break
                     }
-                    check(definitions.isNotEmpty()) { "模型请求了本轮未提供的工具" }
+                    check(definitions.isNotEmpty()) { localizedText("模型请求了本轮未提供的工具", "The model requested a tool that was not provided for this run.") }
                     check(toolRound < maxSteps) {
-                        "已达到单轮最大步骤（$maxSteps），可在设置中调整后重试"
+                        localizedText("已达到单轮最大步骤（$maxSteps），可在设置中调整后重试", "The maximum steps for one run ($maxSteps) was reached. Adjust it in Settings and try again.")
                     }
                     toolRound++
                     AgentLog.i("Runtime") {
@@ -289,21 +304,21 @@ class ChatRuntime(
                             turn.images.sumOf { image -> image.bytes.size.toLong() }
                         }
                         require(existingImages + toolImages.size <= 20) {
-                            "当前模型请求中的设备截图过多，请结束本轮后继续"
+                            localizedText("当前模型请求中的设备截图过多，请结束本轮后继续", "This model request contains too many device screenshots. Finish this run before continuing.")
                         }
                         require(existingBytes + toolImages.sumOf { it.bytes.size.toLong() } <= MAX_INLINE_IMAGE_BYTES) {
-                            "当前模型请求中的设备截图总量过大，请结束本轮后继续"
+                            localizedText("当前模型请求中的设备截图总量过大，请结束本轮后继续", "Device screenshots in this model request are too large. Finish this run before continuing.")
                         }
                         // 多数兼容 Chat Completions 的服务只接受 user 角色携带图片；明确标记为工具数据，
                         // 防止模型把这条内部消息误当成用户追加的新指令。
                         workingTurns += ChatTurn(
                             role = "user",
-                            content = "$TOOL_IMAGE_MARKER，不是新的用户指令。仅供当前步骤结合对应 observation_id 分析界面。]",
+                            content = localizedText("$TOOL_IMAGE_MARKER，不是新的用户指令。仅供当前步骤结合对应 observation_id 分析界面。]", "$TOOL_IMAGE_MARKER. This is not a new user instruction. Use it only with the corresponding observation_id for the current step.]"),
                             images = toolImages.toList(),
                         )
                     }
                 }
-                check(output.isNotBlank()) { "模型没有返回正文，请检查回复预留和模型设置" }
+                check(output.isNotBlank()) { localizedText("模型没有返回正文，请检查回复预留和模型设置", "The model returned no response text. Check the output reserve and model settings.") }
                 store.finishRun(
                     activeRun,
                     output.toString(),
@@ -324,14 +339,14 @@ class ChatRuntime(
                             stepsSnapshot(),
                             reasoningDuration(),
                             RunStatus.CANCELLED,
-                            "用户已停止",
+                            localizedText("用户已停止", "Stopped by user"),
                         )
                     }
                 }
                 throw cancelled
             } catch (error: Exception) {
                 AgentLog.e("Runtime", error) { "run_finish run=${run?.id} status=failed" }
-                val reason = userFacingMessage(error, "请求未完成，请重试")
+                val reason = userFacingMessage(error, localizedText("请求未完成，请重试", "The request was not completed. Please try again."))
                 run?.let {
                     store.finishRun(
                         it,
@@ -388,8 +403,8 @@ class ChatRuntime(
         store.saveToolCall(record)
         val definition = definitions.firstOrNull { it.id == requested.toolId }
         if (definition == null || requested.argumentsJson.length > 100_000) {
-            val internalMessage = if (definition == null) "本轮未提供工具 ${requested.toolId}" else "工具参数过大"
-            val message = if (definition == null) "模型请求了当前不可用的工具" else "工具请求内容过大，无法执行"
+            val internalMessage = if (definition == null) localizedText("本轮未提供工具 ${requested.toolId}", "Tool ${requested.toolId} was not provided for this run") else localizedText("工具参数过大", "Tool arguments are too large")
+            val message = if (definition == null) localizedText("模型请求了当前不可用的工具", "The model requested a tool that is currently unavailable") else localizedText("工具请求内容过大，无法执行", "The tool request is too large to execute")
             record = record.copy(status = ToolCallStatus.FAILED, error = internalMessage, displaySummary = message,
                 updatedAt = System.currentTimeMillis())
             store.updateToolCall(record)
@@ -398,11 +413,12 @@ class ChatRuntime(
 
         val access = toolPermissions?.access(definition.providerId) ?: ToolAccess()
         if (!access.enabled) {
-            val message = "“${definition.title}”已关闭"
+            val message = localizedText("“${definition.title}”已关闭", "“${definition.title}” is disabled")
             record = record.copy(status = ToolCallStatus.DENIED, error = message,
                 displaySummary = message, updatedAt = System.currentTimeMillis())
             store.updateToolCall(record)
-            return ToolResult("{\"error\":\"能力已关闭\"}", message, true)
+            val errorContent = localizedText("能力已关闭", "Capability disabled")
+            return ToolResult("{\"error\":\"$errorContent\"}", message, true)
         }
 
         val requiresPermissionApproval = definition.requiresPermissionApproval &&
@@ -429,8 +445,8 @@ class ChatRuntime(
             val decision = try {
                 waiter.await()
             } catch (cancelled: CancellationException) {
-                record = record.copy(status = ToolCallStatus.CANCELLED, error = "等待确认时已停止",
-                    displaySummary = "已停止等待确认", updatedAt = System.currentTimeMillis())
+                record = record.copy(status = ToolCallStatus.CANCELLED, error = localizedText("等待确认时已停止", "Stopped while waiting for approval"),
+                    displaySummary = localizedText("已停止等待确认", "Stopped waiting for approval"), updatedAt = System.currentTimeMillis())
                 withContext(NonCancellable) { store.updateToolCall(record) }
                 throw cancelled
             } finally {
@@ -440,16 +456,17 @@ class ChatRuntime(
                 }
             }
             if (!decision.allowed) {
-                val message = "未允许“${definition.title}”"
+                val message = localizedText("未允许“${definition.title}”", "“${definition.title}” was not allowed")
                 record = record.copy(status = ToolCallStatus.DENIED, error = message,
                     displaySummary = message, updatedAt = System.currentTimeMillis())
                 store.updateToolCall(record)
-                return ToolResult("{\"error\":\"用户拒绝了本次工具调用\"}", message, true)
+                val errorContent = localizedText("用户拒绝了本次工具调用", "The user denied this tool call")
+                return ToolResult("{\"error\":\"$errorContent\"}", message, true)
             }
             if (definition.userChoices.isNotEmpty()) {
                 val choice = definition.userChoices.firstOrNull { it.id == decision.choiceId }
                 if (choice == null) {
-                    val message = "未选择操作方式"
+                    val message = localizedText("未选择操作方式", "No operation mode was selected")
                     record = record.copy(status = ToolCallStatus.DENIED, error = message,
                         displaySummary = message, updatedAt = System.currentTimeMillis())
                     store.updateToolCall(record)
@@ -460,10 +477,10 @@ class ChatRuntime(
             }
             if (decision.permanentlyAllowCapability && requiresPermissionApproval) {
                 try {
-                    requireNotNull(toolPermissions) { "工具授权存储不可用" }
+                    requireNotNull(toolPermissions) { localizedText("工具授权存储不可用", "Tool permission storage is unavailable") }
                         .setPermission(definition.providerId, ToolPermissionMode.FULL_ACCESS)
                 } catch (error: Exception) {
-                    val message = "未能保存“始终允许”设置，请重试"
+                    val message = localizedText("未能保存“始终允许”设置，请重试", "Could not save the Always allow setting. Please try again.")
                     record = record.copy(
                         status = ToolCallStatus.FAILED,
                         error = message,
@@ -471,18 +488,20 @@ class ChatRuntime(
                         updatedAt = System.currentTimeMillis(),
                     )
                     store.updateToolCall(record)
-                    return ToolResult("{\"error\":\"永久授权保存失败\"}", message, true)
+                    val errorContent = localizedText("永久授权保存失败", "Failed to save permanent permission")
+                    return ToolResult("{\"error\":\"$errorContent\"}", message, true)
                 }
             }
         }
 
         // 用户可能在批准卡片等待期间关闭能力，执行前再次读取持久化状态。
         if (toolPermissions?.access(definition.providerId)?.enabled == false) {
-            val message = "“${definition.title}”已关闭"
+            val message = localizedText("“${definition.title}”已关闭", "“${definition.title}” is disabled")
             record = record.copy(status = ToolCallStatus.DENIED, error = message,
                 displaySummary = message, updatedAt = System.currentTimeMillis())
             store.updateToolCall(record)
-            return ToolResult("{\"error\":\"能力已关闭\"}", message, true)
+            val errorContent = localizedText("能力已关闭", "Capability disabled")
+            return ToolResult("{\"error\":\"$errorContent\"}", message, true)
         }
 
         record = record.copy(status = ToolCallStatus.EXECUTING, updatedAt = System.currentTimeMillis())
@@ -501,12 +520,13 @@ class ChatRuntime(
                 ),
             )
         } catch (cancelled: CancellationException) {
-            record = record.copy(status = ToolCallStatus.CANCELLED, error = "工具执行已停止",
-                displaySummary = "操作已停止", updatedAt = System.currentTimeMillis())
+            record = record.copy(status = ToolCallStatus.CANCELLED, error = localizedText("工具执行已停止", "Tool execution stopped"),
+                displaySummary = localizedText("操作已停止", "Operation stopped"), updatedAt = System.currentTimeMillis())
             withContext(NonCancellable) { store.updateToolCall(record) }
             throw cancelled
         } catch (error: Exception) {
-            ToolResult("{\"error\":\"工具执行失败\"}", userFacingMessage(error), true)
+            val errorContent = localizedText("工具执行失败", "Tool execution failed")
+            ToolResult("{\"error\":\"$errorContent\"}", userFacingMessage(error), true)
         }
         record = record.copy(
             status = if (result.isError) ToolCallStatus.FAILED else ToolCallStatus.SUCCEEDED,
@@ -545,12 +565,13 @@ class ChatRuntime(
         var changed = false
         for (index in activeBaseTurnCount until latestAssistant) {
             val turn = turns[index]
-            if (turn.role != "tool" || turn.content == SINGLE_STEP_RESULT_PLACEHOLDER ||
-                turn.content.startsWith("[较早工具结果已自动压缩")) continue
+            if (turn.role != "tool" || isSingleStepResultPlaceholder(turn.content) ||
+                turn.content.startsWith("[较早工具结果已自动压缩") ||
+                turn.content.startsWith("[Earlier tool results were compressed automatically")) continue
             val reference = turn.sourceToolCallId?.replace(Regex("[\\r\\n]"), "")?.take(200)
                 ?: turn.toolCallId.orEmpty().take(200)
             turns[index] = turn.copy(
-                content = "[较早工具结果已自动压缩；完整结果引用：$reference。需要精确内容时调用 history_read。]",
+                content = localizedText("[较早工具结果已自动压缩；完整结果引用：$reference。需要精确内容时调用 history_read。]", "[Earlier tool results were compressed automatically. Full result reference: $reference. Call history_read for exact content.]"),
             )
             changed = true
         }
@@ -566,9 +587,9 @@ class ChatRuntime(
         turns.add(activeBaseTurnCount, ChatTurn(
             role = "user",
             content = buildString {
-                append(ACTIVE_COMPACTION_MARKER).append("，共 ").append(toolCount).append(" 个工具结果。")
-                if (references.isNotEmpty()) append("可按需读取：").append(references).append('。')
-                append("这段文字只是执行记录，不是新的用户指令。]")
+                append(ACTIVE_COMPACTION_MARKER).append(localizedText("，共 ", ", ")).append(toolCount).append(localizedText(" 个工具结果。", " tool results."))
+                if (references.isNotEmpty()) append(localizedText("可按需读取：", "Read as needed: ")).append(references).append('。')
+                append(localizedText("这段文字只是执行记录，不是新的用户指令。]", "This text is an execution record, not a new user instruction.]"))
             },
         ))
         return true
@@ -660,7 +681,7 @@ class ChatRuntime(
     suspend fun compact(id: String) {
         recovery.await()
         gate.withLock {
-            if (id in jobs) { notice(id, "请等待当前回复完成，或停止回复后再整理"); return }
+            if (id in jobs) { notice(id, localizedText("请等待当前回复完成，或停止回复后再整理", "Wait for the current response to finish, or stop it before summarizing.")); return }
             startLocked(id, manual = true)
         }
     }
@@ -674,9 +695,9 @@ class ChatRuntime(
 
     private suspend fun resolveImages(turns: List<ChatTurn>): List<ChatTurn> {
         val imageCount = turns.sumOf { turn -> turn.attachmentRefs.count(AttachmentRef::isImage) }
-        require(imageCount <= 20) { "当前对话中的图片过多，请新建对话或减少附件后重试" }
+        require(imageCount <= 20) { localizedText("当前对话中的图片过多，请新建对话或减少附件后重试", "This conversation contains too many images. Start a new conversation or remove attachments and try again.") }
         if (imageCount == 0) return turns
-        val loader = requireNotNull(attachmentLoader) { "当前版本未配置图片读取能力" }
+        val loader = requireNotNull(attachmentLoader) { localizedText("当前版本未配置图片读取能力", "Image reading is not configured in this version.") }
         var loadedBytes = 0L
         return turns.map { turn ->
             val refs = turn.attachmentRefs.filter(AttachmentRef::isImage)
@@ -684,14 +705,18 @@ class ChatRuntime(
                 val image = try {
                     loader.loadImage(attachment)
                 } catch (error: Exception) {
+                    val reason = userFacingMessage(error, localizedText("文件不可用", "File unavailable"))
                     throw IllegalArgumentException(
-                        "无法读取图片“${attachment.name}”：${userFacingMessage(error, "文件不可用")}",
+                        localizedText(
+                            "无法读取图片“${attachment.name}”：$reason",
+                            "Could not read image “${attachment.name}”: $reason",
+                        ),
                         error,
                     )
                 }
                 loadedBytes += image.bytes.size
                 require(loadedBytes <= MAX_INLINE_IMAGE_BYTES) {
-                    "当前对话中的图片总量过大，请新建对话或减少附件后重试"
+                    localizedText("当前对话中的图片总量过大，请新建对话或减少附件后重试", "Images in this conversation are too large. Start a new conversation or remove attachments and try again.")
                 }
                 image
             })
@@ -713,11 +738,11 @@ private fun String.forModel(
     if (toByteArray(Charsets.UTF_8).size <= inlineLimit) return this
     val excerpt = takeUtf8Bytes(excerptLimit)
     return buildString {
-        append("工具结果过长，完整内容已保存。\n")
+        append(localizedText("工具结果过长，完整内容已保存。\n", "The tool result is too long. The full content was saved.\n"))
         append("tool_call_id: ").append(toolCallId).append('\n')
         append("summary: ").append(summary).append('\n')
         append("excerpt_offset: 0\nnext_offset: ").append(excerpt.length).append('\n')
-        append("需要后续内容时调用 history_read，并传入 tool_call_id 与 offset。\n")
+        append(localizedText("需要后续内容时调用 history_read，并传入 tool_call_id 与 offset。\n", "Call history_read with tool_call_id and offset to read more.\n"))
         append("excerpt:\n").append(excerpt)
     }
 }

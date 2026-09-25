@@ -1,0 +1,4 @@
+<resources>
+    <string name="notification_listener_service_name">Mobile Agent 通知读取</string>
+</resources>
+

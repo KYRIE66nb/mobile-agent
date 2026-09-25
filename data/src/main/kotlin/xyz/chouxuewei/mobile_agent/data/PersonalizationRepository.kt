@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -25,7 +26,7 @@ class PersonalizationRepository(context: Context) {
     suspend fun setInstructions(value: String) {
         val normalized = value.trim()
         require(normalized.length <= MAX_PERSONALIZATION_CHARS) {
-            "个性化提示词最多 $MAX_PERSONALIZATION_CHARS 个字符"
+            localizedText("个性化提示词最多 $MAX_PERSONALIZATION_CHARS 个字符", "The personalization prompt can contain up to $MAX_PERSONALIZATION_CHARS characters.")
         }
         store.edit { preferences ->
             if (normalized.isEmpty()) preferences.remove(instructionsKey)

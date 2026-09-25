@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.prototype
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.app.Application
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -115,7 +116,9 @@ class PrototypeApplication : Application() {
     }
 
     suspend fun cleanupStorage(): StorageCleanupResult {
-        require(chatRuntime.active.value.isEmpty()) { "正在生成回复，请结束后再清理" }
+        require(chatRuntime.active.value.isEmpty()) {
+            localizedText("正在生成回复，请结束后再清理", "A response is being generated. Stop it before cleaning storage.")
+        }
         return artifacts.cleanup() + attachments.cleanup()
     }
 

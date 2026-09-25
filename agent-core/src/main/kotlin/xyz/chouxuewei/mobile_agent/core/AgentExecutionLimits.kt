@@ -9,7 +9,10 @@ const val MAX_SINGLE_RUN_MAX_STEPS = 999
  */
 fun requireValidSingleRunMaxSteps(value: Int): Int {
     require(value in MIN_SINGLE_RUN_MAX_STEPS..MAX_SINGLE_RUN_MAX_STEPS) {
-        "单轮最大步骤需要在 $MIN_SINGLE_RUN_MAX_STEPS 到 $MAX_SINGLE_RUN_MAX_STEPS 之间"
+        localizedText(
+            "单轮最大步骤需要在 $MIN_SINGLE_RUN_MAX_STEPS 到 $MAX_SINGLE_RUN_MAX_STEPS 之间",
+            "Maximum steps per run must be between $MIN_SINGLE_RUN_MAX_STEPS and $MAX_SINGLE_RUN_MAX_STEPS.",
+        )
     }
     return value
 }

@@ -7,7 +7,7 @@
         <service
             android:name="xyz.chouxuewei.mobile_agent.tools.notifications.AgentNotificationListenerService"
             android:exported="true"
-            android:label="Mobile Agent 通知读取"
+            android:label="@string/notification_listener_service_name"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

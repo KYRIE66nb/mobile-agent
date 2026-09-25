@@ -1,3 +1,4 @@
 <resources>
-    <string name="accessibility_description">允许 Mobile Agent 识别界面控件，并在你授权后完成点击、输入等手机操作。</string>
+    <string name="accessibility_service_name">Mobile Agent accessibility service</string>
+    <string name="accessibility_description">Allows Mobile Agent to identify interface controls and perform phone actions such as tapping and typing after you authorize them.</string>
 </resources>

@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.device.capture
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.media.ImageReader
@@ -52,7 +53,7 @@ internal class FrameSource : AutoCloseable {
     fun latestJpeg(quality: Int): EncodedFrame? = synchronized(this) {
         latest?.let { bitmap ->
             java.io.ByteArrayOutputStream().use { output ->
-                check(bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output)) { "虚拟屏画面编码失败" }
+                check(bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output)) { localizedText("虚拟屏画面编码失败", "Virtual display frame encoding failed.") }
                 EncodedFrame(revision, output.toByteArray())
             }
         }
