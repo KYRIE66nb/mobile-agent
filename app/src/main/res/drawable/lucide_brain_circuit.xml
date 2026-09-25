@@ -1,0 +1,4 @@
+<!-- Lucide 0.468.0; ISC / Feather MIT. See licenses/lucide-LICENSE. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M12 5a3 3 0 1,0 -5.997 0.125a4 4 0 0,0 -2.526 5.77a4 4 0 0,0 0.556 6.588A4 4 0 1,0 12 18Z M9 13a4.5 4.5 0 0,0 3 -4 M6.003 5.125A3 3 0 0,0 6.401 6.5 M3.477 10.896a4 4 0 0,1 0.585 -0.396 M6 18a4 4 0 0,1 -1.967 -0.516 M12 13h4 M12 18h6a2 2 0 0,1 2 2v1 M12 8h8 M16 8V5a2 2 0 0,1 2 -2 M15.5 13a0.5 0.5 0 1,0 1 0a0.5 0.5 0 1,0 -1 0 M17.5 3a0.5 0.5 0 1,0 1 0a0.5 0.5 0 1,0 -1 0 M19.5 21a0.5 0.5 0 1,0 1 0a0.5 0.5 0 1,0 -1 0 M19.5 8a0.5 0.5 0 1,0 1 0a0.5 0.5 0 1,0 -1 0" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>
