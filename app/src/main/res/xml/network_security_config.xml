@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 兼容局域网和用户自托管的 HTTP 模型服务；非可信网络仍应优先使用 HTTPS。 -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

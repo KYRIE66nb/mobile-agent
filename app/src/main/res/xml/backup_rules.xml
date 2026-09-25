@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample backup rules file; uncomment and customize as necessary.
+   See https://developer.android.com/guide/topics/data/autobackup
+   for details.
+   Note: This file is ignored for devices older than API 31
+   See https://developer.android.com/about/versions/12/backup-restore
+-->
+<full-backup-content>
+    <!-- 密文依赖本机 Keystore，迁移到其他设备后无法解密。 -->
+    <exclude domain="file" path="datastore/model_settings.preferences_pb" />
+</full-backup-content>

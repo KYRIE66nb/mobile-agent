@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 只发布已经登记为产物的受控目录，不开放整个 filesDir。 -->
+    <files-path
+        name="generated_tools"
+        path="generated-tools/" />
+    <!-- 外部分享的临时授权会失效，因此只把实际接收的副本发布为稳定 URI。 -->
+    <files-path
+        name="shared_attachments"
+        path="shared-attachments/" />
+</paths>

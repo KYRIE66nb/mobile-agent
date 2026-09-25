@@ -1,0 +1,65 @@
+[versions]
+agp = "8.12.0-alpha02"
+kotlin = "2.0.21"
+# 与 SDK 36、AGP 8.12 和 Kotlin 2.0 的构建基线保持兼容。
+coreKtx = "1.16.0"
+junit = "4.13.2"
+junitVersion = "1.3.0"
+testRunner = "1.7.0"
+espressoCore = "3.7.0"
+lifecycleRuntimeKtx = "2.9.1"
+activityCompose = "1.10.1"
+# UI/Foundation/Runtime 统一到 1.7.6；旧组合在真实帧时钟下出现关闭抽屉仍占屏的布局问题。
+composeBom = "2024.12.01"
+libsu = "6.0.0"
+coroutines = "1.9.0"
+okhttp = "4.12.0"
+serializationJson = "1.7.3"
+jsoup = "1.23.2"
+androidSvg = "1.4"
+gifEncoder = "0.10.1"
+coil = "2.7.0"
+room = "2.8.5"
+datastore = "1.2.1"
+ksp = "2.0.21-1.0.27"
+
+[libraries]
+libsu-service = { group = "com.github.topjohnwu.libsu", name = "service", version.ref = "libsu" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
+jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
+android-svg = { group = "com.caverock", name = "androidsvg-aar", version.ref = "androidSvg" }
+gif-encoder = { group = "com.squareup", name = "gifencoder", version.ref = "gifEncoder" }
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+coil-gif = { group = "io.coil-kt", name = "coil-gif", version.ref = "coil" }
+coil-svg = { group = "io.coil-kt", name = "coil-svg", version.ref = "coil" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "testRunner" }
+androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-lifecycle-service = { group = "androidx.lifecycle", name = "lifecycle-service", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
+androidx-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
+androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
