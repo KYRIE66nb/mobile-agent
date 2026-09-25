@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.device.root
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Intent
 import android.graphics.Point
 import android.hardware.display.DisplayManager
@@ -21,14 +22,14 @@ class RootDeviceService : RootService() {
 
     // Binder 入口先验证调用方，再清除继承的调用身份，以 Root 工作进程身份调用系统。
     private fun <T> call(operation: () -> T): T {
-        check(Binder.getCallingUid() == applicationInfo.uid) { "拒绝其他应用调用 Root 接口" }
+        check(Binder.getCallingUid() == applicationInfo.uid) { localizedText("拒绝其他应用调用 Root 接口", "Calls to the Root interface from other apps are denied.") }
         val identity = Binder.clearCallingIdentity()
         try {
             return synchronized(lock) {
-                check(!closed) { "Root 服务已停止" }
+                check(!closed) { localizedText("Root 服务已停止", "Root service stopped.") }
                 try { operation() } catch (error: Exception) {
                     val cause = error.cause ?: error
-                    AgentLog.e("Root", cause) { "设备操作失败" }
+                    AgentLog.e("Root", cause) { localizedText("设备操作失败", "Device operation failed.") }
                     throw IllegalStateException(cause.message ?: cause.javaClass.simpleName)
                 }
             }
@@ -37,21 +38,21 @@ class RootDeviceService : RootService() {
 
     private fun requireDisplay(id: Int) {
         check(id == 0 || (display?.display?.displayId == id && display?.display?.isValid == true)) {
-            "虚拟屏会话已失效，拒绝操作 displayId=$id"
+            localizedText("虚拟屏会话已失效，拒绝操作 displayId=$id", "The virtual display session expired; refusing operation for displayId=$id.")
         }
     }
 
     private fun requireCoordinates(displayId: Int, vararg coordinates: Pair<Int, Int>) {
         val target = checkNotNull(getSystemService(DisplayManager::class.java).getDisplay(displayId)) {
-            "找不到目标显示，拒绝操作 displayId=$displayId"
+            localizedText("找不到目标显示，拒绝操作 displayId=$displayId", "Target display not found; refusing operation for displayId=$displayId.")
         }
         val size = Point()
         // 主屏分辨率与虚拟屏不同，必须从实际目标显示读取尺寸，不能套用虚拟屏常量。
         @Suppress("DEPRECATION")
         target.getRealSize(size)
-        check(size.x > 0 && size.y > 0) { "目标显示尺寸无效：${size.x}x${size.y}" }
+        check(size.x > 0 && size.y > 0) { localizedText("目标显示尺寸无效：${size.x}x${size.y}", "Invalid target display size: ${size.x}x${size.y}") }
         require(coordinates.all { (x, y) -> x in 0 until size.x && y in 0 until size.y }) {
-            "坐标超出目标显示 ${size.x}x${size.y}"
+            localizedText("坐标超出目标显示 ${size.x}x${size.y}", "Coordinates are outside the target display ${size.x}x${size.y}.")
         }
     }
 
@@ -80,8 +81,8 @@ class RootDeviceService : RootService() {
         }
 
         override fun createDisplay(surface: Surface): Int = call {
-            check(display == null) { "只允许一个虚拟屏" }
-            check(surface.isValid) { "画面接收 Surface 无效" }
+            check(display == null) { localizedText("只允许一个虚拟屏", "Only one virtual display is allowed.") }
+            check(surface.isValid) { localizedText("画面接收 Surface 无效", "The frame receiver Surface is invalid.") }
             try {
                 display = DisplayAdapter.create(this@RootDeviceService, surface)
                 ownedSurface = surface
@@ -98,12 +99,12 @@ class RootDeviceService : RootService() {
         }
 
         override fun launchApp(displayId: Int, packageName: String): String = call {
-            require(packageName.length <= 255 && PACKAGE_PATTERN.matches(packageName)) { "应用包名格式无效" }
+            require(packageName.length <= 255 && PACKAGE_PATTERN.matches(packageName)) { localizedText("应用包名格式无效", "Invalid app package name.") }
             val launchIntent = checkNotNull(packageManager.getLaunchIntentForPackage(packageName)) {
-                "$packageName 未安装或没有可启动入口"
+                localizedText("$packageName 未安装或没有可启动入口", "$packageName is not installed or has no launchable entry.")
             }
             val component = launchIntent.component ?: launchIntent.resolveActivity(packageManager)
-            checkNotNull(component) { "无法解析 $packageName 的启动入口" }
+            checkNotNull(component) { localizedText("无法解析 $packageName 的启动入口", "Could not resolve a launch entry for $packageName.") }
             @Suppress("DEPRECATION")
             val label = runCatching {
                 val info = packageManager.getApplicationInfo(packageName, 0)
@@ -115,7 +116,7 @@ class RootDeviceService : RootService() {
         override fun gesture(displayId: Int, x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Int) = call {
             requireDisplay(displayId)
             requireCoordinates(displayId, x1 to y1, x2 to y2)
-            require(durationMs in 0..2000) { "手势时长超出限制" }
+            require(durationMs in 0..2000) { localizedText("手势时长超出限制", "Gesture duration exceeds the limit.") }
             if (durationMs == 0) {
                 DeviceCommands.run("/system/bin/input", "-d", displayId.toString(), "tap", x1.toString(), y1.toString())
             } else {
@@ -127,7 +128,7 @@ class RootDeviceService : RootService() {
 
         override fun pressKey(displayId: Int, keyCode: Int) = call {
             requireDisplay(displayId)
-            require(keyCode in SUPPORTED_KEYS) { "不支持的系统按键" }
+            require(keyCode in SUPPORTED_KEYS) { localizedText("不支持的系统按键", "Unsupported system key.") }
             DeviceCommands.run("/system/bin/input", "-d", displayId.toString(), "keyevent", keyCode.toString())
             Unit
         }
@@ -138,7 +139,7 @@ class RootDeviceService : RootService() {
                 ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { output ->
                     val process = ProcessBuilder("/system/bin/screencap", "-p").redirectErrorStream(false).start()
                     process.inputStream.use { it.copyTo(output) }
-                    check(process.waitFor() == 0) { "主屏截图失败" }
+                    check(process.waitFor() == 0) { localizedText("主屏截图失败", "Main-screen screenshot failed.") }
                 }
             }, "main-display-capture").apply { isDaemon = true; start() }
             pipe[0]
@@ -150,13 +151,13 @@ class RootDeviceService : RootService() {
         val before = DeviceCommands.packageDisplays(
             DeviceCommands.run("/system/bin/dumpsys", "activity", "activities"), packageName
         )
-        check(before.all { it == displayId }) { "${label}在其他显示中有任务，请先手动关闭该任务" }
+        check(before.all { it == displayId }) { localizedText("${label}在其他显示中有任务，请先手动关闭该任务", "${label} has a task on another display. Close that task manually first.") }
         val result = DeviceCommands.run(
             "/system/bin/am", "start", "-W", "--display", displayId.toString(), "-n", component
         )
         val windows = DeviceCommands.run("/system/bin/dumpsys", "window", "displays")
         val after = DeviceCommands.packageWindowDisplays(windows, packageName)
-        check(after == setOf(displayId)) { "${label}未留在目标会话显示，停止后续操作" }
+        check(after == setOf(displayId)) { localizedText("${label}未留在目标会话显示，停止后续操作", "${label} did not remain on the target session display; stopping further actions.") }
         return result.take(600)
     }
 

@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.chat
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
@@ -86,15 +87,15 @@ internal suspend fun loadArtifactPreview(
     val kind = artifactPreviewKind(artifact.mimeType, artifact.name)
     if (kind == ArtifactPreviewKind.IMAGE) {
         require(artifact.sizeBytes <= MAX_IMAGE_PREVIEW_BYTES) {
-            "图片超过 20 MB，请使用分享功能在其它应用中查看"
+            localizedText("图片超过 20 MB，请使用分享功能在其它应用中查看", "This image exceeds 20 MB. Share it to view it in another app.")
         }
         return@withContext ArtifactPreviewContent.Image(artifact.contentUri)
     }
     context.contentResolver.openInputStream(android.net.Uri.parse(artifact.contentUri))?.use { input ->
         when (kind) {
-            ArtifactPreviewKind.IMAGE -> error("图片预览应直接读取产物 URI")
+            ArtifactPreviewKind.IMAGE -> error(localizedText("图片预览应直接读取产物 URI", "Image previews must read the artifact URI directly."))
             ArtifactPreviewKind.HTML -> ArtifactPreviewContent.Html(
-                input.readUtf8Limited(MAX_HTML_PREVIEW_BYTES, "HTML 超过 1 MB，无法安全预览"),
+                input.readUtf8Limited(MAX_HTML_PREVIEW_BYTES, localizedText("HTML 超过 1 MB，无法安全预览", "This HTML file exceeds 1 MB and cannot be previewed safely.")),
             )
             ArtifactPreviewKind.TEXT -> ArtifactPreviewContent.Text(
                 input.bufferedReader(Charsets.UTF_8).use { reader ->
@@ -109,7 +110,7 @@ internal suspend fun loadArtifactPreview(
                 },
             )
         }
-    } ?: error("文件不可用")
+    } ?: error(localizedText("文件不可用", "File unavailable"))
 }
 
 @Composable
@@ -185,8 +186,8 @@ internal fun ArtifactPreviewDialog(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    TextButton(onClick = onShare) { Text("分享") }
-                    TextButton(onClick = onDismiss) { Text("关闭") }
+                    TextButton(onClick = onShare) { Text(localizedText("分享", "Share")) }
+                    TextButton(onClick = onDismiss) { Text(localizedText("关闭", "Close")) }
                 }
             }
         }
@@ -307,7 +308,7 @@ private fun ArtifactImagePreview(uri: String, name: String) {
         )
         if (failed) {
             Text(
-                "图片无法解码，可尝试分享后用其它应用打开",
+                localizedText("图片无法解码，可尝试分享后用其它应用打开", "This image could not be decoded. Try sharing it to another app."),
                 modifier = Modifier.padding(24.dp),
                 color = LocalChatColors.current.secondary,
                 style = MaterialTheme.typography.bodyMedium,

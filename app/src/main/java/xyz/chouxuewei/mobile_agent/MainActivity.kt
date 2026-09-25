@@ -2,16 +2,16 @@ package xyz.chouxuewei.mobile_agent
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AppCompatActivity
 import xyz.chouxuewei.mobile_agent.chat.ChatApp
 import xyz.chouxuewei.mobile_agent.overlay.DeviceOperationOverlayService
 import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
 import kotlinx.coroutines.launch
 
 /** 正式入口只装配聊天，不获取原型控制器、设备网关或 Root 会话。 */
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.device.accessibility
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Bitmap
@@ -35,7 +36,7 @@ data class AccessibilityWindowCapture(
 
 class AccessibilityScreenshotException(
     val errorCode: Int,
-) : IllegalStateException("窗口截图失败，系统错误码：$errorCode") {
+) : IllegalStateException(localizedText("窗口截图失败，系统错误码：$errorCode", "Window screenshot failed; system error code: $errorCode")) {
     val isRateLimited: Boolean
         get() = errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
 }
@@ -53,7 +54,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
     /** 每次重新取目标显示的节点，不缓存 Android 节点或退回主屏窗口。 */
     private fun nodes(displayId: Int, windowId: Int? = null): List<AccessibilityNodeInfo> {
-        check(Build.VERSION.SDK_INT >= 30 && displayId >= 0) { "无有效的显示目标" }
+        check(Build.VERSION.SDK_INT >= 30 && displayId >= 0) { localizedText("无有效的显示目标", "No valid display target.") }
         // 浏览器节点可能来自系统缓存；每次识别必须重新读取，不能把上次的占位文字当成当前输入。
         if (Build.VERSION.SDK_INT >= 33) clearCache()
         val result = mutableListOf<AccessibilityNodeInfo>()
@@ -110,7 +111,7 @@ class AgentAccessibilityService : AccessibilityService() {
      * 先排除自身窗口，再从应用窗口中按“焦点、活动、层级”选择当前操作目标。
      */
     fun focusedApplicationWindow(displayId: Int): AccessibilityWindowTarget? {
-        check(Build.VERSION.SDK_INT >= 30 && displayId >= 0) { "无有效的显示目标" }
+        check(Build.VERSION.SDK_INT >= 30 && displayId >= 0) { localizedText("无有效的显示目标", "No valid display target.") }
         val windows = windowsOnAllDisplays.get(displayId).orEmpty()
         return try {
             windows.mapIndexedNotNull { index, window ->
@@ -139,7 +140,7 @@ class AgentAccessibilityService : AccessibilityService() {
 
     /** Android 14 起可直接截取目标窗口；其它悬浮层不会进入返回的像素。 */
     suspend fun captureWindow(target: AccessibilityWindowTarget): AccessibilityWindowCapture {
-        check(Build.VERSION.SDK_INT >= 34) { "窗口截图需要 Android 14 或更高版本" }
+        check(Build.VERSION.SDK_INT >= 34) { localizedText("窗口截图需要 Android 14 或更高版本", "Window screenshots require Android 14 or later.") }
         val result = suspendCancellableCoroutine<ScreenshotResult> { continuation ->
             takeScreenshotOfWindow(target.id, mainExecutor, object : TakeScreenshotCallback {
                 override fun onSuccess(screenshot: ScreenshotResult) {
@@ -158,11 +159,11 @@ class AgentAccessibilityService : AccessibilityService() {
         return try {
             val bitmap = withContext(Dispatchers.Default) {
                 val hardwareBitmap = checkNotNull(Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)) {
-                    "系统返回的窗口截图格式不受支持"
+                    localizedText("系统返回的窗口截图格式不受支持", "The window screenshot format returned by the system is unsupported.")
                 }
                 try {
                     checkNotNull(hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)) {
-                        "窗口截图无法转换为可编码图片"
+                        localizedText("窗口截图无法转换为可编码图片", "The window screenshot could not be converted to an encodable image.")
                     }
                 } finally {
                     hardwareBitmap.recycle()
@@ -175,43 +176,43 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     fun writeText(displayId: Int, text: String, nodeRef: NodeRef?, mode: TextInputMode) {
-        require(text.length <= 500) { "输入限制为 500 字符" }
+        require(text.length <= 500) { localizedText("输入限制为 500 字符", "Input is limited to 500 characters.") }
         val nodes = nodes(displayId)
         try {
             val editable = nodes.filter { it.isEditable && it.isEnabled && it.isVisibleToUser }
             val requested = nodeRef?.let { expected ->
                 val matches = editable.filter { it.reference() == expected }
                 require(matches.size == 1) {
-                    "目标节点已失效、不是唯一匹配或不可编辑"
+                    localizedText("目标节点已失效、不是唯一匹配或不可编辑", "The target node expired, is not unique, or is not editable.")
                 }
                 matches.single()
             }
             val target = requested ?: editable.singleOrNull { it.isFocused } ?: editable.singleOrNull()
-            checkNotNull(target) { "目标显示没有唯一可编辑节点，请先点选输入框" }
+            checkNotNull(target) { localizedText("目标显示没有唯一可编辑节点，请先点选输入框", "The target display has no unique editable node. Tap a text field first.") }
             val value = if (mode == TextInputMode.APPEND) target.text?.toString().orEmpty() + text else text
-            require(value.length <= 2_000) { "输入后的总文本不能超过 2000 字符" }
+            require(value.length <= 2_000) { localizedText("输入后的总文本不能超过 2000 字符", "The resulting text cannot exceed 2000 characters.") }
             check(target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
-            })) { "目标应用不支持节点文本输入" }
+            })) { localizedText("目标应用不支持节点文本输入", "The target app does not support node-based text input.") }
         } finally { nodes.forEach { it.recycle() } }
     }
 
     fun performNodeAction(displayId: Int, nodeRef: NodeRef, action: NodeActionKind) {
-        require(action != NodeActionKind.SET_TEXT) { "文本输入必须使用 input_text" }
+        require(action != NodeActionKind.SET_TEXT) { localizedText("文本输入必须使用 input_text", "Text input must use input_text.") }
         val nodes = nodes(displayId)
         try {
             val matches = nodes.filter { it.isEnabled && it.isVisibleToUser && it.reference() == nodeRef }
-            require(matches.size == 1) { "目标节点已失效或不是唯一匹配" }
+            require(matches.size == 1) { localizedText("目标节点已失效或不是唯一匹配", "The target node expired or is not a unique match.") }
             val actionId = actionId(action)
-            check(matches.single().performAction(actionId)) { "目标节点不支持 ${action.name.lowercase()}" }
+            check(matches.single().performAction(actionId)) { localizedText("目标节点不支持 ${action.name.lowercase()}", "The target node does not support ${action.name.lowercase()}.") }
         } finally { nodes.forEach { it.recycle() } }
     }
 
     suspend fun performGesture(displayId: Int, strokes: List<GestureStroke>) {
-        require(Build.VERSION.SDK_INT >= 30) { "复杂手势需要 Android 11 或更高版本" }
-        require(strokes.isNotEmpty() && strokes.size <= 10) { "一次手势需要 1 到 10 条轨迹" }
-        require(strokes.sumOf { it.points.size } <= 500) { "一次手势最多允许 500 个轨迹点" }
-        require(strokes.maxOf { it.startTimeMs + it.durationMs } <= 10_000) { "一次手势最长为 10 秒" }
+        require(Build.VERSION.SDK_INT >= 30) { localizedText("复杂手势需要 Android 11 或更高版本", "Complex gestures require Android 11 or later.") }
+        require(strokes.isNotEmpty() && strokes.size <= 10) { localizedText("一次手势需要 1 到 10 条轨迹", "A gesture requires 1 to 10 paths.") }
+        require(strokes.sumOf { it.points.size } <= 500) { localizedText("一次手势最多允许 500 个轨迹点", "A gesture may contain at most 500 points.") }
+        require(strokes.maxOf { it.startTimeMs + it.durationMs } <= 10_000) { localizedText("一次手势最长为 10 秒", "A gesture can last at most 10 seconds.") }
         val builder = GestureDescription.Builder().setDisplayId(displayId)
         strokes.forEach { stroke ->
             val path = Path().apply {
@@ -233,12 +234,12 @@ class AgentAccessibilityService : AccessibilityService() {
 
                 override fun onCancelled(gestureDescription: GestureDescription?) {
                     if (continuation.isActive) {
-                        continuation.resumeWithException(IllegalStateException("目标应用取消了复杂手势"))
+                        continuation.resumeWithException(IllegalStateException(localizedText("目标应用取消了复杂手势", "The target app cancelled the complex gesture.")))
                     }
                 }
             }, null)
             if (!accepted && continuation.isActive) {
-                continuation.resumeWithException(IllegalStateException("系统未接受复杂手势"))
+                continuation.resumeWithException(IllegalStateException(localizedText("系统未接受复杂手势", "The system did not accept the complex gesture.")))
             }
         }
     }

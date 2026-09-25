@@ -80,6 +80,7 @@ import xyz.chouxuewei.mobile_agent.core.ToolApprovalRequest
 import xyz.chouxuewei.mobile_agent.core.ToolCallRecord
 import xyz.chouxuewei.mobile_agent.core.ToolCallStatus
 import xyz.chouxuewei.mobile_agent.core.UserQuestionRequest
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import xyz.chouxuewei.mobile_agent.ui.theme.LocalChatColors
 import xyz.chouxuewei.mobile_agent.ui.theme.Mobile_agentTheme
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputState
@@ -101,8 +102,8 @@ internal data class OverlayViewState(
     val mode: ExecutionMode? = null,
     val stopping: Boolean = false,
     val completionConversationId: String? = null,
-    val summaryTitle: String = "悬浮助手",
-    val summaryDetail: String = "暂无进行中的任务",
+    val summaryTitle: String = localizedText("悬浮助手", "Floating assistant"),
+    val summaryDetail: String = localizedText("暂无进行中的任务", "No active tasks"),
     val modelConfigured: Boolean = true,
     val resizeHint: String? = null,
     val dockedAtStart: Boolean = false,
@@ -141,8 +142,8 @@ internal fun nextOverlayVoiceReleaseAction(
     threshold: Float,
     hysteresis: Float = threshold * .2f,
 ): OverlayVoiceReleaseAction {
-    require(threshold > 0f) { "threshold 必须大于 0" }
-    require(hysteresis in 0f..threshold) { "hysteresis 必须位于 0..threshold" }
+    require(threshold > 0f) { localizedText("threshold 必须大于 0", "threshold must be greater than 0") }
+    require(hysteresis in 0f..threshold) { localizedText("hysteresis 必须位于 0..threshold", "hysteresis must be within 0..threshold") }
     val returnBoundary = threshold - hysteresis
     return when {
         verticalOffset <= -threshold -> OverlayVoiceReleaseAction.CANCEL
@@ -275,7 +276,7 @@ private fun EdgeHandle(state: OverlayViewState, actions: OverlayActions) {
                 }
             }
             .semantics {
-                contentDescription = "悬浮助手，${status.label}，点击查看摘要，长按语音输入"
+                contentDescription = localizedText("悬浮助手，${status.label}，点击查看摘要，长按语音输入", "Floating assistant, ${status.label}. Tap for summary, hold for voice input.")
                 role = Role.Button
             },
     ) {
@@ -335,7 +336,7 @@ private fun SummaryOverlay(state: OverlayViewState, actions: OverlayActions) {
             Row(
                 Modifier.weight(1f).fillMaxHeight()
                     .clickable(role = Role.Button, onClick = actions::expandFullChat)
-                    .semantics { contentDescription = "查看完整悬浮对话" },
+                    .semantics { contentDescription = localizedText("查看完整悬浮对话", "View full floating conversation") },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 StatusBadge(state, size = 36.dp)
@@ -359,7 +360,7 @@ private fun SummaryOverlay(state: OverlayViewState, actions: OverlayActions) {
             if (state.selectedConversationId in state.activeConversations) {
                 OverlayIconAction(
                     icon = R.drawable.lucide_square,
-                    description = "停止当前任务",
+                    description = localizedText("停止当前任务", "Stop current task"),
                     foreground = colors.error,
                     container = colors.errorSoft,
                     onClick = actions::stopCurrent,
@@ -369,9 +370,9 @@ private fun SummaryOverlay(state: OverlayViewState, actions: OverlayActions) {
             OverlayIconAction(
                 icon = R.drawable.lucide_chevron_right,
                 description = if (state.approvals.isNotEmpty() || state.questions.isNotEmpty()) {
-                    "处理待确认内容"
+                    localizedText("处理待确认内容", "Handle pending items")
                 } else {
-                    "展开完整悬浮对话"
+                    localizedText("展开完整悬浮对话", "Expand full floating conversation")
                 },
                 foreground = colors.accent,
                 container = colors.accentSoft,
@@ -477,7 +478,7 @@ private fun FullHeader(
             Column(Modifier.weight(1f).padding(start = 9.dp, end = 4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        current?.title ?: "选择对话",
+                        current?.title ?: localizedText("选择对话", "Choose conversation"),
                         Modifier.weight(1f, fill = false),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -486,26 +487,26 @@ private fun FullHeader(
                     )
                     ChatIcon(
                         if (sessionsOpen) R.drawable.lucide_chevron_down else R.drawable.lucide_chevron_right,
-                        "切换对话",
+                        localizedText("切换对话", "Switch conversation"),
                         Modifier.padding(start = 5.dp).size(16.dp),
                         colors.secondary,
                     )
                 }
                 if (pendingElsewhere > 0) {
-                    Text("另有 $pendingElsewhere 个对话需要处理", color = colors.warning,
+                    Text(localizedText("另有 $pendingElsewhere 个对话需要处理", "$pendingElsewhere other conversations need attention"), color = colors.warning,
                         style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
         OverlayIconAction(
             icon = R.drawable.lucide_chevron_down,
-            description = "收起为任务摘要",
+            description = localizedText("收起为任务摘要", "Collapse to task summary"),
             foreground = colors.secondary,
             onClick = actions::collapseOneLevel,
         )
         OverlayIconAction(
             icon = R.drawable.lucide_external_link,
-            description = "在 Mobile Agent 中打开",
+            description = localizedText("在 Mobile Agent 中打开", "Open in Mobile Agent"),
             foreground = colors.accent,
             onClick = actions::openConversation,
         )
@@ -533,20 +534,20 @@ private fun ConversationSwitcher(
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         if (priority.isNotEmpty()) {
-            item { SwitcherLabel("任务对话") }
+            item { SwitcherLabel(localizedText("任务对话", "Task conversation")) }
             items(priority, key = { "priority:${it.id}" }) { conversation ->
                 ConversationRow(conversation, state, onSelect)
             }
         }
         if (recent.isNotEmpty()) {
-            item { SwitcherLabel("最近对话") }
+            item { SwitcherLabel(localizedText("最近对话", "Recent conversations")) }
             items(recent, key = { "recent:${it.id}" }) { conversation ->
                 ConversationRow(conversation, state, onSelect)
             }
         }
         item {
             TextButton(onClick = { state.selectedConversationId?.let(onSelect) }) {
-                Text("返回当前对话")
+                Text(localizedText("返回当前对话", "Return to current conversation"))
             }
         }
     }
@@ -595,7 +596,7 @@ private fun OverlayTimeline(state: OverlayViewState, modifier: Modifier) {
     }
     if (state.messages.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Text("在下方发送消息开始对话", color = LocalChatColors.current.secondary,
+            Text(localizedText("在下方发送消息开始对话", "Send a message below to start a conversation"), color = LocalChatColors.current.secondary,
                 style = MaterialTheme.typography.bodyMedium)
         }
         return
@@ -630,7 +631,7 @@ private fun OverlayMessage(message: Message, calls: List<ToolCallRecord>, toolTi
                 Column(Modifier.padding(horizontal = 13.dp, vertical = 10.dp)) {
                     Text(message.text, style = MaterialTheme.typography.bodyMedium)
                     if (message.attachments.isNotEmpty()) {
-                        Text("${message.attachments.size} 个附件", Modifier.padding(top = 5.dp),
+                        Text(localizedText("${message.attachments.size} 个附件", "${message.attachments.size} attachments"), Modifier.padding(top = 5.dp),
                             color = colors.secondary, style = MaterialTheme.typography.labelSmall)
                     }
                 }
@@ -647,7 +648,7 @@ private fun OverlayMessage(message: Message, calls: List<ToolCallRecord>, toolTi
                     color = colors.surfaceRaised,
                 ) {
                     Text(
-                        "思考 · ${reasoning.takeLast(500)}",
+                        localizedText("思考 · ${reasoning.takeLast(500)}", "Reasoning · ${reasoning.takeLast(500)}"),
                         Modifier.padding(10.dp),
                         color = colors.secondary,
                         style = MaterialTheme.typography.bodySmall,
@@ -668,7 +669,7 @@ private fun OverlayMessage(message: Message, calls: List<ToolCallRecord>, toolTi
             if (message.text.isNotBlank()) {
                 Column(Modifier.fillMaxWidth().padding(top = 7.dp, end = 5.dp)) { ReplyBody(message.text) }
             } else if (message.status == MessageStatus.GENERATING && calls.isEmpty()) {
-                Text("正在生成…", Modifier.padding(top = 7.dp), color = colors.secondary,
+                Text(localizedText("正在生成…", "Generating…"), Modifier.padding(top = 7.dp), color = colors.secondary,
                     style = MaterialTheme.typography.bodyMedium)
             }
         }
@@ -692,11 +693,11 @@ private fun ApprovalCard(request: ToolApprovalRequest, actions: OverlayActions) 
                 .padding(horizontal = 13.dp, vertical = 11.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("需要授权 · ${request.actionTitle}", color = colors.warning,
+            Text(localizedText("需要授权 · ${request.actionTitle}", "Authorization required · ${request.actionTitle}"), color = colors.warning,
                 style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             Text(request.description, style = MaterialTheme.typography.bodySmall)
             request.argumentsSummary?.takeIf(String::isNotBlank)?.let {
-                Text("将要执行：$it", color = colors.secondary, style = MaterialTheme.typography.bodySmall)
+                Text(localizedText("将要执行：$it", "About to run: $it"), color = colors.secondary, style = MaterialTheme.typography.bodySmall)
             }
             request.choices.forEach { choice ->
                 val supported = choice.id != "background" || Build.VERSION.SDK_INT >= 34
@@ -717,7 +718,7 @@ private fun ApprovalCard(request: ToolApprovalRequest, actions: OverlayActions) 
                     },
                     enabled = !submitting,
                     modifier = Modifier.weight(1f),
-                ) { Text("不允许", color = colors.error) }
+                ) { Text(localizedText("不允许", "Deny"), color = colors.error) }
                 if (request.requiresPermissionApproval) {
                     OutlinedButton(
                         onClick = {
@@ -726,7 +727,7 @@ private fun ApprovalCard(request: ToolApprovalRequest, actions: OverlayActions) 
                         },
                         enabled = !submitting && selectionReady,
                         modifier = Modifier.weight(1f),
-                    ) { Text("始终允许") }
+                    ) { Text(localizedText("始终允许", "Always allow")) }
                 }
                 Button(
                     onClick = {
@@ -736,7 +737,7 @@ private fun ApprovalCard(request: ToolApprovalRequest, actions: OverlayActions) 
                     enabled = !submitting && selectionReady,
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
-                ) { Text(if (request.choices.isEmpty()) "仅本次" else "开始") }
+                ) { Text(if (request.choices.isEmpty()) localizedText("仅本次", "Just once") else localizedText("开始", "Start")) }
             }
         }
     }
@@ -758,7 +759,7 @@ private fun QuestionCard(request: UserQuestionRequest, actions: OverlayActions) 
                 .padding(horizontal = 13.dp, vertical = 11.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("AI 需要你的回答", color = colors.accent, style = MaterialTheme.typography.labelLarge,
+            Text(localizedText("AI 需要你的回答", "AI needs your answer"), color = colors.accent, style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold)
             Text(request.question, style = MaterialTheme.typography.bodyMedium)
             request.options.forEach { option ->
@@ -782,7 +783,7 @@ private fun QuestionCard(request: UserQuestionRequest, actions: OverlayActions) 
                     cursorBrush = SolidColor(colors.accent),
                     decorationBox = { inner ->
                         Box {
-                            if (answer.isBlank()) Text("输入你的回答", color = colors.tertiary,
+                            if (answer.isBlank()) Text(localizedText("输入你的回答", "Enter your answer"), color = colors.tertiary,
                                 style = MaterialTheme.typography.bodyMedium)
                             inner()
                         }
@@ -797,7 +798,7 @@ private fun QuestionCard(request: UserQuestionRequest, actions: OverlayActions) 
                     },
                     enabled = !submitting,
                     modifier = Modifier.weight(1f),
-                ) { Text("暂不回答") }
+                ) { Text(localizedText("暂不回答", "Not now")) }
                 if (request.allowFreeText) {
                     Button(
                         onClick = {
@@ -806,7 +807,7 @@ private fun QuestionCard(request: UserQuestionRequest, actions: OverlayActions) 
                         },
                         enabled = !submitting && answer.isNotBlank(),
                         modifier = Modifier.weight(1f),
-                    ) { Text("提交回答") }
+                    ) { Text(localizedText("提交回答", "Submit answer")) }
                 }
             }
         }
@@ -838,7 +839,7 @@ private fun OverlayComposer(state: OverlayViewState, actions: OverlayActions, mo
                 decorationBox = { inner ->
                     Box {
                         if (state.draft.text.isBlank()) Text(
-                            if (state.modelConfigured) "发送消息" else "请先在 App 中配置模型",
+                            if (state.modelConfigured) localizedText("发送消息", "Send message") else localizedText("请先在 App 中配置模型", "Configure a model in the app first"),
                             color = colors.secondary,
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -856,7 +857,7 @@ private fun OverlayComposer(state: OverlayViewState, actions: OverlayActions, mo
                     color = colors.muted,
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        ChatIcon(R.drawable.lucide_square, "停止当前任务", Modifier.size(16.dp), colors.error)
+                        ChatIcon(R.drawable.lucide_square, localizedText("停止当前任务", "Stop current task"), Modifier.size(16.dp), colors.error)
                     }
                 }
             }
@@ -870,7 +871,7 @@ private fun OverlayComposer(state: OverlayViewState, actions: OverlayActions, mo
                 color = if (canSend) colors.accent else colors.muted,
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    ChatIcon(R.drawable.lucide_arrow_up, "发送消息", Modifier.size(18.dp),
+                    ChatIcon(R.drawable.lucide_arrow_up, localizedText("发送消息", "Send message"), Modifier.size(18.dp),
                         if (canSend) colors.onAccent else colors.tertiary)
                 }
             }
@@ -883,7 +884,7 @@ private fun ResizeHandle(corner: ResizeCorner, modifier: Modifier, actions: Over
     Box(
         modifier.size(48.dp)
             .testTag("overlay_resize_handle")
-            .semantics { contentDescription = "调整悬浮窗大小" }
+            .semantics { contentDescription = localizedText("调整悬浮窗大小", "Resize floating window") }
             .pointerInput(corner) {
                 detectDragGestures(
                     onDragEnd = { actions.resize(corner, 0f, 0f, true) },
@@ -964,10 +965,10 @@ private fun CompletedToolsRow(
         ) {
             ChatIcon(R.drawable.lucide_circle_check, null, Modifier.size(18.dp), colors.success)
             Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
-                Text("已完成 ${calls.size} 步", style = MaterialTheme.typography.labelMedium,
+                Text(localizedText("已完成 ${calls.size} 步", "Completed ${calls.size} steps"), style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold)
                 Text(
-                    toolTitles[calls.last().toolId] ?: "最近一步已完成",
+                    toolTitles[calls.last().toolId] ?: localizedText("最近一步已完成", "Latest step completed"),
                     color = colors.secondary,
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
@@ -976,7 +977,7 @@ private fun CompletedToolsRow(
             }
             ChatIcon(
                 if (expanded) R.drawable.lucide_chevron_down else R.drawable.lucide_chevron_right,
-                if (expanded) "收起已完成步骤" else "展开已完成步骤",
+                if (expanded) localizedText("收起已完成步骤", "Hide completed steps") else localizedText("展开已完成步骤", "Show completed steps"),
                 Modifier.size(17.dp),
                 colors.secondary,
             )
@@ -1006,7 +1007,7 @@ private fun CompactToolRow(call: ToolCallRecord, toolTitles: Map<String, String>
             Box(Modifier.size(7.dp).background(foreground, CircleShape))
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(
-                    "${toolStatusText(call.status)} · ${toolTitles[call.toolId] ?: "工具调用"}",
+                    "${toolStatusText(call.status)} · ${toolTitles[call.toolId] ?: localizedText("工具调用", "Tool calls")}",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -1037,11 +1038,11 @@ private fun voiceRecordingStatusVisual(action: OverlayVoiceReleaseAction): Overl
     val colors = LocalChatColors.current
     return when (action) {
         OverlayVoiceReleaseAction.SEND_CURRENT ->
-            OverlayStatusVisual("正在录音，松开发送", R.drawable.lucide_mic, colors.error, colors.errorSoft)
+            OverlayStatusVisual(localizedText("正在录音，松开发送", "Recording — release to send"), R.drawable.lucide_mic, colors.error, colors.errorSoft)
         OverlayVoiceReleaseAction.CANCEL ->
-            OverlayStatusVisual("松手取消发送", R.drawable.lucide_x, colors.error, colors.errorSoft)
+            OverlayStatusVisual(localizedText("松手取消发送", "Release to cancel"), R.drawable.lucide_x, colors.error, colors.errorSoft)
         OverlayVoiceReleaseAction.SEND_NEW_CONVERSATION ->
-            OverlayStatusVisual("松手在新会话发送", R.drawable.lucide_plus, colors.accent, colors.accentSoft)
+            OverlayStatusVisual(localizedText("松手在新会话发送", "Release to send in a new conversation"), R.drawable.lucide_plus, colors.accent, colors.accentSoft)
     }
 }
 
@@ -1073,23 +1074,23 @@ private fun overlayStatusVisual(state: OverlayViewState, global: Boolean): Overl
     val colors = LocalChatColors.current
     return when (overlayStatusKind(state, global)) {
         OverlayStatusKind.RECORDING ->
-            OverlayStatusVisual("正在录音，松开发送", R.drawable.lucide_mic, colors.error, colors.errorSoft)
+            OverlayStatusVisual(localizedText("正在录音，松开发送", "Recording — release to send"), R.drawable.lucide_mic, colors.error, colors.errorSoft)
         OverlayStatusKind.TRANSCRIBING ->
             OverlayStatusVisual(
-                "正在转写语音",
+                localizedText("正在转写语音", "Transcribing speech"),
                 R.drawable.lucide_sparkles,
                 colors.accent,
                 colors.accentSoft,
                 animated = true,
             )
         OverlayStatusKind.ATTENTION ->
-            OverlayStatusVisual("需要处理", R.drawable.lucide_ellipsis, colors.warning, colors.warningSoft)
+            OverlayStatusVisual(localizedText("需要处理", "Needs attention"), R.drawable.lucide_ellipsis, colors.warning, colors.warningSoft)
         OverlayStatusKind.RUNNING ->
-            OverlayStatusVisual("任务执行中", R.drawable.lucide_sparkles, colors.accent, colors.accentSoft, animated = true)
+            OverlayStatusVisual(localizedText("任务执行中", "Task running"), R.drawable.lucide_sparkles, colors.accent, colors.accentSoft, animated = true)
         OverlayStatusKind.COMPLETED ->
-            OverlayStatusVisual("任务已完成", R.drawable.lucide_circle_check, colors.success, colors.successSoft)
+            OverlayStatusVisual(localizedText("任务已完成", "Task completed"), R.drawable.lucide_circle_check, colors.success, colors.successSoft)
         OverlayStatusKind.IDLE ->
-            OverlayStatusVisual("当前空闲", R.drawable.lucide_bot, colors.secondary, colors.muted)
+            OverlayStatusVisual(localizedText("当前空闲", "Idle"), R.drawable.lucide_bot, colors.secondary, colors.muted)
     }
 }
 
@@ -1097,23 +1098,23 @@ private fun overlayStatusVisual(state: OverlayViewState, global: Boolean): Overl
 private fun conversationStatus(id: String, state: OverlayViewState): Pair<String, Color> {
     val colors = LocalChatColors.current
     return when {
-        state.approvals.any { it.conversationId == id } -> "需要授权" to colors.warning
-        state.questions.any { it.conversationId == id } -> "等待回答" to colors.warning
-        id in state.activeConversations -> "执行中" to colors.accent
-        id == state.completionConversationId -> "刚刚完成" to colors.success
-        else -> "最近使用" to colors.tertiary
+        state.approvals.any { it.conversationId == id } -> localizedText("需要授权", "Authorization required") to colors.warning
+        state.questions.any { it.conversationId == id } -> localizedText("等待回答", "Waiting for answer") to colors.warning
+        id in state.activeConversations -> localizedText("执行中", "Running") to colors.accent
+        id == state.completionConversationId -> localizedText("刚刚完成", "Just completed") to colors.success
+        else -> localizedText("最近使用", "Recently used") to colors.tertiary
     }
 }
 
 private fun toolStatusText(status: ToolCallStatus): String = when (status) {
-    ToolCallStatus.RECEIVED -> "准备中"
-    ToolCallStatus.WAITING_APPROVAL -> "等待确认"
-    ToolCallStatus.EXECUTING -> "执行中"
-    ToolCallStatus.SUCCEEDED -> "已完成"
-    ToolCallStatus.FAILED -> "未完成"
-    ToolCallStatus.DENIED -> "未授权"
-    ToolCallStatus.CANCELLED -> "已停止"
-    ToolCallStatus.INTERRUPTED -> "已中断"
+    ToolCallStatus.RECEIVED -> localizedText("准备中", "Preparing")
+    ToolCallStatus.WAITING_APPROVAL -> localizedText("等待确认", "Waiting for approval")
+    ToolCallStatus.EXECUTING -> localizedText("执行中", "Running")
+    ToolCallStatus.SUCCEEDED -> localizedText("已完成", "Completed")
+    ToolCallStatus.FAILED -> localizedText("未完成", "Not completed")
+    ToolCallStatus.DENIED -> localizedText("未授权", "Not authorized")
+    ToolCallStatus.CANCELLED -> localizedText("已停止", "Stopped")
+    ToolCallStatus.INTERRUPTED -> localizedText("已中断", "Interrupted")
 }
 
 private const val RECENT_CONVERSATION_LIMIT = 5

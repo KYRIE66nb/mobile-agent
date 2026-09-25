@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -64,7 +65,7 @@ internal fun List<ModelUsageSummary>.record(record: ModelUsageRecord): List<Mode
     val output = record.outputTokens?.toLong()?.coerceAtLeast(0L) ?: 0L
     val updated = ModelUsageSummary(
         modelProfileId = profileId,
-        modelName = record.modelName.ifBlank { record.modelId.ifBlank { "未命名模型" } },
+        modelName = record.modelName.ifBlank { record.modelId.ifBlank { localizedText("未命名模型", "Unnamed model") } },
         modelId = record.modelId,
         measuredRequests = (existing?.measuredRequests ?: 0L).saturatedPlus(1L),
         inputTokens = (existing?.inputTokens ?: 0L).saturatedPlus(input),

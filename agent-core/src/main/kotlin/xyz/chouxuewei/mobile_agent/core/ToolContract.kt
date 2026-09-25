@@ -130,23 +130,26 @@ class ToolRegistry(providers: List<ToolProvider>) {
         this@ToolRegistry.providers.forEach { provider ->
             provider.definitions.forEach { definition ->
                 check(definition.providerId == provider.id) {
-                    "工具 ${definition.id} 的能力组与提供者不一致"
+                    localizedText("工具 ${definition.id} 的能力组与提供者不一致", "The capability group for tool ${definition.id} does not match its provider.")
                 }
-                check(put(definition.id, provider) == null) { "工具 ID 重复：${definition.id}" }
+                check(put(definition.id, provider) == null) { localizedText("工具 ID 重复：${definition.id}", "Duplicate tool ID: ${definition.id}") }
             }
         }
     }
-    val definitions: List<ToolDefinition> = this.providers.flatMap(ToolProvider::definitions)
-    val capabilityPlaceholders: List<ToolCapability> = this.providers.map { provider ->
-        ToolCapability(
-            provider.id,
-            provider.title,
-            provider.description,
-            provider.definitions.size,
-            ToolAvailability(ToolAvailabilityState.NEEDS_SETUP, "正在检查可用性"),
-            provider.definitions.any(ToolDefinition::requiresPermissionApproval),
-        )
-    }
+    /** 文案随应用语言即时解析；只缓存稳定的 provider 与 tool ID 映射。 */
+    val definitions: List<ToolDefinition>
+        get() = providers.flatMap(ToolProvider::definitions)
+    val capabilityPlaceholders: List<ToolCapability>
+        get() = providers.map { provider ->
+            ToolCapability(
+                provider.id,
+                provider.title,
+                provider.description,
+                provider.definitions.size,
+                ToolAvailability(ToolAvailabilityState.NEEDS_SETUP, localizedText("正在检查可用性", "Checking availability")),
+                provider.definitions.any(ToolDefinition::requiresPermissionApproval),
+            )
+        }
 
     fun definition(id: String): ToolDefinition? = definitions.firstOrNull { it.id == id }
 
@@ -171,13 +174,19 @@ class ToolRegistry(providers: List<ToolProvider>) {
     }
 
     suspend fun execute(call: RequestedToolCall, context: ToolExecutionContext): ToolResult {
-        val provider = providersByTool[call.toolId]
-            ?: return ToolResult("{\"error\":\"未知工具\"}", "未知工具 ${call.toolId}", true)
+        val provider = providersByTool[call.toolId] ?: run {
+            val error = localizedText("未知工具", "Unknown tool")
+            return ToolResult(
+                "{\"error\":\"$error\"}",
+                localizedText("未知工具 ${call.toolId}", "Unknown tool ${call.toolId}"),
+                true,
+            )
+        }
         val availability = provider.availability()
         if (!availability.state.isUsable()) {
             return ToolResult(
                 "{\"error\":\"${availability.detail.ifBlank { availability.state.name }}\"}",
-                availability.detail.ifBlank { "工具当前不可用" },
+                availability.detail.ifBlank { localizedText("工具当前不可用", "Tool currently unavailable") },
                 true,
             )
         }

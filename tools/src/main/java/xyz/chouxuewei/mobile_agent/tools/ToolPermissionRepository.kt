@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.tools
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -40,12 +41,12 @@ class ToolPermissionRepository(context: Context) : ToolPermissionStore {
         accesses.first()[capabilityId] ?: ToolAccess()
 
     override suspend fun setEnabled(capabilityId: String, enabled: Boolean) {
-        require(CAPABILITY_ID.matches(capabilityId)) { "能力 ID 无效" }
+        require(CAPABILITY_ID.matches(capabilityId)) { localizedText("能力 ID 无效", "Invalid capability ID.") }
         store.edit { it[booleanPreferencesKey(ENABLED_PREFIX + capabilityId)] = enabled }
     }
 
     override suspend fun setPermission(capabilityId: String, mode: ToolPermissionMode) {
-        require(CAPABILITY_ID.matches(capabilityId)) { "能力 ID 无效" }
+        require(CAPABILITY_ID.matches(capabilityId)) { localizedText("能力 ID 无效", "Invalid capability ID.") }
         store.edit { it[stringPreferencesKey(PERMISSION_PREFIX + capabilityId)] = mode.name }
     }
 

@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -102,13 +103,13 @@ internal object RecordCodec {
                         startTimeMs = stroke.long("start_time_ms"),
                         durationMs = stroke.long("duration_ms"),
                     )
-                } ?: error("记录缺少字段 strokes"),
+                } ?: error(localizedText("记录缺少字段 strokes", "The record is missing field strokes.")),
             )
             "press_key" -> Action.PressKey(DeviceKey.valueOf(root.string("key")))
             "open_app" -> Action.OpenApp(AppTarget(root.string("package_name")))
             "wait" -> Action.Wait(root.long("duration_ms"))
             "enable_node_access" -> Action.EnableNodeAccess
-            else -> error("未知动作记录")
+            else -> error(localizedText("未知动作记录", "Unknown action record."))
         }
     }
 
@@ -147,19 +148,19 @@ internal object RecordCodec {
                 root.string("reason"),
                 root["retryable"]?.jsonPrimitive?.booleanOrNull ?: false,
             )
-            else -> error("未知动作结果记录")
+            else -> error(localizedText("未知动作结果记录", "Unknown action result record."))
         }
     }
 
     private fun JsonObject.string(name: String): String =
-        optionalString(name) ?: error("记录缺少字段 $name")
+        optionalString(name) ?: error(localizedText("记录缺少字段 $name", "The record is missing field $name."))
 
     private fun JsonObject.optionalString(name: String): String? =
         this[name]?.jsonPrimitive?.contentOrNull
 
     private fun JsonObject.int(name: String): Int =
-        this[name]?.jsonPrimitive?.intOrNull ?: error("记录字段 $name 不是整数")
+        this[name]?.jsonPrimitive?.intOrNull ?: error(localizedText("记录字段 $name 不是整数", "Record field $name is not an integer."))
 
     private fun JsonObject.long(name: String): Long =
-        this[name]?.jsonPrimitive?.longOrNull ?: error("记录字段 $name 不是整数")
+        this[name]?.jsonPrimitive?.longOrNull ?: error(localizedText("记录字段 $name 不是整数", "Record field $name is not an integer."))
 }

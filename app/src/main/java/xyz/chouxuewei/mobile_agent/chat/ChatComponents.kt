@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.chat
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.annotation.DrawableRes
@@ -117,14 +118,14 @@ fun AttachmentCard(attachment: AttachmentRef, onRemove: (() -> Unit)? = null) {
             }
             Column(Modifier.weight(1f).padding(horizontal = 11.dp)) {
                 Text(attachment.name, style = MaterialTheme.typography.labelLarge, maxLines = 1)
-                val type = if (attachment.isImage) "图片 · 发送时上传" else "文件 · 需要时读取"
+                val type = if (attachment.isImage) localizedText("图片 · 发送时上传", "Image · uploaded when sent") else localizedText("文件 · 需要时读取", "File · read when needed")
                 val detail = attachment.sizeBytes?.let { "$type · ${formatBytes(it)}" } ?: type
                 Text(detail, style = MaterialTheme.typography.labelSmall,
                     color = colors.secondary)
             }
             if (onRemove != null) {
                 IconButton(onClick = onRemove) {
-                    ChatIcon(R.drawable.lucide_x, "移除 ${attachment.name}")
+                    ChatIcon(R.drawable.lucide_x, localizedText("移除 ${attachment.name}", "Remove ${attachment.name}"))
                 }
             }
         }
@@ -200,10 +201,10 @@ fun ArtifactCard(
                 }
             }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                TextButton(onClick = onOpen) { Text("预览") }
-                TextButton(onClick = onShare) { Text("分享") }
-                TextButton(onClick = onReuse) { Text("继续处理") }
-                TextButton(onClick = onDelete) { Text("删除", color = colors.error) }
+                TextButton(onClick = onOpen) { Text(localizedText("预览", "Preview")) }
+                TextButton(onClick = onShare) { Text(localizedText("分享", "Share")) }
+                TextButton(onClick = onReuse) { Text(localizedText("继续处理", "Continue")) }
+                TextButton(onClick = onDelete) { Text(localizedText("删除", "Delete"), color = colors.error) }
             }
         }
     }

@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.attachments
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -69,7 +70,7 @@ class AttachmentManager(
                 }
             }
         }
-            .onFailure { failure -> mutableError.value = userFacingMessage(failure, "无法接收分享内容，请重试") }
+            .onFailure { failure -> mutableError.value = userFacingMessage(failure, localizedText("无法接收分享内容，请重试", "Could not receive the shared content. Please try again.")) }
     }
 
     fun clearError() { mutableError.value = null }
@@ -104,11 +105,11 @@ class AttachmentManager(
 
     suspend fun fromPicker(uri: Uri): AttachmentRef = withContext(Dispatchers.IO) {
         fileGate.withLock {
-            require(uri.scheme == "content") { "无法读取这个来源，请通过系统文件选择器重新选择" }
+            require(uri.scheme == "content") { localizedText("无法读取这个来源，请通过系统文件选择器重新选择", "This source cannot be read. Choose it again with the system file picker.") }
             val metadata = metadata(uri)
             val mimeType = metadata.mimeType
             if (mimeType.startsWith("image/")) require((metadata.size ?: 0L) <= MAX_IMAGE_INPUT_BYTES) {
-                "图片不能超过 ${MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MB"
+                localizedText("图片不能超过 ${MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MB", "Images cannot exceed ${MAX_IMAGE_INPUT_BYTES / 1024 / 1024} MB.")
             }
             val attachment = try {
                 resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -124,7 +125,7 @@ class AttachmentManager(
 
     override suspend fun loadImage(attachment: AttachmentRef): ChatImage = withContext(Dispatchers.IO) {
         fileGate.withLock {
-            require(attachment.isImage) { "这个附件不是可发送的图片" }
+            require(attachment.isImage) { localizedText("这个附件不是可发送的图片", "This attachment is not an image that can be sent.") }
             val cacheFile = File(imageCacheRoot, cacheKey(attachment) + ".jpg")
             val bytes = if (cacheFile.isFile && cacheFile.length() in 1..MAX_MODEL_IMAGE_BYTES) {
                 cacheFile.readBytes()
@@ -135,14 +136,14 @@ class AttachmentManager(
                 temporary.outputStream().use { output -> output.write(encoded) }
                 if (!temporary.renameTo(cacheFile)) {
                     temporary.delete()
-                    error("图片处理失败，请重试")
+                    error(localizedText("图片处理失败，请重试", "Image processing failed. Please try again."))
                 }
                 encoded
             }
             cacheFile.setLastModified(System.currentTimeMillis())
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            require(bounds.outWidth > 0 && bounds.outHeight > 0) { "无法识别图片格式，请更换图片后重试" }
+            require(bounds.outWidth > 0 && bounds.outHeight > 0) { localizedText("无法识别图片格式，请更换图片后重试", "The image format is not recognized. Choose another image and try again.") }
             ChatImage(attachment.name, "image/jpeg", bytes, bounds.outWidth, bounds.outHeight)
         }
     }
@@ -188,23 +189,23 @@ class AttachmentManager(
     private fun importShare(intent: Intent): IncomingShare {
         val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty().take(MAX_SHARED_TEXT_CHARS)
         val uris = sharedUris(intent).distinctBy(Uri::toString)
-        require(uris.size <= MAX_SHARED_FILES) { "一次最多分享 $MAX_SHARED_FILES 个文件" }
+        require(uris.size <= MAX_SHARED_FILES) { localizedText("一次最多分享 $MAX_SHARED_FILES 个文件", "You can share up to $MAX_SHARED_FILES files at a time.") }
         val shareId = UUID.randomUUID().toString()
         val imported = mutableListOf<AttachmentRef>()
         return try {
             var total = 0L
             uris.forEach { uri ->
-                require(uri.scheme == "content") { "无法安全读取这项分享内容" }
+                require(uri.scheme == "content") { localizedText("无法安全读取这项分享内容", "This shared content cannot be read safely.") }
                 val metadata = metadata(uri, intent.type)
                 require(metadata.mimeType.startsWith("image/") || metadata.mimeType.startsWith("text/")) {
-                    "目前只能分享图片或文字到 Mobile Agent"
+                    localizedText("目前只能分享图片或文字到 Mobile Agent", "Mobile Agent currently accepts shared images or text only.")
                 }
                 val item = copyIntoOwnedDirectory(uri, metadata, shareId)
                 total += item.sizeBytes ?: 0L
-                require(total <= MAX_SHARED_TOTAL_BYTES) { "分享内容过大，请减少文件后重试" }
+                require(total <= MAX_SHARED_TOTAL_BYTES) { localizedText("分享内容过大，请减少文件后重试", "The shared content is too large. Remove some files and try again.") }
                 imported += item
             }
-            require(text.isNotBlank() || imported.isNotEmpty()) { "没有可添加的分享内容" }
+            require(text.isNotBlank() || imported.isNotEmpty()) { localizedText("没有可添加的分享内容", "There is no shared content to add.") }
             IncomingShare(shareId, text, imported)
         } catch (failure: Exception) {
             File(importedRoot, shareId).deleteRecursively()
@@ -214,7 +215,7 @@ class AttachmentManager(
 
     private fun copyIntoOwnedDirectory(uri: Uri, metadata: Metadata, groupId: String): AttachmentRef {
         val limit = if (metadata.mimeType.startsWith("image/")) MAX_IMAGE_INPUT_BYTES else MAX_TEXT_INPUT_BYTES
-        metadata.size?.let { require(it <= limit) { "“${metadata.name}”过大，请选择较小的文件" } }
+        metadata.size?.let { require(it <= limit) { localizedText("“${metadata.name}”过大，请选择较小的文件", "“${metadata.name}” is too large. Choose a smaller file.") } }
         val directory = File(importedRoot, groupId).apply { mkdirs() }
         val destination = uniqueFile(directory, safeName(metadata.name, metadata.mimeType))
         val temporary = File(directory, ".${destination.name}.tmp-${UUID.randomUUID()}")
@@ -226,15 +227,15 @@ class AttachmentManager(
                     val read = input.read(buffer)
                     if (read < 0) break
                     size += read
-                    require(size <= limit) { "“${metadata.name}”过大，请选择较小的文件" }
+                    require(size <= limit) { localizedText("“${metadata.name}”过大，请选择较小的文件", "“${metadata.name}” is too large. Choose a smaller file.") }
                     output.write(buffer, 0, read)
                 }
                 output.fd.sync()
             }
-        } ?: error("无法读取“${metadata.name}”")
+        } ?: error(localizedText("无法读取“${metadata.name}”", "Could not read “${metadata.name}”."))
         if (!temporary.renameTo(destination)) {
             temporary.delete()
-            error("无法保存“${metadata.name}”，请重试")
+            error(localizedText("无法保存“${metadata.name}”，请重试", "Could not save “${metadata.name}”. Please try again."))
         }
         val published = FileProvider.getUriForFile(appContext, authority, destination)
         return AttachmentRef(published.toString(), destination.name, metadata.mimeType, size)
@@ -270,7 +271,7 @@ class AttachmentManager(
             ?: fallbackMime
             ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension.lowercase())
             ?: "application/octet-stream"
-        return Metadata(name?.takeIf(String::isNotBlank) ?: "附件", mime, size)
+        return Metadata(name?.takeIf(String::isNotBlank) ?: localizedText("附件", "Attachment"), mime, size)
     }
 
     private fun readLimited(uri: Uri, limit: Long): ByteArray {
@@ -282,24 +283,24 @@ class AttachmentManager(
                 val read = input.read(buffer)
                 if (read < 0) break
                 total += read
-                require(total <= limit) { "图片不能超过 ${limit / 1024 / 1024} MB" }
+                require(total <= limit) { localizedText("图片不能超过 ${limit / 1024 / 1024} MB", "Images cannot exceed ${limit / 1024 / 1024} MB.") }
                 output.write(buffer, 0, read)
             }
-        } ?: error("无法读取这张图片，请重新选择")
+        } ?: error(localizedText("无法读取这张图片，请重新选择", "This image cannot be read. Please choose it again."))
         return output.toByteArray()
     }
 
     private fun encodeForModel(source: ByteArray): ByteArray {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(source, 0, source.size, bounds)
-        require(bounds.outWidth > 0 && bounds.outHeight > 0) { "无法识别图片格式，请更换图片后重试" }
-        require(bounds.outWidth.toLong() * bounds.outHeight <= MAX_IMAGE_PIXELS) { "图片尺寸过大，请压缩后重试" }
+        require(bounds.outWidth > 0 && bounds.outHeight > 0) { localizedText("无法识别图片格式，请更换图片后重试", "The image format is not recognized. Choose another image and try again.") }
+        require(bounds.outWidth.toLong() * bounds.outHeight <= MAX_IMAGE_PIXELS) { localizedText("图片尺寸过大，请压缩后重试", "The image dimensions are too large. Compress it and try again.") }
         var sample = 1
         while (bounds.outWidth / sample > MAX_MODEL_EDGE * 2 || bounds.outHeight / sample > MAX_MODEL_EDGE * 2) sample *= 2
         val decoded = BitmapFactory.decodeByteArray(source, 0, source.size, BitmapFactory.Options().apply {
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.ARGB_8888
-        }) ?: error("无法读取这张图片，请更换图片后重试")
+        }) ?: error(localizedText("无法读取这张图片，请更换图片后重试", "This image cannot be read. Choose another image and try again."))
         val oriented = applyExifOrientation(decoded, source)
         val scale = minOf(1f, MAX_MODEL_EDGE.toFloat() / maxOf(oriented.width, oriented.height))
         val scaled = if (scale < 1f) Bitmap.createScaledBitmap(
@@ -314,13 +315,13 @@ class AttachmentManager(
             drawBitmap(scaled, 0f, 0f, null)
         }
         val output = ByteArrayOutputStream()
-        check(flattened.compress(Bitmap.CompressFormat.JPEG, 86, output)) { "图片处理失败，请重试" }
+        check(flattened.compress(Bitmap.CompressFormat.JPEG, 86, output)) { localizedText("图片处理失败，请重试", "Image processing failed. Please try again.") }
         if (scaled !== oriented) scaled.recycle()
         if (oriented !== decoded) oriented.recycle()
         decoded.recycle()
         flattened.recycle()
         val result = output.toByteArray()
-        require(result.size <= MAX_MODEL_IMAGE_BYTES) { "图片处理后仍然过大，请换一张较小的图片" }
+        require(result.size <= MAX_MODEL_IMAGE_BYTES) { localizedText("图片处理后仍然过大，请换一张较小的图片", "The processed image is still too large. Choose a smaller image.") }
         return result
     }
 
@@ -382,7 +383,7 @@ class AttachmentManager(
             .takeUnless { it == "." || it == ".." }.orEmpty()
         if (cleaned.isNotBlank() && '.' in cleaned) return cleaned
         val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType).orEmpty()
-        val base = cleaned.ifBlank { "附件" }
+        val base = cleaned.ifBlank { localizedText("附件", "Attachment") }
         return if (extension.isBlank()) base else "$base.$extension"
     }
 

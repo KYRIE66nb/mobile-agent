@@ -1,0 +1,5 @@
+<resources>
+    <string name="accessibility_service_name">Mobile Agent 节点服务</string>
+    <string name="accessibility_description">允许 Mobile Agent 识别界面控件，并在你授权后完成点击、输入等手机操作。</string>
+</resources>
+

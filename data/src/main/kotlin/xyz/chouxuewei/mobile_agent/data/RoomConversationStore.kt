@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.room.withTransaction
 import java.util.UUID
@@ -21,12 +22,12 @@ class RoomConversationStore internal constructor(private val database: AgentData
     override suspend fun conversation(id: String) = dao.conversation(id)?.record()
     override suspend fun rename(id: String, title: String) { require(title.isNotBlank()); dao.rename(id, title.trim().take(100)) }
     override suspend fun setPinned(id: String, pinned: Boolean) {
-        check(dao.setPinned(id, pinned) == 1) { "找不到要置顶的对话" }
+        check(dao.setPinned(id, pinned) == 1) { localizedText("找不到要置顶的对话", "The conversation to pin was not found.") }
     }
     override suspend fun deleteConversation(id: String) = database.withTransaction {
         // 运行中的任务仍可能继续回写消息，必须先结束回复再允许级联删除。
-        check(dao.activeCount(id) == 0) { "这段对话正在回复，请停止后再删除" }
-        check(dao.deleteConversation(id) == 1) { "找不到要删除的对话" }
+        check(dao.activeCount(id) == 0) { localizedText("这段对话正在回复，请停止后再删除", "This conversation is responding. Stop it before deleting.") }
+        check(dao.deleteConversation(id) == 1) { localizedText("找不到要删除的对话", "The conversation to delete was not found.") }
     }
     override suspend fun saveDraft(
         id: String,
@@ -43,13 +44,14 @@ class RoomConversationStore internal constructor(private val database: AgentData
         val m = Message(UUID.randomUUID().toString(), id, (history.maxOfOrNull { it.sequence } ?: 0) + 2,
             MessageRole.USER, text, MessageStatus.QUEUED, System.currentTimeMillis(), attachments)
         dao.save(m.entity())
-        val firstTitle = text.take(28).ifBlank { if (attachments.any(AttachmentRef::isImage)) "图片对话" else "新对话" }
-        dao.save(c.copy(title = if (history.isEmpty() && c.title == "新对话") firstTitle else c.title,
+        val firstTitle = text.take(28).ifBlank { if (attachments.any(AttachmentRef::isImage)) localizedText("图片对话", "Image conversation") else localizedText("新对话", "New conversation") }
+        // 标题可能是在另一种系统语言下创建的，判断占位标题时同时兼容中英文旧数据。
+        dao.save(c.copy(title = if (history.isEmpty() && c.title in setOf("新对话", "New conversation")) firstTitle else c.title,
             draft = "", attachments = "[]", reasoningEffort = null, updatedAt = m.createdAt))
         m
     }
     override suspend fun beginRun(id: String, triggerId: String, model: String): Run = database.withTransaction {
-        check(dao.activeCount(id) == 0) { "这段对话已有正在执行的回复" }
+        check(dao.activeCount(id) == 0) { localizedText("这段对话已有正在执行的回复", "This conversation already has a response in progress.") }
         val trigger = dao.messages(id).first { it.id == triggerId }
         check(trigger.status == MessageStatus.QUEUED.name)
         dao.save(trigger.copy(status = MessageStatus.COMPLETE.name, version = trigger.version + 1))
@@ -87,7 +89,17 @@ class RoomConversationStore internal constructor(private val database: AgentData
     }
     override suspend fun recoverInterrupted() = database.withTransaction {
         val now = System.currentTimeMillis()
-        dao.interruptRuns(now); dao.interruptMessages(); dao.interruptToolCalls(now)
+        val runError = localizedText(
+            "上次运行意外中断，内容未重新发送",
+            "The previous run was interrupted; its content was not sent again.",
+        )
+        val toolError = localizedText(
+            "上次操作意外中断，未自动重试",
+            "The previous operation was interrupted and was not retried automatically.",
+        )
+        dao.interruptRuns(now, runError)
+        dao.interruptMessages(runError)
+        dao.interruptToolCalls(now, toolError)
     }
     override suspend fun snapshot(id: String) = dao.snapshot(id)?.record()
     override suspend fun publishSnapshot(snapshot: ContextSnapshot): Boolean = database.withTransaction {

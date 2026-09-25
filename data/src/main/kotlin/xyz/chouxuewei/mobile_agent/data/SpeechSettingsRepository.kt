@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -103,7 +104,7 @@ class SpeechSettingsRepository(context: Context) {
 
     suspend fun saveOpenAi(endpointUrl: String, model: String, newApiKey: String?) {
         val endpoint = validateHttpEndpoint(endpointUrl)
-        val normalizedModel = validateField(model, "请填写语音模型 ID", 200)
+        val normalizedModel = validateField(model, localizedText("请填写语音模型 ID", "Enter a speech model ID."), 200)
         val key = validateOptionalSecret(newApiKey)
         dataStore.edit { values ->
             values[Keys.OPENAI_ENDPOINT] = endpoint
@@ -113,7 +114,7 @@ class SpeechSettingsRepository(context: Context) {
                 values[Keys.OPENAI_KEY_IV] = encrypted.iv
             }
             require(hasSecret(values[Keys.OPENAI_KEY_CIPHERTEXT], values[Keys.OPENAI_KEY_IV])) {
-                "请填写 OpenAI 兼容 API 密钥"
+                localizedText("请填写 OpenAI 兼容 API 密钥", "Enter an OpenAI-compatible API key.")
             }
         }
     }
@@ -127,9 +128,9 @@ class SpeechSettingsRepository(context: Context) {
         accent: String,
     ) {
         val endpoint = validateWebSocketEndpoint(endpointUrl)
-        val normalizedAppId = validateField(appId, "请填写科大讯飞 AppID", 200)
-        val normalizedLanguage = validateField(language, "请填写讯飞语种", 100)
-        val normalizedAccent = validateField(accent, "请填写讯飞方言参数", 100)
+        val normalizedAppId = validateField(appId, localizedText("请填写科大讯飞 AppID", "Enter the iFLYTEK AppID."), 200)
+        val normalizedLanguage = validateField(language, localizedText("请填写讯飞语种", "Enter the iFLYTEK language."), 100)
+        val normalizedAccent = validateField(accent, localizedText("请填写讯飞方言参数", "Enter the iFLYTEK dialect parameter."), 100)
         val apiKey = validateOptionalSecret(newApiKey)
         val apiSecret = validateOptionalSecret(newApiSecret)
         dataStore.edit { values ->
@@ -146,10 +147,10 @@ class SpeechSettingsRepository(context: Context) {
                 values[Keys.IFLYTEK_SECRET_IV] = encrypted.iv
             }
             require(hasSecret(values[Keys.IFLYTEK_KEY_CIPHERTEXT], values[Keys.IFLYTEK_KEY_IV])) {
-                "请填写科大讯飞 APIKey"
+                localizedText("请填写科大讯飞 APIKey", "Enter the iFLYTEK APIKey.")
             }
             require(hasSecret(values[Keys.IFLYTEK_SECRET_CIPHERTEXT], values[Keys.IFLYTEK_SECRET_IV])) {
-                "请填写科大讯飞 APISecret"
+                localizedText("请填写科大讯飞 APISecret", "Enter the iFLYTEK APISecret.")
             }
         }
     }
@@ -160,7 +161,7 @@ class SpeechSettingsRepository(context: Context) {
             SpeechApiFormat.OPENAI_COMPATIBLE -> snapshot.openAi.configured
             SpeechApiFormat.IFLYTEK_IAT -> snapshot.iflytek.configured
         }
-        require(configured) { "请先保存这项语音服务配置" }
+        require(configured) { localizedText("请先保存这项语音服务配置", "Save this speech service configuration first.") }
         dataStore.edit { it[Keys.SELECTED_FORMAT] = format.storageValue }
     }
 
@@ -169,26 +170,26 @@ class SpeechSettingsRepository(context: Context) {
         return when (format ?: SpeechApiFormat.fromStorage(values[Keys.SELECTED_FORMAT])) {
             SpeechApiFormat.OPENAI_COMPATIBLE -> ResolvedOpenAiSpeechSettings(
                 endpointUrl = validateHttpEndpoint(values[Keys.OPENAI_ENDPOINT] ?: DEFAULT_OPENAI_ENDPOINT),
-                model = validateField(values[Keys.OPENAI_MODEL] ?: DEFAULT_OPENAI_MODEL, "请填写语音模型 ID", 200),
-                apiKey = decryptRequired(values[Keys.OPENAI_KEY_CIPHERTEXT], values[Keys.OPENAI_KEY_IV], "OpenAI 兼容 API 密钥"),
+                model = validateField(values[Keys.OPENAI_MODEL] ?: DEFAULT_OPENAI_MODEL, localizedText("请填写语音模型 ID", "Enter a speech model ID."), 200),
+                apiKey = decryptRequired(values[Keys.OPENAI_KEY_CIPHERTEXT], values[Keys.OPENAI_KEY_IV], localizedText("OpenAI 兼容 API 密钥", "OpenAI-compatible API key")),
             )
             SpeechApiFormat.IFLYTEK_IAT -> ResolvedIflytekSpeechSettings(
                 endpointUrl = validateWebSocketEndpoint(values[Keys.IFLYTEK_ENDPOINT] ?: DEFAULT_IFLYTEK_ENDPOINT),
-                appId = validateField(values[Keys.IFLYTEK_APP_ID].orEmpty(), "请填写科大讯飞 AppID", 200),
-                apiKey = decryptRequired(values[Keys.IFLYTEK_KEY_CIPHERTEXT], values[Keys.IFLYTEK_KEY_IV], "科大讯飞 APIKey"),
-                apiSecret = decryptRequired(values[Keys.IFLYTEK_SECRET_CIPHERTEXT], values[Keys.IFLYTEK_SECRET_IV], "科大讯飞 APISecret"),
-                language = validateField(values[Keys.IFLYTEK_LANGUAGE] ?: "zh_cn", "请填写讯飞语种", 100),
-                accent = validateField(values[Keys.IFLYTEK_ACCENT] ?: "mandarin", "请填写讯飞方言参数", 100),
+                appId = validateField(values[Keys.IFLYTEK_APP_ID].orEmpty(), localizedText("请填写科大讯飞 AppID", "Enter the iFLYTEK AppID."), 200),
+                apiKey = decryptRequired(values[Keys.IFLYTEK_KEY_CIPHERTEXT], values[Keys.IFLYTEK_KEY_IV], localizedText("科大讯飞 APIKey", "iFLYTEK APIKey")),
+                apiSecret = decryptRequired(values[Keys.IFLYTEK_SECRET_CIPHERTEXT], values[Keys.IFLYTEK_SECRET_IV], localizedText("科大讯飞 APISecret", "iFLYTEK APISecret")),
+                language = validateField(values[Keys.IFLYTEK_LANGUAGE] ?: "zh_cn", localizedText("请填写讯飞语种", "Enter the iFLYTEK language."), 100),
+                accent = validateField(values[Keys.IFLYTEK_ACCENT] ?: "mandarin", localizedText("请填写讯飞方言参数", "Enter the iFLYTEK dialect parameter."), 100),
             )
         }
     }
 
     private fun decryptRequired(ciphertext: String?, iv: String?, label: String): String {
-        require(hasSecret(ciphertext, iv)) { "尚未配置$label" }
+        require(hasSecret(ciphertext, iv)) { localizedText("尚未配置$label", "$label is not configured.") }
         return try {
             secretCipher.decrypt(EncryptedSecret(ciphertext!!, iv!!))
         } catch (failure: Exception) {
-            throw IllegalStateException("无法读取$label，请重新填写", failure)
+            throw IllegalStateException(localizedText("无法读取$label，请重新填写", "Could not read $label. Enter it again."), failure)
         }
     }
 
@@ -219,26 +220,26 @@ class SpeechSettingsRepository(context: Context) {
 private fun hasSecret(ciphertext: String?, iv: String?) = !ciphertext.isNullOrBlank() && !iv.isNullOrBlank()
 
 private fun validateOptionalSecret(value: String?): String? = value?.trim()?.takeIf(String::isNotEmpty)?.also {
-    require(it.length <= 4096) { "API 密钥过长" }
+    require(it.length <= 4096) { localizedText("API 密钥过长", "The API key is too long.") }
 }
 
 private fun validateField(value: String, blankMessage: String, maxLength: Int): String = value.trim().also {
     require(it.isNotEmpty()) { blankMessage }
-    require(it.length <= maxLength) { "配置内容过长" }
+    require(it.length <= maxLength) { localizedText("配置内容过长", "The configuration is too long.") }
 }
 
 internal fun validateHttpEndpoint(value: String): String {
-    val endpoint = validateField(value, "请填写完整的语音 API 地址", 2_000)
+    val endpoint = validateField(value, localizedText("请填写完整的语音 API 地址", "Enter the full speech API URL."), 2_000)
     require(endpoint.startsWith("https://") || endpoint.startsWith("http://")) {
-        "OpenAI 兼容地址必须以 http:// 或 https:// 开头"
+        localizedText("OpenAI 兼容地址必须以 http:// 或 https:// 开头", "The OpenAI-compatible URL must begin with http:// or https://.")
     }
     return endpoint
 }
 
 internal fun validateWebSocketEndpoint(value: String): String {
-    val endpoint = validateField(value, "请填写完整的科大讯飞 WebSocket 地址", 2_000)
+    val endpoint = validateField(value, localizedText("请填写完整的科大讯飞 WebSocket 地址", "Enter the full iFLYTEK WebSocket URL."), 2_000)
     require(endpoint.startsWith("wss://") || endpoint.startsWith("ws://")) {
-        "科大讯飞地址必须以 ws:// 或 wss:// 开头"
+        localizedText("科大讯飞地址必须以 ws:// 或 wss:// 开头", "The iFLYTEK URL must begin with ws:// or wss://.")
     }
     return endpoint
 }

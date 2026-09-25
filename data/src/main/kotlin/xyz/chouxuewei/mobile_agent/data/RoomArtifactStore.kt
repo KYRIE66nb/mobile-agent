@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -28,8 +29,8 @@ class RoomArtifactStore internal constructor(
     override suspend fun artifact(id: String) = dao.artifact(id)?.record()
 
     override suspend fun saveArtifact(artifact: Artifact) {
-        require(artifact.status == ArtifactStatus.AVAILABLE) { "只能登记可用产物" }
-        require(isInsideGeneratedRoot(File(artifact.storagePath))) { "产物文件不在受控目录中" }
+        require(artifact.status == ArtifactStatus.AVAILABLE) { localizedText("只能登记可用产物", "Only available artifacts can be registered.") }
+        require(isInsideGeneratedRoot(File(artifact.storagePath))) { localizedText("产物文件不在受控目录中", "The artifact file is outside the managed directory.") }
         dao.save(artifact.entity())
     }
 
@@ -37,9 +38,9 @@ class RoomArtifactStore internal constructor(
         val artifact = dao.artifact(id) ?: return false
         if (artifact.status != ArtifactStatus.AVAILABLE.name) return false
         val file = File(artifact.storagePath)
-        require(isInsideGeneratedRoot(file)) { "产物文件不在受控目录中" }
+        require(isInsideGeneratedRoot(file)) { localizedText("产物文件不在受控目录中", "The artifact file is outside the managed directory.") }
         withContext(Dispatchers.IO) {
-            if (file.exists() && !file.delete()) error("文件删除失败")
+            if (file.exists() && !file.delete()) error(localizedText("文件删除失败", "Failed to delete the file."))
         }
         return dao.markDeleted(id, System.currentTimeMillis()) > 0
     }

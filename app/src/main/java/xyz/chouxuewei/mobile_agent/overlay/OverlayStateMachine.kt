@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.overlay
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 /** 悬浮层的展示层级与任务状态分开保存，任务变化不会意外覆盖用户正在操作的完整聊天。 */
 internal enum class OverlayPresentation { EDGE_HANDLE, SUMMARY, FULL_CHAT }
 
@@ -12,8 +13,8 @@ internal fun fullWindowDockTarget(
     maximumX: Float,
     threshold: Float,
 ): FullWindowDockTarget? {
-    require(minimumX <= maximumX) { "窗口横向范围无效" }
-    require(threshold > 0f) { "吸附阈值必须大于 0" }
+    require(minimumX <= maximumX) { localizedText("窗口横向范围无效", "Invalid horizontal window range.") }
+    require(threshold > 0f) { localizedText("吸附阈值必须大于 0", "Docking threshold must be greater than 0.") }
     return when {
         minimumX - rawX >= threshold -> FullWindowDockTarget.LEFT
         rawX - maximumX >= threshold -> FullWindowDockTarget.RIGHT

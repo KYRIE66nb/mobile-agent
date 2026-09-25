@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.device
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -117,11 +118,11 @@ class AndroidDeviceGateway(
         }
         val enabled = available && requested && grantState != false
         val detail = when {
-            !available -> "当前设备未检测到可用的 Root 环境"
-            !requested -> "Root 权限已关闭"
-            granted -> "Root 权限已开启"
-            enabled -> "Root 权限已开启，首次使用时将请求系统确认"
-            else -> "请先授予 Root 权限"
+            !available -> localizedText("当前设备未检测到可用的 Root 环境", "No usable Root environment was detected on this device.")
+            !requested -> localizedText("Root 权限已关闭", "Root access disabled")
+            granted -> localizedText("Root 权限已开启", "Root access enabled")
+            enabled -> localizedText("Root 权限已开启，首次使用时将请求系统确认", "Root access enabled; the system will request confirmation on first use")
+            else -> localizedText("请先授予 Root 权限", "Grant Root access first.")
         }
         return RootAccessState(available, enabled, granted, detail)
     }
@@ -140,7 +141,7 @@ class AndroidDeviceGateway(
         }
         preferences.edit().putBoolean(ROOT_ENABLED, granted).apply()
         return rootAccessState().let { state ->
-            if (!granted && state.available) state.copy(detail = "未获得 Root 权限") else state
+            if (!granted && state.available) state.copy(detail = localizedText("未获得 Root 权限", "Root access was not granted.")) else state
         }
     }
 
@@ -150,12 +151,12 @@ class AndroidDeviceGateway(
             DeviceResult.Success(Unit)
         } else {
             // 此处只读授权状态，避免用户只是打开工具列表就收到 Root 请求。
-            DeviceResult.Unsupported("请先授予 Root 权限")
+            DeviceResult.Unsupported(localizedText("请先授予 Root 权限", "Grant Root access first."))
         }
     }
 
     override suspend fun listApps(): DeviceResult<List<LaunchableApp>> {
-        if (!rootAccessState().enabled) return DeviceResult.Unsupported("请先授予 Root 权限")
+        if (!rootAccessState().enabled) return DeviceResult.Unsupported(localizedText("请先授予 Root 权限", "Grant Root access first."))
         return try {
             val apps = withContext(Dispatchers.IO) {
                 @Suppress("DEPRECATION")
@@ -174,7 +175,7 @@ class AndroidDeviceGateway(
             }
             DeviceResult.Success(apps)
         } catch (error: Exception) {
-            DeviceResult.Failure(error.message ?: "读取本机应用列表失败")
+            DeviceResult.Failure(error.message ?: localizedText("读取本机应用列表失败", "Failed to read the installed app list."))
         }
     }
 
@@ -182,11 +183,11 @@ class AndroidDeviceGateway(
         val startedAt = System.currentTimeMillis()
         AgentLog.i("Device") { "session_open_start mode=${mode.name.lowercase()}" }
         if (!rootAccessState().enabled) {
-            return@withLock DeviceResult.Unsupported("请先授予 Root 权限")
+            return@withLock DeviceResult.Unsupported(localizedText("请先授予 Root 权限", "Grant Root access first."))
         }
-        if (active != null) return@withLock DeviceResult.Failure("已有手机操作正在进行，请先结束")
+        if (active != null) return@withLock DeviceResult.Failure(localizedText("已有手机操作正在进行，请先结束", "Another phone operation is active. End it first."))
         if (mode == ExecutionMode.VIRTUAL_DISPLAY && Build.VERSION.SDK_INT < 34) {
-            return@withLock DeviceResult.Unsupported("后台操作需要 Android 14 或更高版本")
+            return@withLock DeviceResult.Unsupported(localizedText("后台操作需要 Android 14 或更高版本", "Background operation requires Android 14 or later."))
         }
         var frames: FrameSource? = null
         try {
@@ -245,9 +246,9 @@ class AndroidDeviceGateway(
     ): DeviceResult<Observation> = mutex.withLock {
         val startedAt = System.currentTimeMillis()
         val current = active
-            ?: return@withLock DeviceResult.SessionExpired("会话已关闭")
+            ?: return@withLock DeviceResult.SessionExpired(localizedText("会话已关闭", "Session closed."))
         if (current.session.id != sessionId) {
-            return@withLock DeviceResult.SessionExpired("会话标识不匹配")
+            return@withLock DeviceResult.SessionExpired(localizedText("会话标识不匹配", "Session ID mismatch."))
         }
         try {
             var contentRevision = 0L
@@ -327,26 +328,26 @@ class AndroidDeviceGateway(
         val startedAt = System.currentTimeMillis()
         val actionName = action.javaClass.simpleName
         AgentLog.d("Device") { "action_start session=$sessionId action=$actionName" }
-        val current = active ?: return@withLock ActionResult.SessionExpired("会话已关闭")
-        if (current.session.id != sessionId) return@withLock ActionResult.SessionExpired("会话标识不匹配")
+        val current = active ?: return@withLock ActionResult.SessionExpired(localizedText("会话已关闭", "Session closed."))
+        if (current.session.id != sessionId) return@withLock ActionResult.SessionExpired(localizedText("会话标识不匹配", "Session ID mismatch."))
         // open_app 只依赖已校验的包名和活动会话，不需要为了取得识别 ID 额外读取一次屏幕。
         val observation = if (action is Action.OpenApp) null else {
             val latest = current.latestObservation
-                ?: return@withLock ActionResult.ObservationMismatch("执行前必须重新识别界面")
+                ?: return@withLock ActionResult.ObservationMismatch(localizedText("执行前必须重新识别界面", "Inspect the screen again before acting."))
             if (latest.id != observationId) {
-                return@withLock ActionResult.ObservationMismatch("识别结果已过期，请重新识别界面后执行")
+                return@withLock ActionResult.ObservationMismatch(localizedText("识别结果已过期，请重新识别界面后执行", "The observation expired. Inspect the screen again before acting."))
             }
             latest
         }
         if (action is Action.InputText && action.node != null &&
             observation?.nodes?.none { it.ref == action.node } == true
         ) {
-            return@withLock ActionResult.TargetMismatch("节点不属于当前识别结果")
+            return@withLock ActionResult.TargetMismatch(localizedText("节点不属于当前识别结果", "The node does not belong to the current observation."))
         }
         if (action is Action.PerformNodeAction &&
             observation?.nodes?.none { it.ref == action.node } == true
         ) {
-            return@withLock ActionResult.TargetMismatch("节点不属于当前识别结果")
+            return@withLock ActionResult.TargetMismatch(localizedText("节点不属于当前识别结果", "The node does not belong to the current observation."))
         }
         try {
             when (action) {
@@ -360,25 +361,25 @@ class AndroidDeviceGateway(
                 )
                 is Action.InputText -> {
                     if (DeviceCapability.TEXT_INPUT !in current.session.capabilities) {
-                        return@withLock ActionResult.Unsupported("当前 Android 版本不支持按节点输入文字")
+                        return@withLock ActionResult.Unsupported(localizedText("当前 Android 版本不支持按节点输入文字", "This Android version does not support node-based text input."))
                     }
                     val service = AgentAccessibilityService.connected
-                        ?: return@withLock ActionResult.Unsupported("节点服务尚未连接")
+                        ?: return@withLock ActionResult.Unsupported(localizedText("节点服务尚未连接", "The accessibility node service is not connected."))
                     withContext(Dispatchers.Main.immediate) {
                         service.writeText(current.displayId, action.text, action.node, action.mode)
                     }
                 }
                 is Action.PerformNodeAction -> {
                     if (DeviceCapability.SEMANTIC_ACTIONS !in current.session.capabilities) {
-                        return@withLock ActionResult.Unsupported("当前 Android 版本不支持节点语义动作")
+                        return@withLock ActionResult.Unsupported(localizedText("当前 Android 版本不支持节点语义动作", "This Android version does not support semantic node actions."))
                     }
                     val service = AgentAccessibilityService.connected
-                        ?: return@withLock ActionResult.Unsupported("节点服务尚未连接")
+                        ?: return@withLock ActionResult.Unsupported(localizedText("节点服务尚未连接", "The accessibility node service is not connected."))
                     val snapshot = requireNotNull(observation).nodes.singleOrNull { it.ref == action.node }
-                        ?: return@withLock ActionResult.TargetMismatch("节点不属于当前识别结果")
+                        ?: return@withLock ActionResult.TargetMismatch(localizedText("节点不属于当前识别结果", "The node does not belong to the current observation."))
                     if (action.action !in snapshot.supportedActions) {
                         return@withLock ActionResult.TargetMismatch(
-                            "当前识别结果中的目标节点不支持 ${action.action.name.lowercase()}",
+                            localizedText("当前识别结果中的目标节点不支持 ${action.action.name.lowercase()}", "The target node in the current observation does not support ${action.action.name.lowercase()}."),
                         )
                     }
                     withContext(Dispatchers.Main.immediate) {
@@ -387,7 +388,7 @@ class AndroidDeviceGateway(
                 }
                 is Action.MultiStrokeGesture -> {
                     if (DeviceCapability.COMPLEX_GESTURES !in current.session.capabilities) {
-                        return@withLock ActionResult.Unsupported("复杂触控需要 Android 11 或更高版本")
+                        return@withLock ActionResult.Unsupported(localizedText("复杂触控需要 Android 11 或更高版本", "Complex touch gestures require Android 11 or later."))
                     }
                     complexGesture(current, requireNotNull(observation), action.strokes)
                 }
@@ -398,12 +399,12 @@ class AndroidDeviceGateway(
                     bridge.launch(current.displayId, action.target)
                 }
                 is Action.Wait -> {
-                    require(action.durationMs in 0..5_000) { "等待时长超出限制" }
+                    require(action.durationMs in 0..5_000) { localizedText("等待时长超出限制", "Wait duration exceeds the limit.") }
                     delay(action.durationMs)
                 }
                 Action.EnableNodeAccess -> {
                     if (Build.VERSION.SDK_INT < 30) {
-                        return@withLock ActionResult.Unsupported("节点识别需要 Android 11 或更高版本")
+                        return@withLock ActionResult.Unsupported(localizedText("节点识别需要 Android 11 或更高版本", "Node inspection requires Android 11 or later."))
                     }
                     ensureNodeService()
                 }
@@ -415,7 +416,7 @@ class AndroidDeviceGateway(
             ActionResult.Performed()
         } catch (error: IllegalArgumentException) {
             AgentLog.w("Device", error) { "action_rejected session=$sessionId action=$actionName" }
-            ActionResult.TargetMismatch(error.message ?: "动作参数无效")
+            ActionResult.TargetMismatch(error.message ?: localizedText("动作参数无效", "Invalid action arguments."))
         } catch (error: Exception) {
             AgentLog.e("Device", error) { "action_failed session=$sessionId action=$actionName" }
             ActionResult.Failure(error.message ?: error.javaClass.simpleName)
@@ -429,13 +430,13 @@ class AndroidDeviceGateway(
             if (AgentAccessibilityService.connected != null) return
             delay(200)
         }
-        error("系统尚未连接节点服务")
+        error(localizedText("系统尚未连接节点服务", "The system has not connected the accessibility node service."))
     }
 
     override suspend fun closeSession(sessionId: String): DeviceResult<Unit> = mutex.withLock {
-        val current = active ?: return@withLock DeviceResult.SessionExpired("会话已关闭")
+        val current = active ?: return@withLock DeviceResult.SessionExpired(localizedText("会话已关闭", "Session closed."))
         if (current.session.id != sessionId) {
-            return@withLock DeviceResult.SessionExpired("会话标识不匹配")
+            return@withLock DeviceResult.SessionExpired(localizedText("会话标识不匹配", "Session ID mismatch."))
         }
         active = null
         mutableActiveMode.value = null
@@ -480,7 +481,7 @@ class AndroidDeviceGateway(
         y2: Int,
         durationMs: Int,
     ) {
-        require(durationMs in 0..2_000) { "手势时长超出限制" }
+        require(durationMs in 0..2_000) { localizedText("手势时长超出限制", "Gesture duration exceeds the limit.") }
         val start = CoordinateMapper.map(x1, y1, observation.viewport, current.viewport, observation.rotationDegrees)
         val end = CoordinateMapper.map(x2, y2, observation.viewport, current.viewport, observation.rotationDegrees)
         withoutMainDisplayOverlay(current) {
@@ -495,8 +496,8 @@ class AndroidDeviceGateway(
         observation: Observation,
         strokes: List<GestureStroke>,
     ) {
-        require(strokes.isNotEmpty() && strokes.size <= 10) { "一次手势需要 1 到 10 条轨迹" }
-        require(strokes.sumOf { it.points.size } <= 500) { "一次手势最多允许 500 个轨迹点" }
+        require(strokes.isNotEmpty() && strokes.size <= 10) { localizedText("一次手势需要 1 到 10 条轨迹", "A gesture requires 1 to 10 paths.") }
+        require(strokes.sumOf { it.points.size } <= 500) { localizedText("一次手势最多允许 500 个轨迹点", "A gesture may contain at most 500 points.") }
         val mapped = strokes.map { stroke ->
             stroke.copy(points = stroke.points.map { point ->
                 val value = CoordinateMapper.map(
@@ -510,7 +511,7 @@ class AndroidDeviceGateway(
             })
         }
         val service = AgentAccessibilityService.connected
-            ?: throw IllegalStateException("节点服务尚未连接")
+            ?: throw IllegalStateException(localizedText("节点服务尚未连接", "The accessibility node service is not connected."))
         withoutMainDisplayOverlay(current) {
             withContext(Dispatchers.Main.immediate) {
                 service.performGesture(current.displayId, mapped)
@@ -609,7 +610,7 @@ class AndroidDeviceGateway(
                         bounds.right.coerceIn(0, viewport.width),
                         bounds.bottom.coerceIn(0, viewport.height),
                     )
-                    check(!destination.isEmpty) { "目标窗口不在当前屏幕范围内" }
+                    check(!destination.isEmpty) { localizedText("目标窗口不在当前屏幕范围内", "The target window is outside the current screen.") }
                     Canvas(frame).apply {
                         drawColor(Color.BLACK)
                         drawBitmap(source, null, destination, Paint(Paint.FILTER_BITMAP_FLAG))
@@ -618,7 +619,7 @@ class AndroidDeviceGateway(
             }
             val encoded = ByteArrayOutputStream().use { output ->
                 check(outputBitmap.compress(Bitmap.CompressFormat.JPEG, SCREENSHOT_JPEG_QUALITY, output)) {
-                    "窗口截图压缩失败"
+                    localizedText("窗口截图压缩失败", "Window screenshot compression failed.")
                 }
                 output.toByteArray()
             }
@@ -644,12 +645,12 @@ class AndroidDeviceGateway(
             ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
         }
         val bitmap = checkNotNull(BitmapFactory.decodeByteArray(bytes, 0, bytes.size)) {
-            "主屏截图数据无效"
+            localizedText("主屏截图数据无效", "Invalid main-screen screenshot data.")
         }
         try {
             val encoded = ByteArrayOutputStream().use { output ->
                 check(bitmap.compress(Bitmap.CompressFormat.JPEG, SCREENSHOT_JPEG_QUALITY, output)) {
-                    "主屏截图压缩失败"
+                    localizedText("主屏截图压缩失败", "Main-screen screenshot compression failed.")
                 }
                 output.toByteArray()
             }

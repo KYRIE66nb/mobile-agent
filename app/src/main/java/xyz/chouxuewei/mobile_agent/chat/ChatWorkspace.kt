@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.chat
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -24,7 +25,7 @@ class ChatWorkspace(private val app: PrototypeApplication) {
             for (command in commands) try {
                 command()
             } catch (failure: Exception) {
-                error.value = userFacingMessage(failure, "更改未保存，请重试")
+                error.value = userFacingMessage(failure, localizedText("更改未保存，请重试", "Changes were not saved. Please try again."))
             }
         }
         dispatch {
@@ -65,7 +66,7 @@ class ChatWorkspace(private val app: PrototypeApplication) {
         val imageCount = draft.attachments.count(AttachmentRef::isImage)
         if (draft.text.isBlank() && imageCount == 0) return
         if (imageCount > 10) {
-            error.value = "一次最多发送 10 张图片"
+            error.value = localizedText("一次最多发送 10 张图片", "You can send up to 10 images at a time.")
             return
         }
         val cleared = ComposerDraft()
@@ -117,7 +118,7 @@ class ChatWorkspace(private val app: PrototypeApplication) {
                 val conversation = if (targetId == null) {
                     app.conversations.createConversation()
                 } else {
-                    app.conversations.conversation(targetId) ?: error("找不到目标对话，请重新选择")
+                    app.conversations.conversation(targetId) ?: error(localizedText("找不到目标对话，请重新选择", "The target conversation was not found. Please choose again."))
                 }
                 val existing = drafts.value[conversation.id]
                     ?: ComposerDraft(conversation.draft, conversation.attachments)
@@ -146,7 +147,7 @@ class ChatWorkspace(private val app: PrototypeApplication) {
     fun rename(id: String, title: String) = dispatch { app.conversations.rename(id, title) }
     fun setPinned(id: String, pinned: Boolean) = dispatch { app.conversations.setPinned(id, pinned) }
     fun deleteConversation(id: String) = dispatch {
-        require(id !in app.chatRuntime.active.value) { "这段对话正在回复，请停止后再删除" }
+        require(id !in app.chatRuntime.active.value) { localizedText("这段对话正在回复，请停止后再删除", "This conversation is responding. Stop it before deleting.") }
         val deletingCurrent = current.value == id
         app.conversations.deleteConversation(id)
         drafts.update { it - id }

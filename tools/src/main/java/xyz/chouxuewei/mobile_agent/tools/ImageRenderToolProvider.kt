@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.tools
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -35,20 +36,25 @@ class ImageRenderToolProvider(
 ) : ToolProvider {
     private val publisher = GeneratedArtifactPublisher(context, artifacts)
     override val id = "image_render"
-    override val title = "图像渲染"
-    override val description = "把模型生成的 SVG 保存为矢量图，或在本机转换为 PNG 和多帧 GIF。"
+    override val title get() = localizedText("图像渲染", "Image rendering")
+    override val description get() = localizedText("把模型生成的 SVG 保存为矢量图，或在本机转换为 PNG 和多帧 GIF。", "Save model-generated SVG as a vector image or convert it locally to PNG or animated GIF.")
 
-    override val definitions = listOf(
+    override val definitions get() = listOf(
         ToolDefinition(
             id = "image_render",
-            title = "生成 SVG、PNG 或 GIF",
-            description = """
-                使用完整、自包含且包含 viewBox 的 SVG 生成文件。format=svg 或 png 时必须提供 svg，format=gif 时必须提供 2 至 30 个 frames，每帧包含完整 svg 和 duration_ms；GIF 由多帧 SVG 顺序渲染，不解析 SVG 内的 SMIL/CSS 动画。禁止脚本、事件属性、foreignObject、内嵌位图、DOCTYPE、实体和网络/文件外部资源。PNG 未传 background_color 时保留透明背景；GIF 不支持透明背景，未传时使用白色。width 与 height 必须同时提供或同时省略，省略时从 SVG 的 width/height 或 viewBox 推导。同名文件自动使用新名称，不覆盖旧产物。
-            """.trimIndent(),
+            title = localizedText("生成 SVG、PNG 或 GIF", "Generate SVG, PNG, or GIF"),
+            description = localizedText(
+                """
+                    使用完整、自包含且包含 viewBox 的 SVG 生成文件。format=svg 或 png 时必须提供 svg，format=gif 时必须提供 2 至 30 个 frames，每帧包含完整 svg 和 duration_ms；GIF 由多帧 SVG 顺序渲染，不解析 SVG 内的 SMIL/CSS 动画。禁止脚本、事件属性、foreignObject、内嵌位图、DOCTYPE、实体和网络/文件外部资源。PNG 未传 background_color 时保留透明背景；GIF 不支持透明背景，未传时使用白色。width 与 height 必须同时提供或同时省略，省略时从 SVG 的 width/height 或 viewBox 推导。同名文件自动使用新名称，不覆盖旧产物。
+                """.trimIndent(),
+                """
+                    Generate a file from complete, self-contained SVG with a viewBox. Provide svg for format=svg or png. For format=gif, provide 2 to 30 frames, each with complete svg and duration_ms; the GIF renders these SVG frames in order and does not interpret SMIL or CSS animation. Scripts, event attributes, foreignObject, embedded bitmaps, DOCTYPE, entities, and external network or file resources are forbidden. PNG keeps transparency when background_color is omitted; GIF does not support transparency and defaults to white. Provide width and height together or omit both; omitted dimensions are inferred from the SVG width/height or viewBox. Duplicate filenames receive a new name and never overwrite an older artifact.
+                """.trimIndent(),
+            ),
             inputSchema = SCHEMA,
             sideEffect = ToolSideEffect.LOCAL_WRITE,
             providerId = id,
-            approvalDescription = "在 Mobile Agent 中保存一张 SVG、PNG 或 GIF 图片。",
+            approvalDescription = localizedText("在 Mobile Agent 中保存一张 SVG、PNG 或 GIF 图片。", "Save an SVG, PNG, or GIF image in Mobile Agent."),
         ),
     )
 
@@ -56,16 +62,16 @@ class ImageRenderToolProvider(
         call: RequestedToolCall,
         context: ToolExecutionContext,
     ): ToolResult = toolResult {
-        require(call.toolId == "image_render") { "图像渲染工具不支持 ${call.toolId}" }
+        require(call.toolId == "image_render") { localizedText("图像渲染工具不支持 ${call.toolId}", "Image rendering tools do not support ${call.toolId}") }
         render(parseImageRenderRequest(call.arguments()), context)
     }
 
     override fun approvalSummary(call: RequestedToolCall): String? = runCatching {
         val request = parseImageRenderRequest(call.arguments())
         if (request.format == ImageRenderFormat.GIF) {
-            "生成 ${request.name} · ${request.frames.size} 帧 GIF"
+            localizedText("生成 ${request.name} · ${request.frames.size} 帧 GIF", "Generate ${request.name} · ${request.frames.size}-frame GIF")
         } else {
-            "生成 ${request.name} · ${request.format.extension.uppercase()}"
+            localizedText("生成 ${request.name} · ${request.format.extension.uppercase()}", "Generate ${request.name} · ${request.format.extension.uppercase()}")
         }
     }.getOrNull()
 
@@ -111,9 +117,9 @@ class ImageRenderToolProvider(
         return ToolResult(
             content = result,
             summary = if (request.format == ImageRenderFormat.GIF) {
-                "已生成 ${artifact.name}（$frameCount 帧）"
+                localizedText("已生成 ${artifact.name}（$frameCount 帧）", "Generated ${artifact.name} ($frameCount frames)")
             } else {
-                "已生成 ${artifact.name}"
+                localizedText("已生成 ${artifact.name}", "Generated ${artifact.name}")
             },
         )
     }
@@ -122,13 +128,17 @@ class ImageRenderToolProvider(
         SVG.getFromString(source).also { document ->
             val viewBox = document.documentViewBox
             require(viewBox != null && viewBox.width() > 0f && viewBox.height() > 0f) {
-                "SVG 根元素必须包含有效的 viewBox"
+                localizedText("SVG 根元素必须包含有效的 viewBox", "The SVG root element must contain a valid viewBox.")
             }
         }
     } catch (error: IllegalArgumentException) {
         throw error
     } catch (error: Exception) {
-        throw IllegalArgumentException("SVG 内容无法解析：${error.message ?: "格式错误"}", error)
+        val reason = error.message ?: localizedText("格式错误", "invalid format")
+        throw IllegalArgumentException(
+            localizedText("SVG 内容无法解析：$reason", "Could not parse SVG: $reason"),
+            error,
+        )
     }
 
     private fun resolveOutputSize(request: ImageRenderRequest, document: SVG): Pair<Int, Int> {
@@ -143,12 +153,12 @@ class ImageRenderToolProvider(
 
     private fun validateOutputSize(format: ImageRenderFormat, width: Int, height: Int) {
         require(width in 1..MAX_OUTPUT_EDGE && height in 1..MAX_OUTPUT_EDGE) {
-            "输出宽高必须在 1 到 $MAX_OUTPUT_EDGE 像素之间"
+            localizedText("输出宽高必须在 1 到 $MAX_OUTPUT_EDGE 像素之间", "Output dimensions must be between 1 and $MAX_OUTPUT_EDGE pixels.")
         }
         val pixels = width.toLong() * height
         val limit = if (format == ImageRenderFormat.GIF) MAX_GIF_PIXELS else MAX_STATIC_PIXELS
         require(pixels <= limit) {
-            if (format == ImageRenderFormat.GIF) "GIF 像素过多，请缩小宽高" else "图片像素过多，请缩小宽高"
+            if (format == ImageRenderFormat.GIF) localizedText("GIF 像素过多，请缩小宽高", "The GIF has too many pixels. Reduce its dimensions.") else localizedText("图片像素过多，请缩小宽高", "The image has too many pixels. Reduce its dimensions.")
         }
     }
 
@@ -165,7 +175,7 @@ class ImageRenderToolProvider(
     ) {
         val bitmap = renderBitmap(document, width, height, backgroundColor ?: Color.TRANSPARENT)
         try {
-            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { "PNG 编码失败" }
+            check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { localizedText("PNG 编码失败", "PNG encoding failed.") }
         } finally {
             bitmap.recycle()
         }
@@ -216,23 +226,24 @@ class ImageRenderToolProvider(
         const val MAX_STATIC_PIXELS = 4_194_304L
         const val MAX_GIF_PIXELS = 786_432L
         const val DEFAULT_GIF_BACKGROUND = "#FFFFFF"
-        val SCHEMA = """
+        val SCHEMA: String
+            get() = localizedJsonSchema("""
             {
               "type":"object",
               "properties":{
-                "name":{"type":"string","minLength":1,"maxLength":120,"description":"输出文件名；扩展名会按 format 规范为 .svg、.png 或 .gif"},
+                "name":{"type":"string","minLength":1,"maxLength":120,"description":localizedText("输出文件名；扩展名会按 format 规范为 .svg、.png 或 .gif", "Output filename; extension is normalized to .svg, .png, or .gif based on format")},
                 "format":{"type":"string","enum":["svg","png","gif"]},
-                "svg":{"type":"string","maxLength":250000,"description":"format=svg/png 时使用的完整 SVG；必须自包含并带 viewBox"},
-                "frames":{"type":"array","minItems":2,"maxItems":30,"description":"format=gif 时使用的完整 SVG 帧，按数组顺序播放","items":{"type":"object","properties":{"svg":{"type":"string","maxLength":250000},"duration_ms":{"type":"integer","minimum":20,"maximum":10000}},"required":["svg","duration_ms"],"additionalProperties":false}},
-                "width":{"type":"integer","minimum":1,"maximum":2048,"description":"可选输出宽度；必须和 height 一起提供"},
-                "height":{"type":"integer","minimum":1,"maximum":2048,"description":"可选输出高度；必须和 width 一起提供"},
-                "background_color":{"type":"string","pattern":"^#[0-9A-Fa-f]{6}$","description":"可选 #RRGGBB；PNG 省略为透明，GIF 省略为白色"},
-                "loop_count":{"type":"integer","minimum":0,"maximum":100,"default":0,"description":"GIF 循环次数，0 表示无限循环"}
+                "svg":{"type":"string","maxLength":250000,"description":localizedText("format=svg/png 时使用的完整 SVG；必须自包含并带 viewBox", "Complete self-contained SVG with viewBox for format=svg/png")},
+                "frames":{"type":"array","minItems":2,"maxItems":30,"description":localizedText("format=gif 时使用的完整 SVG 帧，按数组顺序播放", "Complete SVG frames for format=gif, played in array order"),"items":{"type":"object","properties":{"svg":{"type":"string","maxLength":250000},"duration_ms":{"type":"integer","minimum":20,"maximum":10000}},"required":["svg","duration_ms"],"additionalProperties":false}},
+                "width":{"type":"integer","minimum":1,"maximum":2048,"description":localizedText("可选输出宽度；必须和 height 一起提供", "Optional output width; must be provided together with height")},
+                "height":{"type":"integer","minimum":1,"maximum":2048,"description":localizedText("可选输出高度；必须和 width 一起提供", "Optional output height; must be provided together with width")},
+                "background_color":{"type":"string","pattern":"^#[0-9A-Fa-f]{6}$","description":localizedText("可选 #RRGGBB；PNG 省略为透明，GIF 省略为白色", "Optional #RRGGBB; omitted means transparent for PNG and white for GIF")},
+                "loop_count":{"type":"integer","minimum":0,"maximum":100,"default":0,"description":localizedText("GIF 循环次数，0 表示无限循环", "GIF loop count; 0 means infinite")}
               },
               "required":["name","format"],
               "additionalProperties":false
             }
-        """.trimIndent()
+        """.trimIndent())
     }
 }
 
@@ -263,9 +274,9 @@ internal data class ImageRenderRequest(
 )
 
 internal fun parseImageRenderRequest(args: JsonObject): ImageRenderRequest {
-    val formatValue = args["format"]?.jsonPrimitive?.contentOrNull ?: error("缺少参数 format")
+    val formatValue = args["format"]?.jsonPrimitive?.contentOrNull ?: error(localizedText("缺少参数 format", "Missing parameter: format"))
     val format = ImageRenderFormat.entries.firstOrNull { it.value == formatValue }
-        ?: throw IllegalArgumentException("format 只支持 svg、png 或 gif")
+        ?: throw IllegalArgumentException(localizedText("format 只支持 svg、png 或 gif", "format supports only svg, png, or gif."))
     val requestedName = args["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
     val name = normalizedImageName(requestedName, format)
     val svg = args["svg"]?.jsonPrimitive?.contentOrNull
@@ -273,65 +284,65 @@ internal fun parseImageRenderRequest(args: JsonObject): ImageRenderRequest {
     val frames = frameValues.mapIndexed { index, value ->
         val frame = value.jsonObject
         val source = frame["svg"]?.jsonPrimitive?.contentOrNull
-            ?: error("第 ${index + 1} 帧缺少 svg")
+            ?: error(localizedText("第 ${index + 1} 帧缺少 svg", "Frame ${index + 1} is missing svg."))
         val duration = frame["duration_ms"]?.jsonPrimitive?.intOrNull
-            ?: error("第 ${index + 1} 帧缺少 duration_ms")
-        require(duration in 20..10_000) { "每帧时长必须在 20 到 10000 毫秒之间" }
+            ?: error(localizedText("第 ${index + 1} 帧缺少 duration_ms", "Frame ${index + 1} is missing duration_ms."))
+        require(duration in 20..10_000) { localizedText("每帧时长必须在 20 到 10000 毫秒之间", "Each frame duration must be between 20 and 10000 milliseconds.") }
         SvgAnimationFrame(source, duration)
     }
     when (format) {
         ImageRenderFormat.SVG, ImageRenderFormat.PNG -> {
-            require(!svg.isNullOrBlank()) { "format=${format.value} 时必须提供 svg" }
-            require(frames.isEmpty()) { "只有 format=gif 时才能提供 frames" }
+            require(!svg.isNullOrBlank()) { localizedText("format=${format.value} 时必须提供 svg", "svg is required when format=${format.value}.") }
+            require(frames.isEmpty()) { localizedText("只有 format=gif 时才能提供 frames", "frames can be provided only when format=gif.") }
         }
         ImageRenderFormat.GIF -> {
-            require(svg == null) { "format=gif 时请使用 frames，不要同时提供 svg" }
-            require(frames.size in 2..30) { "GIF 需要 2 到 30 帧 SVG" }
+            require(svg == null) { localizedText("format=gif 时请使用 frames，不要同时提供 svg", "Use frames when format=gif and do not also provide svg.") }
+            require(frames.size in 2..30) { localizedText("GIF 需要 2 到 30 帧 SVG", "A GIF requires 2 to 30 SVG frames.") }
         }
     }
     val allSources = svg?.let(::listOf) ?: frames.map(SvgAnimationFrame::svg)
-    require(allSources.sumOf(String::length) <= 1_000_000) { "SVG 帧内容总计不能超过 1000000 个字符" }
+    require(allSources.sumOf(String::length) <= 1_000_000) { localizedText("SVG 帧内容总计不能超过 1000000 个字符", "Total SVG frame content cannot exceed 1000000 characters.") }
     allSources.forEach(::validateSvgSafety)
     val width = args["width"]?.jsonPrimitive?.intOrNull
     val height = args["height"]?.jsonPrimitive?.intOrNull
-    require((width == null) == (height == null)) { "width 与 height 必须同时提供或同时省略" }
-    width?.let { require(it in 1..2_048) { "width 必须在 1 到 2048 之间" } }
-    height?.let { require(it in 1..2_048) { "height 必须在 1 到 2048 之间" } }
+    require((width == null) == (height == null)) { localizedText("width 与 height 必须同时提供或同时省略", "width and height must be provided together or both omitted.") }
+    width?.let { require(it in 1..2_048) { localizedText("width 必须在 1 到 2048 之间", "width must be between 1 and 2048.") } }
+    height?.let { require(it in 1..2_048) { localizedText("height 必须在 1 到 2048 之间", "height must be between 1 and 2048.") } }
     val background = args["background_color"]?.jsonPrimitive?.contentOrNull
     require(background == null || COLOR_PATTERN.matches(background)) {
-        "background_color 必须使用 #RRGGBB 格式"
+        localizedText("background_color 必须使用 #RRGGBB 格式", "background_color must use #RRGGBB format.")
     }
     val loopCount = args["loop_count"]?.jsonPrimitive?.intOrNull ?: 0
-    require(loopCount in 0..100) { "loop_count 必须在 0 到 100 之间" }
-    require(frames.sumOf(SvgAnimationFrame::durationMs) <= 60_000) { "GIF 总时长不能超过 60 秒" }
+    require(loopCount in 0..100) { localizedText("loop_count 必须在 0 到 100 之间", "loop_count must be between 0 and 100.") }
+    require(frames.sumOf(SvgAnimationFrame::durationMs) <= 60_000) { localizedText("GIF 总时长不能超过 60 秒", "The total GIF duration cannot exceed 60 seconds.") }
     return ImageRenderRequest(name, format, svg, frames, width, height, background, loopCount)
 }
 
 internal fun normalizedImageName(name: String, format: ImageRenderFormat): String {
     require(name.isNotBlank() && name !in setOf(".", "..") && name.none {
         it == '/' || it == '\\' || Character.isISOControl(it)
-    }) { "文件名无效" }
+    }) { localizedText("文件名无效", "Invalid filename.") }
     val dot = name.lastIndexOf('.').takeIf { it in 1 until name.lastIndex }
     val base = if (dot == null) name else name.substring(0, dot)
     val normalized = "$base.${format.extension}"
-    require(normalized.length <= 120) { "文件名不能超过 120 个字符" }
+    require(normalized.length <= 120) { localizedText("文件名不能超过 120 个字符", "The filename cannot exceed 120 characters.") }
     return normalized
 }
 
 internal fun validateSvgSafety(source: String) {
-    require(source.isNotBlank()) { "SVG 内容不能为空" }
-    require(source.length <= 250_000) { "单帧 SVG 不能超过 250000 个字符" }
-    require(!FORBIDDEN_DECLARATION.containsMatchIn(source)) { "SVG 不能包含 DOCTYPE 或实体声明" }
+    require(source.isNotBlank()) { localizedText("SVG 内容不能为空", "SVG content cannot be empty.") }
+    require(source.length <= 250_000) { localizedText("单帧 SVG 不能超过 250000 个字符", "A single SVG frame cannot exceed 250000 characters.") }
+    require(!FORBIDDEN_DECLARATION.containsMatchIn(source)) { localizedText("SVG 不能包含 DOCTYPE 或实体声明", "SVG cannot contain DOCTYPE or entity declarations.") }
     require(!FORBIDDEN_ELEMENT.containsMatchIn(source)) {
-        "SVG 不能包含脚本、foreignObject、内嵌位图或嵌入式对象"
+        localizedText("SVG 不能包含脚本、foreignObject、内嵌位图或嵌入式对象", "SVG cannot contain scripts, foreignObject, embedded bitmaps, or embedded objects.")
     }
-    require(!EVENT_ATTRIBUTE.containsMatchIn(source)) { "SVG 不能包含事件属性" }
-    require(!CSS_IMPORT.containsMatchIn(source)) { "SVG 不能使用 CSS @import" }
+    require(!EVENT_ATTRIBUTE.containsMatchIn(source)) { localizedText("SVG 不能包含事件属性", "SVG cannot contain event attributes.") }
+    require(!CSS_IMPORT.containsMatchIn(source)) { localizedText("SVG 不能使用 CSS @import", "SVG cannot use CSS @import.") }
     require(REFERENCE_ATTRIBUTE.findAll(source).all { it.groupValues[1].trim().startsWith("#") }) {
-        "SVG href 只能引用当前文档中的 #id"
+        localizedText("SVG href 只能引用当前文档中的 #id", "SVG href may reference only #id in the current document.")
     }
     require(CSS_URL.findAll(source).all { it.groupValues[1].trim().startsWith("#") }) {
-        "SVG url() 只能引用当前文档中的 #id"
+        localizedText("SVG url() 只能引用当前文档中的 #id", "SVG url() may reference only #id in the current document.")
     }
 }
 

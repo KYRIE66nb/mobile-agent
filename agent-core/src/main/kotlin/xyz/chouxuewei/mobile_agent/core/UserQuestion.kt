@@ -33,20 +33,20 @@ class UserQuestionBroker {
     val requests: StateFlow<Map<String, UserQuestionRequest>> = mutableRequests
 
     suspend fun ask(request: UserQuestionRequest): UserQuestionAnswer {
-        require(request.id.isNotBlank()) { "问题 ID 不能为空" }
-        require(request.conversationId.isNotBlank()) { "对话 ID 不能为空" }
+        require(request.id.isNotBlank()) { localizedText("问题 ID 不能为空", "Question ID cannot be empty.") }
+        require(request.conversationId.isNotBlank()) { localizedText("对话 ID 不能为空", "Conversation ID cannot be empty.") }
         require(request.question.isNotBlank() && request.question.length <= 500) {
-            "问题需要 1 到 500 个字符"
+            localizedText("问题需要 1 到 500 个字符", "The question must contain 1 to 500 characters.")
         }
         require(request.options.size <= 6 && request.options.all { it.isNotBlank() && it.length <= 100 }) {
-            "选项最多 6 个，每项需要 1 到 100 个字符"
+            localizedText("选项最多 6 个，每项需要 1 到 100 个字符", "Up to 6 options are allowed, each containing 1 to 100 characters.")
         }
-        require(request.options.distinct().size == request.options.size) { "问题选项不能重复" }
-        require(request.allowFreeText || request.options.isNotEmpty()) { "关闭自由输入时必须提供选项" }
+        require(request.options.distinct().size == request.options.size) { localizedText("问题选项不能重复", "Question options cannot be duplicated.") }
+        require(request.allowFreeText || request.options.isNotEmpty()) { localizedText("关闭自由输入时必须提供选项", "Options are required when free-form input is disabled.") }
 
         val waiter = CompletableDeferred<UserQuestionAnswer>()
         gate.withLock {
-            check(request.id !in waiters) { "问题 ID 重复" }
+            check(request.id !in waiters) { localizedText("问题 ID 重复", "Duplicate question ID.") }
             waiters[request.id] = waiter
             mutableRequests.update { it + (request.id to request) }
         }
@@ -64,11 +64,11 @@ class UserQuestionBroker {
 
     suspend fun respond(id: String, value: String?) {
         val normalized = value?.trim()?.takeIf(String::isNotEmpty)
-        require(normalized == null || normalized.length <= 2_000) { "回答不能超过 2000 个字符" }
+        require(normalized == null || normalized.length <= 2_000) { localizedText("回答不能超过 2000 个字符", "The answer cannot exceed 2000 characters.") }
         gate.withLock {
             val request = mutableRequests.value[id] ?: return
             require(normalized == null || request.allowFreeText || normalized in request.options) {
-                "回答不在可选范围内"
+                localizedText("回答不在可选范围内", "The answer is not one of the available options.")
             }
             waiters[id]?.complete(UserQuestionAnswer(normalized))
         }

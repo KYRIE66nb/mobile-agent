@@ -89,8 +89,10 @@ internal interface ConversationDao {
         status: String,
         error: String?,
     )
-    @Query("UPDATE runs SET status='INTERRUPTED', finishedAt=:now, error='上次运行意外中断，内容未重新发送' WHERE status='GENERATING'") suspend fun interruptRuns(now: Long)
-    @Query("UPDATE messages SET status='INTERRUPTED', error='上次运行意外中断，内容未重新发送', version=version+1 WHERE status IN ('QUEUED','GENERATING')") suspend fun interruptMessages()
+    @Query("UPDATE runs SET status='INTERRUPTED', finishedAt=:now, error=:error WHERE status='GENERATING'")
+    suspend fun interruptRuns(now: Long, error: String)
+    @Query("UPDATE messages SET status='INTERRUPTED', error=:error, version=version+1 WHERE status IN ('QUEUED','GENERATING')")
+    suspend fun interruptMessages(error: String)
     @Query("SELECT * FROM context_snapshots WHERE conversationId=:id ORDER BY createdAt DESC, rowid DESC LIMIT 1") suspend fun snapshot(id: String): SnapshotEntity?
     @Upsert suspend fun save(snapshot: SnapshotEntity)
     @Query("SELECT * FROM tool_calls WHERE conversationId=:id ORDER BY createdAt, rowid")
@@ -100,8 +102,8 @@ internal interface ConversationDao {
     @Query("SELECT * FROM tool_calls WHERE id=:id LIMIT 1")
     suspend fun toolCall(id: String): ToolCallEntity?
     @Upsert suspend fun save(call: ToolCallEntity)
-    @Query("UPDATE tool_calls SET status='INTERRUPTED', error='上次操作意外中断，未自动重试', updatedAt=:now WHERE status IN ('RECEIVED','WAITING_APPROVAL','EXECUTING')")
-    suspend fun interruptToolCalls(now: Long)
+    @Query("UPDATE tool_calls SET status='INTERRUPTED', error=:error, updatedAt=:now WHERE status IN ('RECEIVED','WAITING_APPROVAL','EXECUTING')")
+    suspend fun interruptToolCalls(now: Long, error: String)
     @Query("UPDATE tool_calls SET result=:replacement, updatedAt=:now WHERE toolId IN (:toolIds) AND result IS NOT NULL AND result != :replacement")
     suspend fun expireToolResults(toolIds: List<String>, replacement: String, now: Long)
 }

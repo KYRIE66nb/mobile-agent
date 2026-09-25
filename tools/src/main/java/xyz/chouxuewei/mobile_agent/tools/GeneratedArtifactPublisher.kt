@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.tools
 
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.core.content.FileProvider
 import java.io.File
@@ -41,8 +42,8 @@ internal class GeneratedArtifactPublisher(
                     output.flush()
                     output.fd.sync()
                 }
-                require(temporary.length() > 0L) { "生成的文件为空" }
-                check(temporary.renameTo(target)) { "文件发布失败" }
+                require(temporary.length() > 0L) { localizedText("生成的文件为空", "The generated file is empty.") }
+                check(temporary.renameTo(target)) { localizedText("文件发布失败", "Failed to publish the file.") }
                 target
             } finally {
                 if (temporary.exists()) temporary.delete()
@@ -79,14 +80,14 @@ internal class GeneratedArtifactPublisher(
 
     private fun generatedDir(conversationId: String): File {
         val directory = File(generatedRoot, conversationId).canonicalFile
-        require(directory.path.startsWith(generatedRoot.path + File.separator)) { "会话目录无效" }
+        require(directory.path.startsWith(generatedRoot.path + File.separator)) { localizedText("会话目录无效", "Invalid conversation directory.") }
         directory.mkdirs()
         return directory
     }
 
     private fun availableFile(directory: File, requestedName: String): File {
         val initial = File(directory, requestedName).canonicalFile
-        require(initial.parentFile == directory) { "文件路径超出工作区" }
+        require(initial.parentFile == directory) { localizedText("文件路径超出工作区", "The file path is outside the workspace.") }
         if (!initial.exists()) return initial
         val dot = requestedName.lastIndexOf('.').takeIf { it > 0 } ?: requestedName.length
         val base = requestedName.substring(0, dot)
@@ -103,7 +104,7 @@ internal class GeneratedArtifactPublisher(
         require(name.length in 1..120 && name !in setOf(".", "..") && name.none {
             it == '/' || it == '\\' || Character.isISOControl(it)
         }) {
-            "文件名无效：不能使用路径分隔符、控制字符或超过 120 个字符"
+            localizedText("文件名无效：不能使用路径分隔符、控制字符或超过 120 个字符", "Invalid filename: path separators and control characters are not allowed, and the name cannot exceed 120 characters.")
         }
     }
 }

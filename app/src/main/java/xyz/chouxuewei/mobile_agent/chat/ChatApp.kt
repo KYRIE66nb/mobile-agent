@@ -137,6 +137,7 @@ import xyz.chouxuewei.mobile_agent.core.ToolPermissionMode
 import xyz.chouxuewei.mobile_agent.core.ToolSummary
 import xyz.chouxuewei.mobile_agent.core.UserQuestionRequest
 import xyz.chouxuewei.mobile_agent.core.userFacingMessage
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import xyz.chouxuewei.mobile_agent.data.ModelSettings
 import xyz.chouxuewei.mobile_agent.data.ModelProfile
 import xyz.chouxuewei.mobile_agent.data.REASONING_EFFORT_OFF
@@ -242,7 +243,7 @@ fun ChatApp(app: PrototypeApplication) {
                     if (artifactPreview?.id == artifact.id) {
                         artifactPreview = null
                         artifactPreviewContent = null
-                        workspace.error.value = userFacingMessage(it, "暂时无法预览这个文件，请稍后重试")
+                        workspace.error.value = userFacingMessage(it, localizedText("暂时无法预览这个文件，请稍后重试", "This file cannot be previewed right now. Please try again later."))
                     }
                 }
             }
@@ -253,8 +254,8 @@ fun ChatApp(app: PrototypeApplication) {
                     .setType(artifact.mimeType)
                     .putExtra(Intent.EXTRA_STREAM, Uri.parse(artifact.contentUri))
                     .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                context.startActivity(Intent.createChooser(intent, "分享 ${artifact.name}"))
-            }.onFailure { workspace.error.value = "文件分享失败，请重试" }
+                context.startActivity(Intent.createChooser(intent, localizedText("分享 ${artifact.name}", "Share ${artifact.name}")))
+            }.onFailure { workspace.error.value = localizedText("文件分享失败，请重试", "Could not share the file. Please try again.") }
         },
         onReuse = { artifact ->
             current?.let { conversationId ->
@@ -299,7 +300,7 @@ fun ChatApp(app: PrototypeApplication) {
                         runCatching { app.attachments.fromPicker(uri) }
                             .onSuccess { attachment -> add(attachment) }
                             .onFailure { failure ->
-                                workspace.error.value = userFacingMessage(failure, "无法添加这个附件，请重新选择")
+                                workspace.error.value = userFacingMessage(failure, localizedText("无法添加这个附件，请重新选择", "Could not add this attachment. Please choose it again."))
                             }
                     }
                 }
@@ -314,7 +315,7 @@ fun ChatApp(app: PrototypeApplication) {
         }
     }
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (!granted) workspace.error.value = "需要麦克风权限才能使用语音输入"
+        if (!granted) workspace.error.value = localizedText("需要麦克风权限才能使用语音输入", "Microphone permission is required for voice input")
     }
 
     if (preference == null) return // 等待持久化设置，避免冷启动先闪现另一套主题。
@@ -457,13 +458,13 @@ fun ChatApp(app: PrototypeApplication) {
                         onModelSelect = { modelId ->
                             scope.launch {
                                 runCatching { app.modelSettings.setSelectedModel(modelId) }
-                                    .onFailure { workspace.error.value = userFacingMessage(it, "模型切换失败，请重试") }
+                                    .onFailure { workspace.error.value = userFacingMessage(it, localizedText("模型切换失败，请重试", "Could not switch models. Please try again.")) }
                             }
                         },
                         onReasoningSelect = { effort ->
                             scope.launch {
                                 runCatching { app.modelSettings.setSelectedReasoningEffort(effort) }
-                                    .onFailure { workspace.error.value = userFacingMessage(it, "思考强度未保存，请重试") }
+                                    .onFailure { workspace.error.value = userFacingMessage(it, localizedText("思考强度未保存，请重试", "Reasoning effort was not saved. Please try again.")) }
                             }
                         },
                         onSend = {
@@ -487,7 +488,7 @@ fun ChatApp(app: PrototypeApplication) {
                             when {
                                 id == null || selectedModel == null -> false
                                 !speechSettings.configured -> {
-                                    workspace.error.value = "请先在设置的“语音”中配置转写服务"
+                                    workspace.error.value = localizedText("请先在设置的“语音”中配置转写服务", "Configure a transcription service under Voice settings first")
                                     settingsPage = "voice"
                                     false
                                 }
@@ -545,13 +546,13 @@ fun ChatApp(app: PrototypeApplication) {
                         onEnabled = { capabilityId, enabled ->
                             scope.launch {
                                 runCatching { app.toolPermissions.setEnabled(capabilityId, enabled) }
-                                    .onFailure { workspace.error.value = userFacingMessage(it, "工具状态未保存，请重试") }
+                                    .onFailure { workspace.error.value = userFacingMessage(it, localizedText("工具状态未保存，请重试", "Tool status was not saved. Please try again.")) }
                             }
                         },
                         onPermission = { capabilityId, mode ->
                             scope.launch {
                                 runCatching { app.toolPermissions.setPermission(capabilityId, mode) }
-                                    .onFailure { workspace.error.value = userFacingMessage(it, "工具权限未保存，请重试") }
+                                    .onFailure { workspace.error.value = userFacingMessage(it, localizedText("工具权限未保存，请重试", "Tool permission was not saved. Please try again.")) }
                             }
                         },
                     )
@@ -618,7 +619,7 @@ fun ChatApp(app: PrototypeApplication) {
                         sourceMessage = current?.let { id ->
                             app.conversations.messages(id).firstOrNull { it.id == sourceId }
                         }
-                        if (sourceMessage == null) workspace.error.value = "暂时无法读取这条历史消息，请稍后重试"
+                        if (sourceMessage == null) workspace.error.value = localizedText("暂时无法读取这条历史消息，请稍后重试", "This history message is temporarily unavailable. Please try again later.")
                     }
                 },
                 onClose = { summaryOpen = false },
@@ -658,10 +659,10 @@ fun ChatApp(app: PrototypeApplication) {
                 onDismissRequest = { artifactToDelete = null },
                 shape = RoundedCornerShape(24.dp),
                 containerColor = colors.surface,
-                title = { Text("删除文件？") },
-                text = { Text("删除后将无法在这段对话中打开此文件。此操作不会影响其他应用中的文件。") },
+                title = { Text(localizedText("删除文件？", "Delete file?")) },
+                text = { Text(localizedText("删除后将无法在这段对话中打开此文件。此操作不会影响其他应用中的文件。", "After deletion, this file cannot be opened from this conversation. Files in other apps are not affected.")) },
                 dismissButton = {
-                    TextButton(onClick = { artifactToDelete = null }) { Text("取消") }
+                    TextButton(onClick = { artifactToDelete = null }) { Text(localizedText("取消", "Cancel")) }
                 },
                 confirmButton = {
                     TextButton(onClick = {
@@ -676,9 +677,9 @@ fun ChatApp(app: PrototypeApplication) {
                                         }))
                                     }
                                 }
-                                .onFailure { workspace.error.value = userFacingMessage(it, "文件未删除，请重试") }
+                                .onFailure { workspace.error.value = userFacingMessage(it, localizedText("文件未删除，请重试", "Could not delete the file. Please try again.")) }
                         }
-                    }) { Text("删除", color = colors.error) }
+                    }) { Text(localizedText("删除", "Delete"), color = colors.error) }
                 },
             )
         }
@@ -709,7 +710,7 @@ private fun ChatTopBar(
     CenterAlignedTopAppBar(
         title = {
             Text(
-                if (running) "正在回复" else title.takeUnless { it == "新对话" }.orEmpty(),
+                if (running) localizedText("正在回复", "Responding") else title.takeUnless { it in setOf("新对话", "New conversation") }.orEmpty(),
                 style = MaterialTheme.typography.titleSmall,
                 color = if (running) colors.accent else colors.text,
                 maxLines = 1,
@@ -717,12 +718,12 @@ private fun ChatTopBar(
             )
         },
         navigationIcon = {
-            HeaderIcon(R.drawable.lucide_panel_left, "历史对话", onHistory)
+            HeaderIcon(R.drawable.lucide_panel_left, localizedText("历史对话", "Conversation history"), onHistory)
         },
         actions = {
-            HeaderIcon(R.drawable.lucide_square_pen, "新对话", onNewConversation)
+            HeaderIcon(R.drawable.lucide_square_pen, localizedText("新对话", "New conversation"), onNewConversation)
             Box {
-                HeaderIcon(R.drawable.lucide_ellipsis, "对话菜单") { onMenuChange(true) }
+                HeaderIcon(R.drawable.lucide_ellipsis, localizedText("对话菜单", "Conversation menu")) { onMenuChange(true) }
                 DropdownMenu(
                     expanded = menu,
                     onDismissRequest = { onMenuChange(false) },
@@ -731,9 +732,9 @@ private fun ChatTopBar(
                     tonalElevation = 0.dp,
                     shadowElevation = 10.dp,
                 ) {
-                    DropdownMenuItem(text = { MenuText("整理较早对话", "释放上下文空间，完整记录仍会保留") }, onClick = onCompact)
-                    DropdownMenuItem(text = { MenuText("查看对话摘要", "查看保留的要点和来源") }, onClick = onSummary)
-                    DropdownMenuItem(text = { MenuText("修改对话标题", "让历史记录更容易查找") }, onClick = onRename)
+                    DropdownMenuItem(text = { MenuText(localizedText("整理较早对话", "Summarize earlier conversation"), localizedText("释放上下文空间，完整记录仍会保留", "Free context space while keeping the full history")) }, onClick = onCompact)
+                    DropdownMenuItem(text = { MenuText(localizedText("查看对话摘要", "View conversation summary"), localizedText("查看保留的要点和来源", "View retained points and sources")) }, onClick = onSummary)
+                    DropdownMenuItem(text = { MenuText(localizedText("修改对话标题", "Edit conversation title"), localizedText("让历史记录更容易查找", "Make this conversation easier to find")) }, onClick = onRename)
                 }
             }
         },
@@ -795,7 +796,7 @@ private fun HistoryDrawer(
                 color = colors.accent,
                 fontWeight = FontWeight.SemiBold,
             )
-            HeaderIcon(R.drawable.lucide_panel_left, "关闭侧栏", onClose)
+            HeaderIcon(R.drawable.lucide_panel_left, localizedText("关闭侧栏", "Close sidebar"), onClose)
         }
 
         Surface(
@@ -814,7 +815,7 @@ private fun HistoryDrawer(
                 horizontalArrangement = Arrangement.Center,
             ) {
                 ChatIcon(R.drawable.lucide_square_pen, null, Modifier.size(20.dp))
-                Text("新建对话", Modifier.padding(start = 9.dp), style = MaterialTheme.typography.bodyLarge)
+                Text(localizedText("新建对话", "New conversation"), Modifier.padding(start = 9.dp), style = MaterialTheme.typography.bodyLarge)
             }
         }
 
@@ -823,7 +824,7 @@ private fun HistoryDrawer(
             verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (pinned.isNotEmpty()) {
                 item(key = "pinned_header") {
-                    SectionLabel("置顶", Modifier.padding(start = 4.dp, top = 4.dp, bottom = 6.dp))
+                    SectionLabel(localizedText("置顶", "Pin"), Modifier.padding(start = 4.dp, top = 4.dp, bottom = 6.dp))
                 }
                 items(pinned, key = { it.id }) { conversation ->
                     ConversationRow(
@@ -841,7 +842,7 @@ private fun HistoryDrawer(
             }
             if (recent.isNotEmpty()) {
                 item(key = "recent_header") {
-                    SectionLabel("最近", Modifier.padding(start = 4.dp, top = 4.dp, bottom = 6.dp))
+                    SectionLabel(localizedText("最近", "Recent"), Modifier.padding(start = 4.dp, top = 4.dp, bottom = 6.dp))
                 }
                 items(recent, key = { it.id }) { conversation ->
                     ConversationRow(
@@ -859,7 +860,7 @@ private fun HistoryDrawer(
             }
             if (filtered.isEmpty()) {
                 item {
-                    Text("没有找到相关对话", Modifier.padding(18.dp), color = colors.secondary,
+                    Text(localizedText("没有找到相关对话", "No matching conversations"), Modifier.padding(18.dp), color = colors.secondary,
                         style = MaterialTheme.typography.bodyMedium)
                 }
             }
@@ -869,8 +870,8 @@ private fun HistoryDrawer(
             Modifier.fillMaxWidth().padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            DrawerQuickAction("工具", R.drawable.lucide_sliders_horizontal, onTools, Modifier.weight(1f))
-            DrawerQuickAction("设置", R.drawable.lucide_settings, onSettings,
+            DrawerQuickAction(localizedText("工具", "Tools"), R.drawable.lucide_sliders_horizontal, onTools, Modifier.weight(1f))
+            DrawerQuickAction(localizedText("设置", "Settings"), R.drawable.lucide_settings, onSettings,
                 Modifier.weight(1f).testTag("settings"))
         }
         Row(
@@ -884,8 +885,8 @@ private fun HistoryDrawer(
                 }
             }
             Column(Modifier.weight(1f).padding(start = 11.dp)) {
-                Text("本机存储", style = MaterialTheme.typography.bodyMedium)
-            Text("对话记录保存在此设备", color = colors.tertiary, style = MaterialTheme.typography.labelSmall)
+                Text(localizedText("本机存储", "On-device storage"), style = MaterialTheme.typography.bodyMedium)
+            Text(localizedText("对话记录保存在此设备", "Conversations are stored on this device"), color = colors.tertiary, style = MaterialTheme.typography.labelSmall)
             }
             ChatIcon(R.drawable.lucide_ellipsis, null, Modifier.size(20.dp), colors.tertiary)
         }
@@ -896,16 +897,16 @@ private fun HistoryDrawer(
             onDismissRequest = { pendingDelete = null },
             shape = RoundedCornerShape(24.dp),
             containerColor = colors.surface,
-            title = { Text("删除对话？") },
-            text = { Text("“${conversation.title}”中的消息、摘要和工具记录将被永久删除，此操作无法撤销。") },
+            title = { Text(localizedText("删除对话？", "Delete conversation?")) },
+            text = { Text(localizedText("“${conversation.title}”中的消息、摘要和工具记录将被永久删除，此操作无法撤销。", "Messages, summaries, and tool records in “${conversation.title}” will be permanently deleted. This cannot be undone.")) },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+                TextButton(onClick = { pendingDelete = null }) { Text(localizedText("取消", "Cancel")) }
             },
             confirmButton = {
                 TextButton(onClick = {
                     pendingDelete = null
                     onDelete(conversation.id)
-                }) { Text("删除", color = colors.error) }
+                }) { Text(localizedText("删除", "Delete"), color = colors.error) }
             },
         )
     }
@@ -929,7 +930,7 @@ private fun DrawerSearch(value: String, onChange: (String) -> Unit) {
             decorationBox = { inner ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     ChatIcon(R.drawable.lucide_search, null, Modifier.size(18.dp), colors.tertiary)
-                    if (value.isBlank()) Text("搜索对话", color = colors.tertiary,
+                    if (value.isBlank()) Text(localizedText("搜索对话", "Search conversations"), color = colors.tertiary,
                         style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 9.dp))
                     Box(Modifier.weight(1f).padding(start = if (value.isBlank()) 0.dp else 9.dp)) { inner() }
                 }
@@ -956,7 +957,7 @@ private fun ConversationRow(
         Surface(
             modifier = Modifier.fillMaxWidth().combinedClickable(
                 onClick = onClick,
-                onLongClickLabel = "打开对话操作",
+                onLongClickLabel = localizedText("打开对话操作", "Open conversation actions"),
                 onLongClick = onLongClick,
             ),
             shape = RoundedCornerShape(15.dp),
@@ -972,8 +973,8 @@ private fun ConversationRow(
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
                     val status = listOfNotNull(
-                        "已置顶".takeIf { conversation.pinned },
-                        "正在回复".takeIf { running },
+                        localizedText("已置顶", "Pinned").takeIf { conversation.pinned },
+                        localizedText("正在回复", "Responding").takeIf { running },
                     ).joinToString(" · ")
                     if (status.isNotEmpty()) Text(status, color = if (running) colors.accent else colors.tertiary,
                         style = MaterialTheme.typography.labelSmall)
@@ -991,8 +992,8 @@ private fun ConversationRow(
             DropdownMenuItem(
                 text = {
                     MenuText(
-                        if (conversation.pinned) "取消置顶" else "置顶对话",
-                        if (conversation.pinned) "恢复按最近使用时间排序" else "固定在历史记录顶部",
+                        if (conversation.pinned) localizedText("取消置顶", "Unpin") else localizedText("置顶对话", "Pin conversation"),
+                        if (conversation.pinned) localizedText("恢复按最近使用时间排序", "Restore sorting by recent activity") else localizedText("固定在历史记录顶部", "Keep at the top of history"),
                     )
                 },
                 onClick = {
@@ -1003,8 +1004,8 @@ private fun ConversationRow(
             DropdownMenuItem(
                 text = {
                     MenuText(
-                        "删除对话",
-                        if (running) "请先停止当前回复" else "永久删除消息和相关记录",
+                        localizedText("删除对话", "Delete conversation"),
+                        if (running) localizedText("请先停止当前回复", "Stop the current response first") else localizedText("永久删除消息和相关记录", "Permanently delete messages and related records"),
                     )
                 },
                 enabled = !running,
@@ -1047,7 +1048,7 @@ private fun LoadingConversation(modifier: Modifier = Modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AppGlyph("M", modifier = Modifier.size(48.dp))
-            Text("正在恢复对话…", color = LocalChatColors.current.secondary,
+            Text(localizedText("正在恢复对话…", "Restoring conversation…"), color = LocalChatColors.current.secondary,
                 style = MaterialTheme.typography.bodyMedium)
         }
     }
@@ -1121,7 +1122,7 @@ private fun ChatTimeline(
                 color = LocalChatColors.current.surface,
                 border = BorderStroke(1.dp, LocalChatColors.current.divider),
             ) {
-                Text("回到最新", Modifier.padding(horizontal = 15.dp, vertical = 9.dp),
+                Text(localizedText("回到最新", "Jump to latest"), Modifier.padding(horizontal = 15.dp, vertical = 9.dp),
                     style = MaterialTheme.typography.labelMedium)
             }
         }
@@ -1139,7 +1140,7 @@ private fun EmptyConversation(notice: String?, modifier: Modifier) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ChatIcon(R.drawable.lucide_sparkles, null, Modifier.size(31.dp), colors.accent)
             Text(
-                "你好，我能帮你做什么？",
+                localizedText("你好，我能帮你做什么？", "Hi, how can I help?"),
                 Modifier.padding(start = 12.dp),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Medium,
@@ -1298,9 +1299,9 @@ private fun ToolCallSummary(
 ) {
     Column {
         ToolSummaryRow(ToolSummary(
-            title = toolTitles[call.toolId] ?: "工具调用",
+            title = toolTitles[call.toolId] ?: localizedText("工具调用", "Tool calls"),
             detail = call.displaySummary
-                ?: call.error?.let { userFacingMessage(it, "工具未完成") }
+                ?: call.error?.let { userFacingMessage(it, localizedText("工具未完成", "Tool not completed")) }
                 ?: toolStatusText(call.status),
             state = toolStatusText(call.status),
         ))
@@ -1331,7 +1332,7 @@ private fun NetworkSourceLinks(call: ToolCallRecord) {
         Modifier.fillMaxWidth().padding(top = 7.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("来源", color = colors.secondary, style = MaterialTheme.typography.labelMedium)
+        Text(localizedText("来源", "Sources"), color = colors.secondary, style = MaterialTheme.typography.labelMedium)
         sources.forEachIndexed { index, source ->
             Surface(
                 modifier = Modifier.fillMaxWidth().clickable {
@@ -1397,14 +1398,14 @@ private fun parseNetworkSources(call: ToolCallRecord): List<NetworkSourceLink> =
 }.getOrDefault(emptyList())
 
 private fun toolStatusText(status: ToolCallStatus): String = when (status) {
-    ToolCallStatus.RECEIVED -> "准备中"
-    ToolCallStatus.WAITING_APPROVAL -> "等待确认"
-    ToolCallStatus.EXECUTING -> "执行中"
-    ToolCallStatus.SUCCEEDED -> "已完成"
-    ToolCallStatus.FAILED -> "未完成"
-    ToolCallStatus.DENIED -> "未授权"
-    ToolCallStatus.CANCELLED -> "已停止"
-    ToolCallStatus.INTERRUPTED -> "已中断"
+    ToolCallStatus.RECEIVED -> localizedText("准备中", "Preparing")
+    ToolCallStatus.WAITING_APPROVAL -> localizedText("等待确认", "Waiting for approval")
+    ToolCallStatus.EXECUTING -> localizedText("执行中", "Running")
+    ToolCallStatus.SUCCEEDED -> localizedText("已完成", "Completed")
+    ToolCallStatus.FAILED -> localizedText("未完成", "Not completed")
+    ToolCallStatus.DENIED -> localizedText("未授权", "Not authorized")
+    ToolCallStatus.CANCELLED -> localizedText("已停止", "Stopped")
+    ToolCallStatus.INTERRUPTED -> localizedText("已中断", "Interrupted")
 }
 
 @Composable
@@ -1420,10 +1421,10 @@ private fun ReasoningDisclosure(
     // 思考内容可能很长，生成中也默认收起；用户点击后仍保留当前轮次的展开状态。
     var expanded by rememberSaveable(stateKey) { mutableStateOf(false) }
     val label = when {
-        active && !hasReasoning -> "思考 · 进行中"
-        active && durationMillis == null -> "思考 · 进行中"
-        durationMillis != null -> "思考 · 持续了 ${formatReasoningDuration(durationMillis)}"
-        else -> "思考 · 已完成"
+        active && !hasReasoning -> localizedText("思考 · 进行中", "Reasoning · In progress")
+        active && durationMillis == null -> localizedText("思考 · 进行中", "Reasoning · In progress")
+        durationMillis != null -> localizedText("思考 · 持续了 ${formatReasoningDuration(durationMillis)}", "Reasoning · ${formatReasoningDuration(durationMillis)}")
+        else -> localizedText("思考 · 已完成", "Reasoning · Completed")
     }
 
     Row(
@@ -1442,7 +1443,7 @@ private fun ReasoningDisclosure(
         if (hasReasoning) {
             ChatIcon(
                 R.drawable.lucide_chevron_down,
-                if (expanded) "收起思考内容" else "展开思考内容",
+                if (expanded) localizedText("收起思考内容", "Hide reasoning") else localizedText("展开思考内容", "Show reasoning"),
                 Modifier.padding(start = 4.dp).size(15.dp).rotate(if (expanded) 180f else 0f),
                 colors.tertiary,
             )
@@ -1504,7 +1505,7 @@ private fun ToolApprovalSheet(
             AppGlyph("!", container = colors.warning.copy(alpha = .14f), content = colors.warning)
             Column(Modifier.padding(start = 12.dp)) {
                 Text(
-                    if (request.choices.isEmpty()) "允许使用“${request.capabilityTitle}”？" else "选择手机操作方式",
+                    if (request.choices.isEmpty()) localizedText("允许使用“${request.capabilityTitle}”？", "Allow “${request.capabilityTitle}”?") else localizedText("选择手机操作方式", "Choose phone operation mode"),
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Text(request.actionTitle, style = MaterialTheme.typography.bodyMedium, color = colors.secondary)
@@ -1519,7 +1520,7 @@ private fun ToolApprovalSheet(
                 Text(request.description, style = MaterialTheme.typography.bodyMedium, color = colors.secondary)
                 request.argumentsSummary?.takeIf(String::isNotBlank)?.let { summary ->
                     Text(
-                        "将要执行",
+                        localizedText("将要执行", "About to run"),
                         Modifier.padding(top = 7.dp),
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.tertiary,
@@ -1542,11 +1543,11 @@ private fun ToolApprovalSheet(
                         border = BorderStroke(1.dp, if (checked) colors.accent else colors.divider),
                     ) {
                         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            AppGlyph(if (choice.id == "background") "后" else "前")
+                            AppGlyph(if (choice.id == "background") localizedText("后", "BG") else localizedText("前", "FG"))
                             Column(Modifier.padding(start = 12.dp)) {
                                 Text(choice.title, style = MaterialTheme.typography.titleSmall)
                                 Text(
-                                    if (supported) choice.description else "后台操作需要 Android 14 或更高版本",
+                                    if (supported) choice.description else localizedText("后台操作需要 Android 14 或更高版本", "Background operation requires Android 14 or later"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.secondary,
                                 )
@@ -1572,9 +1573,9 @@ private fun ToolApprovalSheet(
             ) {
                 Text(
                     if (required) {
-                        "允许显示悬浮窗，以便离开 Mobile Agent 后继续查看操作步骤"
+                        localizedText("允许显示悬浮窗，以便离开 Mobile Agent 后继续查看操作步骤", "Allow display over other apps to keep viewing operation steps after leaving Mobile Agent")
                     } else {
-                        "开启悬浮控制条（推荐），离开 Mobile Agent 后可查看进度并立即停止；不开启也可继续，请确保设备操作通知可用"
+                        localizedText("开启悬浮控制条（推荐），离开 Mobile Agent 后可查看进度并立即停止；不开启也可继续，请确保设备操作通知可用", "Enable the floating controls (recommended) to view progress and stop immediately after leaving Mobile Agent. Otherwise, keep phone operation notifications enabled.")
                     },
                     Modifier.padding(14.dp),
                     style = MaterialTheme.typography.bodyMedium,
@@ -1592,7 +1593,7 @@ private fun ToolApprovalSheet(
                 border = BorderStroke(1.dp, colors.divider),
             ) {
                 Text(
-                    "允许设备操作通知，以便悬浮控制条不可用时仍能查看进度和停止",
+                    localizedText("允许设备操作通知，以便悬浮控制条不可用时仍能查看进度和停止", "Allow phone operation notifications so progress and stop controls remain available when floating controls are unavailable"),
                     Modifier.padding(14.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.secondary,
@@ -1601,7 +1602,7 @@ private fun ToolApprovalSheet(
         }
         if (request.requiresPermissionApproval) {
             Text(
-                "选择“始终允许”后，今后使用“${request.capabilityTitle}”时不再询问。你可以随时在工具设置中修改。",
+                localizedText("选择“始终允许”后，今后使用“${request.capabilityTitle}”时不再询问。你可以随时在工具设置中修改。", "With Always allow, “${request.capabilityTitle}” will run without asking again. You can change this anytime in Tool settings."),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.tertiary,
             )
@@ -1611,7 +1612,7 @@ private fun ToolApprovalSheet(
                 onClick = { onDecision(false, null, false) },
                 enabled = !deciding,
                 modifier = Modifier.weight(.8f),
-            ) { Text("不允许") }
+            ) { Text(localizedText("不允许", "Deny")) }
             if (request.requiresPermissionApproval) {
                 Surface(
                     modifier = Modifier.weight(1.15f).clickable(
@@ -1623,7 +1624,7 @@ private fun ToolApprovalSheet(
                     contentColor = colors.accent,
                 ) {
                     Text(
-                        "始终允许",
+                        localizedText("始终允许", "Always allow"),
                         Modifier.padding(vertical = 12.dp),
                         style = MaterialTheme.typography.labelLarge,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -1640,9 +1641,9 @@ private fun ToolApprovalSheet(
             ) {
                 Text(
                     when {
-                        deciding -> "处理中…"
-                        request.choices.isNotEmpty() -> "开始操作"
-                        else -> "仅本次允许"
+                        deciding -> localizedText("处理中…", "Processing…")
+                        request.choices.isNotEmpty() -> localizedText("开始操作", "Start operation")
+                        else -> localizedText("仅本次允许", "Allow once")
                     },
                     Modifier.padding(vertical = 12.dp),
                     style = MaterialTheme.typography.labelLarge,
@@ -1675,8 +1676,8 @@ private fun UserQuestionSheet(
         Row(verticalAlignment = Alignment.CenterVertically) {
             AppGlyph("?", container = colors.accentSoft, content = colors.accent)
             Column(Modifier.padding(start = 12.dp)) {
-                Text("AI 需要你的回答", style = MaterialTheme.typography.titleLarge)
-                Text("回答后会继续当前任务", style = MaterialTheme.typography.bodyMedium, color = colors.secondary)
+                Text(localizedText("AI 需要你的回答", "AI needs your answer"), style = MaterialTheme.typography.titleLarge)
+                Text(localizedText("回答后会继续当前任务", "The current task will continue after you answer"), style = MaterialTheme.typography.bodyMedium, color = colors.secondary)
             }
         }
         Surface(
@@ -1708,7 +1709,7 @@ private fun UserQuestionSheet(
                 onValueChange = { answer = it.take(2_000) },
                 enabled = !submitting,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(if (request.options.isEmpty()) "你的回答" else "其他回答") },
+                label = { Text(if (request.options.isEmpty()) localizedText("你的回答", "Your answer") else localizedText("其他回答", "Other answer")) },
                 minLines = 2,
                 maxLines = 5,
                 shape = RoundedCornerShape(16.dp),
@@ -1726,7 +1727,7 @@ private fun UserQuestionSheet(
                 color = colors.accentSoft,
             ) {
                 Text(
-                    "开启“显示在其他应用上层”，下次离开 Mobile Agent 后也能直接看到并回答问题。",
+                    localizedText("开启“显示在其他应用上层”，下次离开 Mobile Agent 后也能直接看到并回答问题。", "Enable display over other apps so you can view and answer questions after leaving Mobile Agent."),
                     Modifier.padding(14.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.accent,
@@ -1738,7 +1739,7 @@ private fun UserQuestionSheet(
                 onClick = { onAnswer(null) },
                 enabled = !submitting,
                 modifier = Modifier.weight(1f),
-            ) { Text("暂不回答") }
+            ) { Text(localizedText("暂不回答", "Not now")) }
             if (request.allowFreeText) {
                 Surface(
                     modifier = Modifier.weight(1f).clickable(
@@ -1749,7 +1750,7 @@ private fun UserQuestionSheet(
                     contentColor = Color.White,
                 ) {
                     Text(
-                        if (submitting) "提交中…" else "提交回答",
+                        if (submitting) localizedText("提交中…", "Submitting…") else localizedText("提交回答", "Submit answer"),
                         Modifier.padding(vertical = 12.dp),
                         style = MaterialTheme.typography.labelLarge,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -1764,17 +1765,17 @@ private fun formatReasoningDuration(durationMillis: Long): String {
     val totalSeconds = maxOf(1L, (durationMillis + 999L) / 1_000L)
     val minutes = totalSeconds / 60L
     val seconds = totalSeconds % 60L
-    return if (minutes == 0L) "${seconds} 秒" else "${minutes} 分 ${seconds} 秒"
+    return if (minutes == 0L) localizedText("${seconds} 秒", "${seconds} sec") else localizedText("${minutes} 分 ${seconds} 秒", "${minutes} min ${seconds} sec")
 }
 
 @Composable
 private fun MessageStatusLine(message: Message) {
     val colors = LocalChatColors.current
     when (message.status) {
-        MessageStatus.QUEUED -> StatusPill("将在当前回复完成后发送", colors.warning, colors.warningSoft)
+        MessageStatus.QUEUED -> StatusPill(localizedText("将在当前回复完成后发送", "Will send after the current response"), colors.warning, colors.warningSoft)
         MessageStatus.GENERATING -> Unit
         MessageStatus.FAILED, MessageStatus.CANCELLED, MessageStatus.INTERRUPTED ->
-            StatusPill(userFacingMessage(message.error, "本次回复未完成"), colors.error, colors.errorSoft)
+            StatusPill(userFacingMessage(message.error, localizedText("本次回复未完成", "This response was not completed")), colors.error, colors.errorSoft)
         else -> Unit
     }
 }
@@ -1806,7 +1807,7 @@ private fun InlineError(message: String, onDismiss: () -> Unit) {
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(message, Modifier.weight(1f), color = colors.error, style = MaterialTheme.typography.bodySmall)
-            Text("关闭", color = colors.error, style = MaterialTheme.typography.labelSmall)
+            Text(localizedText("关闭", "Close"), color = colors.error, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
@@ -1830,30 +1831,30 @@ private fun IncomingShareSheet(
         shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp),
     ) {
         Column(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, bottom = 24.dp)) {
-        Text("选择对话", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text(localizedText("选择对话", "Choose conversation"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
             val summary = buildString {
-                if (share.attachments.isNotEmpty()) append("${share.attachments.size} 个附件")
+                if (share.attachments.isNotEmpty()) append(localizedText("${share.attachments.size} 个附件", "${share.attachments.size} attachments"))
                 if (share.text.isNotBlank()) {
                     if (isNotEmpty()) append(" · ")
-                    append("含文字内容")
+                    append(localizedText("含文字内容", "Includes text"))
                 }
             }
             Text(summary, Modifier.padding(top = 5.dp, bottom = 16.dp), color = colors.secondary)
-            ShareTargetRow("新建对话", "新建对话并保留为草稿", onNewConversation)
+            ShareTargetRow(localizedText("新建对话", "New conversation"), localizedText("新建对话并保留为草稿", "Start a new conversation and keep as draft"), onNewConversation)
             if (conversations.isNotEmpty()) {
-                SectionLabel("已有对话", Modifier.padding(top = 18.dp, bottom = 7.dp))
+                SectionLabel(localizedText("已有对话", "Existing conversation"), Modifier.padding(top = 18.dp, bottom = 7.dp))
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
                     items(conversations.take(20), key = Conversation::id) { conversation ->
                         ShareTargetRow(
                             title = conversation.title,
-                            detail = if (conversation.id == currentConversationId) "当前对话" else "添加到这段对话的草稿",
+                            detail = if (conversation.id == currentConversationId) localizedText("当前对话", "Current conversation") else localizedText("添加到这段对话的草稿", "Add to this conversation draft"),
                             onClick = { onConversation(conversation.id) },
                         )
                     }
                 }
             }
             TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End).padding(top = 8.dp)) {
-                Text("取消")
+                Text(localizedText("取消", "Cancel"))
             }
         }
     }
@@ -1934,10 +1935,10 @@ private fun ChatComposer(
             if (voiceMode) {
                 val recording = voiceInputState is VoiceInputState.Recording
                 val label = when (voiceInputState) {
-                    is VoiceInputState.Recording -> "正在录音，松开发送"
-                    is VoiceInputState.Transcribing -> "正在转写并发送…"
+                    is VoiceInputState.Recording -> localizedText("正在录音，松开发送", "Recording — release to send")
+                    is VoiceInputState.Transcribing -> localizedText("正在转写并发送…", "Transcribing and sending…")
                     is VoiceInputState.Failed -> voiceInputState.message
-                    VoiceInputState.Idle -> "按住说话"
+                    VoiceInputState.Idle -> localizedText("按住说话", "Hold to talk")
                 }
                 Surface(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
@@ -2004,7 +2005,7 @@ private fun ChatComposer(
                     decorationBox = { inner ->
                         Box {
                             if (draft.text.isEmpty()) {
-                                Text("发消息，或描述你想完成的事", color = colors.tertiary,
+                                Text(localizedText("发消息，或描述你想完成的事", "Message Mobile Agent or describe what you want done"), color = colors.tertiary,
                                     style = MaterialTheme.typography.bodyLarge)
                             }
                             inner()
@@ -2015,13 +2016,13 @@ private fun ChatComposer(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ComposerIcon(
                     if (voiceMode) R.drawable.lucide_keyboard else R.drawable.lucide_mic,
-                    if (voiceMode) "切换到文字输入" else "切换到语音输入",
+                    if (voiceMode) localizedText("切换到文字输入", "Switch to text input") else localizedText("切换到语音输入", "Switch to voice input"),
                     enabled && voiceInputState !is VoiceInputState.Recording,
                     { onVoiceModeChange(!voiceMode) },
                     filled = true,
                 )
-                ComposerIcon(R.drawable.lucide_plus, "添加附件", enabled, onAttach, filled = true)
-                ComposerIcon(R.drawable.lucide_sliders_horizontal, "打开工具设置", true, onTools)
+                ComposerIcon(R.drawable.lucide_plus, localizedText("添加附件", "Add attachment"), enabled, onAttach, filled = true)
+                ComposerIcon(R.drawable.lucide_sliders_horizontal, localizedText("打开工具设置", "Open tool settings"), true, onTools)
                 ReasoningModePicker(
                     selected = selectedReasoningEffort,
                     efforts = reasoningEfforts,
@@ -2060,7 +2061,7 @@ private fun ChatComposer(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.End,
                             ) {
-                                Text(selectedModel?.name ?: "未配置模型",
+                                Text(selectedModel?.name ?: localizedText("未配置模型", "No model configured"),
                                     color = colors.secondary, style = MaterialTheme.typography.labelMedium,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.widthIn(max = 96.dp))
@@ -2092,7 +2093,7 @@ private fun ChatComposer(
                                                 style = MaterialTheme.typography.labelSmall)
                                         }
                                         if (profile.id == selectedModel?.id) {
-                                            Text("当前", color = colors.accent,
+                                            Text(localizedText("当前", "Current"), color = colors.accent,
                                                 style = MaterialTheme.typography.labelSmall)
                                         }
                                     }
@@ -2106,7 +2107,7 @@ private fun ChatComposer(
                         DropdownMenuItem(
                             text = {
                                 Row(Modifier.widthIn(min = 240.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(if (models.isEmpty()) "添加模型" else "管理模型",
+                                    Text(if (models.isEmpty()) localizedText("添加模型", "Add model") else localizedText("管理模型", "Manage models"),
                                         Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                                     ChatIcon(R.drawable.lucide_chevron_right, null,
                                         Modifier.padding(start = 8.dp).size(17.dp), colors.tertiary)
@@ -2123,12 +2124,12 @@ private fun ChatComposer(
                         colors = IconButtonDefaults.filledIconButtonColors(
                             containerColor = colors.text, contentColor = colors.background,
                         ),
-                    ) { ChatIcon(R.drawable.lucide_square, "停止回复", Modifier.size(17.dp)) }
+                    ) { ChatIcon(R.drawable.lucide_square, localizedText("停止回复", "Stop response"), Modifier.size(17.dp)) }
                 }
                 val canSend = selectedModel != null &&
                     (draft.text.isNotBlank() || draft.attachments.any(AttachmentRef::isImage))
                 if (running && canSend) {
-                    TextButton(onClick = onSend) { Text("发送补充") }
+                    TextButton(onClick = onSend) { Text(localizedText("发送补充", "Send follow-up")) }
                 } else if (!running) {
                     FilledIconButton(
                         onClick = onSend,
@@ -2138,7 +2139,7 @@ private fun ChatComposer(
                             containerColor = colors.accent, contentColor = colors.onAccent,
                             disabledContainerColor = colors.muted, disabledContentColor = colors.tertiary,
                         ),
-                    ) { ChatIcon(R.drawable.lucide_arrow_up, "发送消息", Modifier.size(18.dp)) }
+                    ) { ChatIcon(R.drawable.lucide_arrow_up, localizedText("发送消息", "Send message"), Modifier.size(18.dp)) }
                 }
             }
         }
@@ -2169,7 +2170,7 @@ private fun ContextUsageIndicator(
     }
     Box {
         Surface(
-            modifier = Modifier.size(36.dp).clickable(onClickLabel = "查看上下文额度", onClick = onExpand),
+            modifier = Modifier.size(36.dp).clickable(onClickLabel = localizedText("查看上下文额度", "View context usage"), onClick = onExpand),
             shape = CircleShape,
             color = Color.Transparent,
         ) {
@@ -2197,32 +2198,32 @@ private fun ContextUsageIndicator(
                     .padding(horizontal = 18.dp, vertical = 9.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text("上下文额度", color = Color(0xFFA9A9AE),
+                Text(localizedText("上下文额度", "Context usage"), color = Color(0xFFA9A9AE),
                     style = MaterialTheme.typography.labelMedium)
-                Text("$percent% 已占用", color = Color(0xFFD3D3D7),
+                Text(localizedText("$percent% 已占用", "$percent% used"), color = Color(0xFFD3D3D7),
                     style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(4.dp))
                 val inputText = when {
-                    usage == null -> "尚未计算"
+                    usage == null -> localizedText("尚未计算", "Not calculated")
                     usage.exact -> compactTokenCount(input)
                     else -> "≈${compactTokenCount(input)}"
                 }
                 Text(
-                    "输入 $inputText · 输出预留 ${compactTokenCount(outputReserve)}",
+                    localizedText("输入 $inputText · 输出预留 ${compactTokenCount(outputReserve)}", "Input $inputText · ${compactTokenCount(outputReserve)} reserved for output"),
                     color = Color.White,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
                 Text(
-                    "合计 ${compactTokenCount(occupied)} / ${compactTokenCount(window)}" +
-                        " · 剩余 ${compactTokenCount((window - occupied).coerceAtLeast(0))}",
+                    localizedText("合计 ${compactTokenCount(occupied)} / ${compactTokenCount(window)}", "Total ${compactTokenCount(occupied)} / ${compactTokenCount(window)}") +
+                        localizedText(" · 剩余 ${compactTokenCount((window - occupied).coerceAtLeast(0))}", " · ${compactTokenCount((window - occupied).coerceAtLeast(0))} remaining"),
                     color = Color(0xFFD3D3D7),
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                 )
                 if (usage?.compacted == true) {
-                    Text("较早内容已自动压缩", color = Color(0xFFAEBBFF),
+                    Text(localizedText("较早内容已自动压缩", "Earlier content was compressed automatically"), color = Color(0xFFAEBBFF),
                         style = MaterialTheme.typography.labelSmall)
                 }
             }
@@ -2246,8 +2247,8 @@ private fun ReasoningModePicker(
     val colors = LocalChatColors.current
     var menu by remember { mutableStateOf(false) }
     val selectedLabel = when (selected) {
-        REASONING_EFFORT_OFF -> "关闭"
-        null -> "思考"
+        REASONING_EFFORT_OFF -> localizedText("关闭", "Close")
+        null -> localizedText("思考", "Reasoning")
         else -> selected
     }
     Box {
@@ -2263,7 +2264,7 @@ private fun ReasoningModePicker(
             ) {
                 ChatIcon(
                     R.drawable.lucide_brain_circuit,
-                    "选择思考强度",
+                    localizedText("选择思考强度", "Choose reasoning effort"),
                     Modifier.size(18.dp),
                     if (selected == null) colors.secondary else colors.accent,
                 )
@@ -2288,8 +2289,8 @@ private fun ReasoningModePicker(
             DropdownMenuItem(
                 text = {
                     Column {
-                        Text("关闭", style = MaterialTheme.typography.bodyMedium)
-                        Text("不启用深度思考", color = colors.tertiary,
+                        Text(localizedText("关闭", "Close"), style = MaterialTheme.typography.bodyMedium)
+                        Text(localizedText("不启用深度思考", "Deep reasoning off"), color = colors.tertiary,
                             style = MaterialTheme.typography.labelSmall)
                     }
                 },
@@ -2298,8 +2299,8 @@ private fun ReasoningModePicker(
             DropdownMenuItem(
                 text = {
                     Column {
-                        Text("不指定", style = MaterialTheme.typography.bodyMedium)
-                        Text("由模型服务决定", color = colors.tertiary,
+                        Text(localizedText("不指定", "Not specified"), style = MaterialTheme.typography.bodyMedium)
+                        Text(localizedText("由模型服务决定", "Let the model service decide"), color = colors.tertiary,
                             style = MaterialTheme.typography.labelSmall)
                     }
                 },
@@ -2349,7 +2350,7 @@ private fun SheetTopHandle(onClose: () -> Unit) {
         IconButton(onClick = onClose, modifier = Modifier.align(Alignment.CenterEnd).padding(end = 10.dp)) {
             Surface(shape = CircleShape, color = colors.surfaceRaised) {
                 Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
-                    ChatIcon(R.drawable.lucide_x, "关闭")
+                    ChatIcon(R.drawable.lucide_x, localizedText("关闭", "Close"))
                 }
             }
         }
@@ -2368,8 +2369,8 @@ private fun ToolsPanel(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("工具", style = MaterialTheme.typography.headlineSmall)
-        Text("管理 AI 可以在对话中使用的工具。关闭后，AI 将无法调用。",
+        Text(localizedText("工具", "Tools"), style = MaterialTheme.typography.headlineSmall)
+        Text(localizedText("管理 AI 可以在对话中使用的工具。关闭后，AI 将无法调用。", "Manage tools AI can use in conversations. Disabled tools cannot be called."),
             style = MaterialTheme.typography.bodyMedium, color = colors.secondary)
         Spacer(Modifier.height(2.dp))
         capabilities.forEach { capability ->
@@ -2391,7 +2392,7 @@ private fun ToolsPanel(
             shape = RoundedCornerShape(18.dp), color = colors.accentSoft,
         ) {
             Text(
-                "选择“每次询问”后，工具会在使用前等待你确认。不可用的工具需要先完成页面显示的条件。",
+                localizedText("选择“每次询问”后，工具会在使用前等待你确认。不可用的工具需要先完成页面显示的条件。", "With Ask every time, the tool waits for your approval before use. Unavailable tools require the conditions shown on this page."),
                 Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall, color = colors.secondary,
             )
         }
@@ -2412,9 +2413,9 @@ private fun ToolCapabilityCard(
     val editable = capability.availability.state == ToolAvailabilityState.AVAILABLE ||
         capability.availability.state == ToolAvailabilityState.DEGRADED
     val status = when (capability.availability.state) {
-        ToolAvailabilityState.AVAILABLE -> "可用"
-        ToolAvailabilityState.DEGRADED -> capability.availability.detail.ifBlank { "部分可用" }
-        else -> capability.availability.detail.ifBlank { "当前不可用" }
+        ToolAvailabilityState.AVAILABLE -> localizedText("可用", "Available")
+        ToolAvailabilityState.DEGRADED -> capability.availability.detail.ifBlank { localizedText("部分可用", "Partially available") }
+        else -> capability.availability.detail.ifBlank { localizedText("当前不可用", "Currently unavailable") }
     }
     Surface(
         modifier = Modifier.fillMaxWidth().alpha(if (editable) 1f else .52f),
@@ -2444,7 +2445,7 @@ private fun ToolCapabilityCard(
                 }
                 Text(capability.description, style = MaterialTheme.typography.bodySmall, color = colors.secondary)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("使用时", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+                    Text(localizedText("使用时", "While using"), Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
                         color = colors.tertiary)
                     Box {
                         Surface(
@@ -2452,16 +2453,16 @@ private fun ToolCapabilityCard(
                             shape = RoundedCornerShape(10.dp), color = colors.surfaceRaised,
                         ) {
                             Text(
-                                if (access.permission == ToolPermissionMode.FULL_ACCESS) "始终允许" else "每次询问",
+                                if (access.permission == ToolPermissionMode.FULL_ACCESS) localizedText("始终允许", "Always allow") else localizedText("每次询问", "Ask every time"),
                                 Modifier.padding(horizontal = 9.dp, vertical = 5.dp), color = colors.secondary,
                                 style = MaterialTheme.typography.labelSmall,
                             )
                         }
                         DropdownMenu(expanded = menu && editable, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(text = { Text("每次询问") }, onClick = {
+                            DropdownMenuItem(text = { Text(localizedText("每次询问", "Ask every time")) }, onClick = {
                                 menu = false; onPermission(ToolPermissionMode.REQUEST_APPROVAL)
                             })
-                            DropdownMenuItem(text = { Text("始终允许") }, onClick = {
+                            DropdownMenuItem(text = { Text(localizedText("始终允许", "Always allow")) }, onClick = {
                                 menu = false; onPermission(ToolPermissionMode.FULL_ACCESS)
                             })
                         }
@@ -2484,24 +2485,24 @@ private fun ContextSummaryDialog(
         shape = RoundedCornerShape(28.dp),
         containerColor = colors.surface,
         icon = { AppGlyph("Σ") },
-        title = { Text("对话摘要", style = MaterialTheme.typography.titleLarge) },
+        title = { Text(localizedText("对话摘要", "Conversation summary"), style = MaterialTheme.typography.titleLarge) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (summary == null) {
-                    Text("这段对话还没有整理过。完整对话记录仍保存在本机。", color = colors.secondary)
+                    Text(localizedText("这段对话还没有整理过。完整对话记录仍保存在本机。", "This conversation has not been summarized yet. The full history remains on this device."), color = colors.secondary)
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        SummaryMetric("整理至", "第 ${summary.boundary} 条")
-                        SummaryMetric("Token 估算", "${summary.inputTokensBefore} → ${summary.inputTokensAfter}")
+                        SummaryMetric(localizedText("整理至", "Summarized through"), localizedText("第 ${summary.boundary} 条", "Message ${summary.boundary}"))
+                        SummaryMetric(localizedText("Token 估算", "Estimated tokens"), "${summary.inputTokensBefore} → ${summary.inputTokensAfter}")
                     }
-                    Text("模型 · ${summary.model}", color = colors.secondary,
+                    Text(localizedText("模型 · ${summary.model}", "Model · ${summary.model}"), color = colors.secondary,
                         style = MaterialTheme.typography.labelMedium)
                     Surface(shape = RoundedCornerShape(16.dp), color = colors.surfaceRaised,
                         border = BorderStroke(1.dp, colors.divider)) {
                         Text(summary.summary, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
                     }
                     if (summary.sourceVersions.isNotEmpty()) {
-                        SectionLabel("来源消息")
+                        SectionLabel(localizedText("来源消息", "Source message"))
                         summary.sourceVersions.keys.forEachIndexed { index, sourceId ->
                             Surface(
                                 Modifier.fillMaxWidth().clickable { onSource(sourceId) },
@@ -2509,7 +2510,7 @@ private fun ContextSummaryDialog(
                             ) {
                                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically) {
-                                    Text("查看来源 ${index + 1}", Modifier.weight(1f),
+                                    Text(localizedText("查看来源 ${index + 1}", "View source ${index + 1}"), Modifier.weight(1f),
                                         style = MaterialTheme.typography.labelLarge)
                                     ChatIcon(R.drawable.lucide_chevron_right, null, Modifier.size(17.dp), colors.tertiary)
                                 }
@@ -2519,7 +2520,7 @@ private fun ContextSummaryDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onClose) { Text("关闭") } },
+        confirmButton = { TextButton(onClick = onClose) { Text(localizedText("关闭", "Close")) } },
     )
 }
 
@@ -2543,8 +2544,8 @@ private fun SourceMessageDialog(source: Message, onClose: () -> Unit) {
         containerColor = colors.surface,
         title = {
             Column {
-                Text("来源消息", style = MaterialTheme.typography.titleLarge)
-                Text("第 ${source.sequence} 条消息", color = colors.secondary,
+                Text(localizedText("来源消息", "Source message"), style = MaterialTheme.typography.titleLarge)
+                Text(localizedText("第 ${source.sequence} 条消息", "Message ${source.sequence}"), color = colors.secondary,
                     style = MaterialTheme.typography.labelMedium)
             }
         },
@@ -2555,7 +2556,7 @@ private fun SourceMessageDialog(source: Message, onClose: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium)
             }
         },
-        confirmButton = { TextButton(onClick = onClose) { Text("返回对话摘要") } },
+        confirmButton = { TextButton(onClick = onClose) { Text(localizedText("返回对话摘要", "Back to conversation summary")) } },
     )
 }
 
@@ -2572,13 +2573,13 @@ private fun RenameConversationDialog(
         shape = RoundedCornerShape(28.dp),
         containerColor = colors.surface,
         icon = { AppGlyph("Aa") },
-        title = { Text("修改对话标题", style = MaterialTheme.typography.titleLarge) },
+        title = { Text(localizedText("修改对话标题", "Edit conversation title"), style = MaterialTheme.typography.titleLarge) },
         text = {
             OutlinedTextField(
                 value = text,
                 onValueChange = onTextChange,
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("输入一个容易查找的标题") },
+                placeholder = { Text(localizedText("输入一个容易查找的标题", "Enter a title that is easy to find")) },
                 maxLines = 3,
                 shape = RoundedCornerShape(16.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -2589,7 +2590,7 @@ private fun RenameConversationDialog(
                 ),
             )
         },
-        dismissButton = { TextButton(onClick = onClose) { Text("取消") } },
-        confirmButton = { TextButton(onClick = onSave, enabled = text.isNotBlank()) { Text("保存") } },
+        dismissButton = { TextButton(onClick = onClose) { Text(localizedText("取消", "Cancel")) } },
+        confirmButton = { TextButton(onClick = onSave, enabled = text.isNotBlank()) { Text(localizedText("保存", "Save")) } },
     )
 }

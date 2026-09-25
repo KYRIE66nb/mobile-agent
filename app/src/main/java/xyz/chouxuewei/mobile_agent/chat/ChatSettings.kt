@@ -9,6 +9,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -39,6 +40,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -78,6 +81,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.os.LocaleListCompat
 import kotlinx.coroutines.launch
 import xyz.chouxuewei.mobile_agent.BuildConfig
 import xyz.chouxuewei.mobile_agent.R
@@ -87,6 +91,7 @@ import xyz.chouxuewei.mobile_agent.core.MAX_SINGLE_RUN_MAX_STEPS
 import xyz.chouxuewei.mobile_agent.core.MIN_SINGLE_RUN_MAX_STEPS
 import xyz.chouxuewei.mobile_agent.core.ThemePreference
 import xyz.chouxuewei.mobile_agent.core.userFacingMessage
+import xyz.chouxuewei.mobile_agent.core.localizedText
 import xyz.chouxuewei.mobile_agent.data.DEFAULT_REASONING_EFFORTS
 import xyz.chouxuewei.mobile_agent.data.MAX_MODEL_PROFILES
 import xyz.chouxuewei.mobile_agent.data.MAX_PERSONALIZATION_CHARS
@@ -102,6 +107,12 @@ import xyz.chouxuewei.mobile_agent.ui.theme.LocalChatColors
 
 private data class SettingsTab(val id: String, val label: String, val icon: Int)
 private data class SettingsNotice(val message: String, val success: Boolean)
+
+private enum class AppLanguage(val languageTag: String?) {
+    SYSTEM(null),
+    CHINESE("zh"),
+    ENGLISH("en"),
+}
 
 private const val ABOUT_PLACEHOLDER = "Codex、黑白辩思"
 private const val OPEN_SOURCE_URL = "https://github.com/"
@@ -232,7 +243,7 @@ fun ChatSettings(
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
             microphoneGranted = it
             feedback = SettingsNotice(
-                if (it) "麦克风权限已允许" else "未允许麦克风权限，语音输入暂不可用",
+                if (it) localizedText("麦克风权限已允许", "Microphone permission granted") else localizedText("未允许麦克风权限，语音输入暂不可用", "Microphone permission is not granted. Voice input is unavailable."),
                 it,
             )
         }
@@ -244,12 +255,12 @@ fun ChatSettings(
     val modelUsage by app.modelUsage.usage.collectAsState(initial = emptyList())
     val speechSettings by app.speechSettings.settings.collectAsState(initial = SpeechSettings())
     val tabs = listOf(
-        SettingsTab("general", "通用", R.drawable.lucide_settings),
-        SettingsTab("personalization", "个性化", R.drawable.lucide_sparkles),
-        SettingsTab("voice", "语音", R.drawable.lucide_mic),
-        SettingsTab("model", "模型服务", R.drawable.lucide_bot),
-        SettingsTab("data", "数据管理", R.drawable.lucide_database),
-        SettingsTab("about", "关于", R.drawable.lucide_info),
+        SettingsTab("general", localizedText("通用", "General"), R.drawable.lucide_settings),
+        SettingsTab("personalization", localizedText("个性化", "Personalization"), R.drawable.lucide_sparkles),
+        SettingsTab("voice", localizedText("语音", "Voice"), R.drawable.lucide_mic),
+        SettingsTab("model", localizedText("模型服务", "Model service"), R.drawable.lucide_bot),
+        SettingsTab("data", localizedText("数据管理", "Data"), R.drawable.lucide_database),
+        SettingsTab("about", localizedText("关于", "About"), R.drawable.lucide_info),
     )
     val tabsScroll = rememberScrollState()
 
@@ -288,10 +299,10 @@ fun ChatSettings(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onClose) {
-                ChatIcon(R.drawable.lucide_arrow_left, "返回对话", Modifier.size(22.dp))
+                ChatIcon(R.drawable.lucide_arrow_left, localizedText("返回对话", "Back to conversation"), Modifier.size(22.dp))
             }
             Text(
-                "设置", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,
+                localizedText("设置", "Settings"), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
         }
@@ -344,10 +355,10 @@ fun ChatSettings(
                                     reasoningEfforts = reasoningEfforts,
                                 )
                                 saved(savedId)
-                                feedback = SettingsNotice("模型配置已保存", true)
+                                feedback = SettingsNotice(localizedText("模型配置已保存", "Model configuration saved"), true)
                             } catch (e: Exception) {
                                 feedback = SettingsNotice(
-                                    userFacingMessage(e, "模型配置未保存，请重试"),
+                                    userFacingMessage(e, localizedText("模型配置未保存，请重试", "Model configuration was not saved. Please try again.")),
                                     false
                                 )
                             } finally {
@@ -358,10 +369,10 @@ fun ChatSettings(
                     onSelect = { id ->
                         scope.launch {
                             runCatching { app.modelSettings.setSelectedModel(id) }
-                                .onSuccess { feedback = SettingsNotice("已切换当前模型", true) }
+                                .onSuccess { feedback = SettingsNotice(localizedText("已切换当前模型", "Current model changed"), true) }
                                 .onFailure {
                                     feedback = SettingsNotice(
-                                        userFacingMessage(it, "模型切换失败，请重试"),
+                                        userFacingMessage(it, localizedText("模型切换失败，请重试", "Could not switch models. Please try again.")),
                                         false
                                     )
                                 }
@@ -372,13 +383,13 @@ fun ChatSettings(
                             saving = true
                             feedback = null
                             try {
-                                require(app.chatRuntime.active.value.isEmpty()) { "正在生成回复，请结束后再删除模型" }
+                                require(app.chatRuntime.active.value.isEmpty()) { localizedText("正在生成回复，请结束后再删除模型", "A response is being generated. Stop it before deleting the model.") }
                                 app.modelSettings.deleteModel(id)
                                 deleted()
-                                feedback = SettingsNotice("模型配置已删除", true)
+                                feedback = SettingsNotice(localizedText("模型配置已删除", "Model configuration deleted"), true)
                             } catch (e: Exception) {
                                 feedback = SettingsNotice(
-                                    userFacingMessage(e, "模型配置未删除，请重试"),
+                                    userFacingMessage(e, localizedText("模型配置未删除，请重试", "Model configuration was not deleted. Please try again.")),
                                     false
                                 )
                             } finally {
@@ -398,12 +409,12 @@ fun ChatSettings(
                             try {
                                 app.personalization.setInstructions(value)
                                 feedback = SettingsNotice(
-                                    if (value.isBlank()) "个性化设置已清空" else "个性化设置已保存",
+                                    if (value.isBlank()) localizedText("个性化设置已清空", "Personalization cleared") else localizedText("个性化设置已保存", "Personalization saved"),
                                     true,
                                 )
                             } catch (failure: Exception) {
                                 feedback = SettingsNotice(
-                                    userFacingMessage(failure, "个性化设置未保存，请重试"),
+                                    userFacingMessage(failure, localizedText("个性化设置未保存，请重试", "Personalization was not saved. Please try again.")),
                                     false,
                                 )
                             } finally {
@@ -430,10 +441,10 @@ fun ChatSettings(
                                     key.takeIf(String::isNotBlank)
                                 )
                                 saved()
-                                feedback = SettingsNotice("OpenAI 兼容配置已保存", true)
+                                feedback = SettingsNotice(localizedText("OpenAI 兼容配置已保存", "OpenAI-compatible configuration saved"), true)
                             } catch (failure: Exception) {
                                 feedback = SettingsNotice(
-                                    userFacingMessage(failure, "语音配置未保存，请重试"),
+                                    userFacingMessage(failure, localizedText("语音配置未保存，请重试", "Speech configuration was not saved. Please try again.")),
                                     false,
                                 )
                             } finally {
@@ -455,10 +466,10 @@ fun ChatSettings(
                                     accent,
                                 )
                                 saved()
-                                feedback = SettingsNotice("科大讯飞配置已保存", true)
+                                feedback = SettingsNotice(localizedText("科大讯飞配置已保存", "iFLYTEK configuration saved"), true)
                             } catch (failure: Exception) {
                                 feedback = SettingsNotice(
-                                    userFacingMessage(failure, "科大讯飞配置未保存，请重试"),
+                                    userFacingMessage(failure, localizedText("科大讯飞配置未保存，请重试", "iFLYTEK configuration was not saved. Please try again.")),
                                     false,
                                 )
                             } finally {
@@ -469,10 +480,10 @@ fun ChatSettings(
                     onSelect = { format ->
                         scope.launch {
                             runCatching { app.speechSettings.setSelectedFormat(format) }
-                                .onSuccess { feedback = SettingsNotice("已切换当前语音服务", true) }
+                                .onSuccess { feedback = SettingsNotice(localizedText("已切换当前语音服务", "Current speech service changed"), true) }
                                 .onFailure {
                                     feedback = SettingsNotice(
-                                        userFacingMessage(it, "语音服务未切换"),
+                                        userFacingMessage(it, localizedText("语音服务未切换", "Speech service was not changed")),
                                         false
                                     )
                                 }
@@ -483,10 +494,10 @@ fun ChatSettings(
                             speechTesting = true
                             feedback = null
                             app.voiceInput.verifyConfiguration(format)
-                                .onSuccess { feedback = SettingsNotice("语音接口连接正常", true) }
+                                .onSuccess { feedback = SettingsNotice(localizedText("语音接口连接正常", "Speech API connection succeeded"), true) }
                                 .onFailure {
                                     feedback = SettingsNotice(
-                                        userFacingMessage(it, "语音接口测试失败，请检查配置"),
+                                        userFacingMessage(it, localizedText("语音接口测试失败，请检查配置", "Speech API test failed. Check the configuration.")),
                                         false,
                                     )
                                 }
@@ -510,18 +521,18 @@ fun ChatSettings(
                                     if (
                                         result.filesDeleted == 0 && result.permissionsReleased == 0
                                     ) {
-                                        "没有需要清理的内容"
+                                        localizedText("没有需要清理的内容", "Nothing needs cleaning")
                                     } else {
                                         buildString {
-                                            append("已释放 ${formatStorageBytes(result.bytesFreed)}，共清理 ${result.filesDeleted} 个文件")
+                                            append(localizedText("已释放 ${formatStorageBytes(result.bytesFreed)}，共清理 ${result.filesDeleted} 个文件", "Freed ${formatStorageBytes(result.bytesFreed)} and cleaned ${result.filesDeleted} files"))
                                             if (result.permissionsReleased > 0) {
-                                                append("，移除 ${result.permissionsReleased} 项无用文件授权")
+                                                append(localizedText("，移除 ${result.permissionsReleased} 项无用文件授权", ", removed ${result.permissionsReleased} unused file grants"))
                                             }
                                         }
                                     }, true)
                             } catch (failure: Exception) {
                                 feedback = SettingsNotice(
-                                    userFacingMessage(failure, "清理未完成，请重试"),
+                                    userFacingMessage(failure, localizedText("清理未完成，请重试", "Cleanup was not completed. Please try again.")),
                                     false
                                 )
                             } finally {
@@ -551,14 +562,14 @@ fun ChatSettings(
                     onSelect = { value ->
                         scope.launch {
                             runCatching { app.appearance.setTheme(value) }
-                                .onFailure { feedback = SettingsNotice("主题未保存，请重试", false) }
+                                .onFailure { feedback = SettingsNotice(localizedText("主题未保存，请重试", "Theme was not saved. Please try again."), false) }
                         }
                     },
                     onDetailedLogging = { enabled ->
                         scope.launch {
                             runCatching { app.appearance.setDetailedLogging(enabled) }
                                 .onFailure {
-                                    feedback = SettingsNotice("日志设置未保存，请重试", false)
+                                    feedback = SettingsNotice(localizedText("日志设置未保存，请重试", "Logging setting was not saved. Please try again."), false)
                                 }
                         }
                     },
@@ -567,7 +578,7 @@ fun ChatSettings(
                             runCatching { app.agentExecutionSettings.setMaxSteps(value) }
                                 .onFailure {
                                     feedback = SettingsNotice(
-                                        userFacingMessage(it, "单轮最大步骤未保存，请重试"),
+                                        userFacingMessage(it, localizedText("单轮最大步骤未保存，请重试", "Maximum steps were not saved. Please try again.")),
                                         false,
                                     )
                                 }
@@ -581,7 +592,7 @@ fun ChatSettings(
                                 rootAccess = app.deviceGateway.setRootEnabled(enabled)
                                 if (enabled && rootAccess?.enabled != true) {
                                     feedback = SettingsNotice(
-                                        rootAccess?.detail ?: "未获得 Root 权限",
+                                        rootAccess?.detail ?: localizedText("未获得 Root 权限", "Root access not granted"),
                                         false
                                     )
                                 }
@@ -602,7 +613,7 @@ fun ChatSettings(
                         scope.launch {
                             runCatching { app.appearance.setPersistentOverlay(enabled) }
                                 .onFailure {
-                                    feedback = SettingsNotice("悬浮助手设置未保存，请重试", false)
+                                    feedback = SettingsNotice(localizedText("悬浮助手设置未保存，请重试", "Floating assistant setting was not saved. Please try again."), false)
                                 }
                         }
                     },
@@ -636,9 +647,9 @@ private fun PersonalizationSettings(
             .padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("个性化提示词", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("个性化提示词", "Personalization prompt"), style = MaterialTheme.typography.titleSmall)
         Text(
-            "写下希望 AI 长期记住的喜好、习惯和回复方式。",
+            localizedText("写下希望 AI 长期记住的喜好、习惯和回复方式。", "Write preferences, habits, and response styles you want AI to remember."),
             style = MaterialTheme.typography.bodySmall,
             color = colors.secondary,
         )
@@ -649,8 +660,8 @@ private fun PersonalizationSettings(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("personalization_instructions"),
-                label = { Text("偏好与习惯") },
-                placeholder = { Text("例如：我不吃香菜；推荐商品时优先考虑性价比；点外卖优先用淘宝；") },
+                label = { Text(localizedText("偏好与习惯", "Preferences and habits")) },
+                placeholder = { Text(localizedText("例如：我不吃香菜；推荐商品时优先考虑性价比；点外卖优先用淘宝；", "For example: Avoid cilantro; prioritize value when recommending products; prefer my usual delivery app.")) },
                 minLines = 7,
                 maxLines = 14,
                 shape = RoundedCornerShape(15.dp),
@@ -658,7 +669,7 @@ private fun PersonalizationSettings(
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(enabled = draft.isNotEmpty() && !saving, onClick = { draft = "" }) {
-                    Text("清空输入")
+                    Text(localizedText("清空输入", "Clear input"))
                 }
                 Text(
                     "${draft.length} / $MAX_PERSONALIZATION_CHARS",
@@ -679,7 +690,7 @@ private fun PersonalizationSettings(
                 contentColor = colors.onAccent
             ),
         ) {
-            Text(if (saving) "正在保存…" else "保存个性化设置")
+            Text(if (saving) localizedText("正在保存…", "Saving…") else localizedText("保存个性化设置", "Save personalization"))
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -747,9 +758,9 @@ private fun SpeechSettingsPage(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("语音服务", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            Text(localizedText("语音服务", "Speech service"), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
             Text(
-                "选择并配置转写协议",
+                localizedText("选择并配置转写协议", "Choose and configure a transcription protocol"),
                 color = colors.tertiary,
                 style = MaterialTheme.typography.labelSmall
             )
@@ -761,16 +772,16 @@ private fun SpeechSettingsPage(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             SpeechProviderCard(
-                title = "OpenAI 兼容",
-                detail = "文件转写",
+                title = localizedText("OpenAI 兼容", "OpenAI compatible"),
+                detail = localizedText("文件转写", "File transcription"),
                 selected = editing == SpeechApiFormat.OPENAI_COMPATIBLE,
                 current = settings.selectedFormat == SpeechApiFormat.OPENAI_COMPATIBLE,
                 configured = settings.openAi.configured,
                 onClick = { editingName = SpeechApiFormat.OPENAI_COMPATIBLE.name },
             )
             SpeechProviderCard(
-                title = "科大讯飞",
-                detail = "语音听写流式版",
+                title = localizedText("科大讯飞", "iFLYTEK"),
+                detail = localizedText("语音听写流式版", "Streaming Speech Dictation"),
                 selected = editing == SpeechApiFormat.IFLYTEK_IAT,
                 current = settings.selectedFormat == SpeechApiFormat.IFLYTEK_IAT,
                 configured = settings.iflytek.configured,
@@ -778,26 +789,26 @@ private fun SpeechSettingsPage(
             )
         }
 
-        Text("服务连接", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("服务连接", "Service connection"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
             when (editing) {
                 SpeechApiFormat.OPENAI_COMPATIBLE -> {
                     ModelField(
-                        openAiEndpoint, { openAiEndpoint = it }, "转写接口完整地址",
+                        openAiEndpoint, { openAiEndpoint = it }, localizedText("转写接口完整地址", "Full transcription API URL"),
                         Modifier.testTag("speech_openai_endpoint"), KeyboardType.Uri
                     )
                     ModelField(
-                        openAiModel, { openAiModel = it }, "语音模型 ID",
+                        openAiModel, { openAiModel = it }, localizedText("语音模型 ID", "Speech model ID"),
                         Modifier.testTag("speech_openai_model")
                     )
                     SecretField(
                         openAiKey,
                         { openAiKey = it },
-                        if (settings.openAi.hasApiKey) "API 密钥（留空则不修改）" else "API 密钥",
+                        if (settings.openAi.hasApiKey) localizedText("API 密钥（留空则不修改）", "API key (leave blank to keep unchanged)") else localizedText("API 密钥", "API key"),
                         "speech_openai_key",
                     )
                     Text(
-                        "multipart 上传 file 与 model，读取返回 JSON 的 text 字段。",
+                        localizedText("multipart 上传 file 与 model，读取返回 JSON 的 text 字段。", "Uploads file and model as multipart data and reads the text field from the returned JSON."),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.secondary,
                     )
@@ -805,7 +816,7 @@ private fun SpeechSettingsPage(
 
                 SpeechApiFormat.IFLYTEK_IAT -> {
                     ModelField(
-                        iflytekEndpoint, { iflytekEndpoint = it }, "WebSocket 接口地址",
+                        iflytekEndpoint, { iflytekEndpoint = it }, localizedText("WebSocket 接口地址", "WebSocket URL"),
                         Modifier.testTag("speech_iflytek_endpoint"), KeyboardType.Uri
                     )
                     ModelField(
@@ -815,13 +826,13 @@ private fun SpeechSettingsPage(
                     SecretField(
                         iflytekKey,
                         { iflytekKey = it },
-                        if (settings.iflytek.hasApiKey) "APIKey（留空则不修改）" else "APIKey",
+                        if (settings.iflytek.hasApiKey) localizedText("APIKey（留空则不修改）", "APIKey (leave blank to keep unchanged)") else "APIKey",
                         "speech_iflytek_key",
                     )
                     SecretField(
                         iflytekSecret,
                         { iflytekSecret = it },
-                        if (settings.iflytek.hasApiSecret) "APISecret（留空则不修改）" else "APISecret",
+                        if (settings.iflytek.hasApiSecret) localizedText("APISecret（留空则不修改）", "APISecret (leave blank to keep unchanged)") else "APISecret",
                         "speech_iflytek_secret",
                     )
                     Row(
@@ -829,20 +840,20 @@ private fun SpeechSettingsPage(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         ModelField(
-                            iflytekLanguage, { iflytekLanguage = it }, "语种",
+                            iflytekLanguage, { iflytekLanguage = it }, localizedText("语种", "Language"),
                             Modifier
                                 .weight(1f)
                                 .testTag("speech_iflytek_language")
                         )
                         ModelField(
-                            iflytekAccent, { iflytekAccent = it }, "方言",
+                            iflytekAccent, { iflytekAccent = it }, localizedText("方言", "Dialect"),
                             Modifier
                                 .weight(1f)
                                 .testTag("speech_iflytek_accent")
                         )
                     }
                     Text(
-                        "默认 zh_cn / mandarin；使用 16 kHz 单声道 PCM，单次最长 60 秒。",
+                        localizedText("默认 zh_cn / mandarin；使用 16 kHz 单声道 PCM，单次最长 60 秒。", "Default: en_us / English; uses 16 kHz mono PCM with a maximum of 60 seconds per recording."),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.secondary,
                     )
@@ -881,7 +892,7 @@ private fun SpeechSettingsPage(
                 contentColor = colors.onAccent
             ),
         ) {
-            Text(if (saving) "正在保存…" else "保存当前配置")
+            Text(if (saving) localizedText("正在保存…", "Saving…") else localizedText("保存当前配置", "Save current configuration"))
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(
@@ -890,17 +901,17 @@ private fun SpeechSettingsPage(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp),
-            ) { Text(if (testing) "正在测试…" else "测试连接") }
+            ) { Text(if (testing) localizedText("正在测试…", "Testing…") else localizedText("测试连接", "Test connection")) }
             TextButton(
                 enabled = configured && !changed && settings.selectedFormat != editing && !saving && !testing,
                 onClick = { onSelect(editing) },
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp),
-            ) { Text(if (settings.selectedFormat == editing) "当前使用" else "设为当前") }
+            ) { Text(if (settings.selectedFormat == editing) localizedText("当前使用", "In use") else localizedText("设为当前", "Set as current")) }
         }
 
-        Text("权限", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("权限", "Permissions"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(
@@ -908,21 +919,21 @@ private fun SpeechSettingsPage(
                         .weight(1f)
                         .padding(end = 12.dp)
                 ) {
-                    Text("麦克风", style = MaterialTheme.typography.bodyMedium)
+                    Text(localizedText("麦克风", "Microphone"), style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        if (microphoneGranted) "已允许，可在聊天页或贴边按钮录音" else "语音输入需要录音权限",
+                        if (microphoneGranted) localizedText("已允许，可在聊天页或贴边按钮录音", "Allowed. Record from the chat page or edge handle.") else localizedText("语音输入需要录音权限", "Voice input requires microphone permission"),
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.secondary,
                     )
                 }
                 if (microphoneGranted) {
                     Text(
-                        "已允许",
+                        localizedText("已允许", "Allowed"),
                         color = colors.success,
                         style = MaterialTheme.typography.labelMedium
                     )
                 } else {
-                    TextButton(onClick = onPermission) { Text("去允许") }
+                    TextButton(onClick = onPermission) { Text(localizedText("去允许", "Allow")) }
                 }
             }
         }
@@ -964,7 +975,7 @@ private fun SpeechProviderCard(
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
                 )
                 Text(
-                    if (configured) detail else "未配置",
+                    if (configured) detail else localizedText("未配置", "Not configured"),
                     maxLines = 1,
                     color = colors.secondary,
                     style = MaterialTheme.typography.labelSmall,
@@ -978,7 +989,7 @@ private fun SpeechProviderCard(
                     contentColor = colors.onAccent,
                 ) {
                     Text(
-                        "当前", Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        localizedText("当前", "Current"), Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                         style = MaterialTheme.typography.labelSmall
                     )
                 }
@@ -1076,10 +1087,10 @@ private fun GeneralSettings(
 ) {
     val focusManager = LocalFocusManager.current
     val themes = listOf(
-        ThemeOption(ThemePreference.PAPER, "浅色", "清爽留白", R.drawable.lucide_sun),
-        ThemeOption(ThemePreference.GRAPHITE, "深色", "低亮专注", R.drawable.lucide_moon),
-        ThemeOption(ThemePreference.SYSTEM, "跟随系统", "自动切换", R.drawable.lucide_monitor),
-        ThemeOption(ThemePreference.WARM, "暖色", "柔和阅读", R.drawable.lucide_palette),
+        ThemeOption(ThemePreference.PAPER, localizedText("浅色", "Light"), localizedText("清爽留白", "Clean and spacious"), R.drawable.lucide_sun),
+        ThemeOption(ThemePreference.GRAPHITE, localizedText("深色", "Dark"), localizedText("低亮专注", "Dim and focused"), R.drawable.lucide_moon),
+        ThemeOption(ThemePreference.SYSTEM, localizedText("跟随系统", "Follow system"), localizedText("自动切换", "Automatic"), R.drawable.lucide_monitor),
+        ThemeOption(ThemePreference.WARM, localizedText("暖色", "Warm"), localizedText("柔和阅读", "Comfortable reading"), R.drawable.lucide_palette),
     )
     var rootOffsetInWindow by remember { mutableStateOf(Offset.Zero) }
     var maxStepsFieldBounds by remember { mutableStateOf<Rect?>(null) }
@@ -1102,7 +1113,7 @@ private fun GeneralSettings(
             .padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("主题", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("主题", "Theme"), style = MaterialTheme.typography.titleSmall)
         themes.chunked(2).forEach { rowThemes ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 rowThemes.forEach { option ->
@@ -1117,8 +1128,8 @@ private fun GeneralSettings(
         }
 
         Spacer(Modifier.height(4.dp))
-        SettingsValueRow("语言", "简体中文")
-        SettingsValueRow("字体大小", "跟随系统")
+        LanguageSettingsRow()
+        SettingsValueRow(localizedText("字体大小", "Font size"), localizedText("跟随系统", "Follow system"))
         SingleRunMaxStepsRow(
             value = maxSteps,
             onChange = onMaxSteps,
@@ -1170,9 +1181,9 @@ private fun SingleRunMaxStepsRow(
                 .weight(1f)
                 .padding(end = 8.dp)
         ) {
-            Text("任务最大步骤", style = MaterialTheme.typography.bodyMedium)
+            Text(localizedText("任务最大步骤", "Maximum task steps"), style = MaterialTheme.typography.bodyMedium)
             Text(
-                "执行任务时，AI可执行的最大步数",
+                localizedText("执行任务时，AI可执行的最大步数", "Maximum steps AI can take per task"),
                 Modifier.padding(top = 2.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (draft.isNotEmpty() && !valid) colors.error else colors.secondary,
@@ -1258,12 +1269,12 @@ private fun BackgroundInteractionRow(
                     .weight(1f)
                     .padding(end = 12.dp)
             ) {
-                Text("常驻悬浮助手", style = MaterialTheme.typography.bodyMedium)
+                Text(localizedText("常驻悬浮助手", "Persistent floating assistant"), style = MaterialTheme.typography.bodyMedium)
                 Text(
                     when {
-                        overlayGranted -> "空闲时保留悬浮按钮，并显示低优先级常驻通知。"
-                        persistentOverlay -> "悬浮权限已关闭，当前只保留常驻通知；可在这里关闭。"
-                        else -> "需要先允许显示在其他应用上层。"
+                        overlayGranted -> localizedText("空闲时保留悬浮按钮，并显示低优先级常驻通知。", "Keep the floating button while idle and show a low-priority persistent notification.")
+                        persistentOverlay -> localizedText("悬浮权限已关闭，当前只保留常驻通知；可在这里关闭。", "Floating window permission is disabled. Only the persistent notification remains; turn it off here.")
+                        else -> localizedText("需要先允许显示在其他应用上层。", "Display over other apps must be allowed first.")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.secondary,
@@ -1276,7 +1287,7 @@ private fun BackgroundInteractionRow(
             )
         }
         Text(
-            "任务执行、授权和 AI 提问仍会临时启用后台控制；常驻开关只决定空闲时是否保留拉杆。",
+            localizedText("任务执行、授权和 AI 提问仍会临时启用后台控制；常驻开关只决定空闲时是否保留拉杆。", "Task execution, approvals, and AI questions can still enable background controls temporarily. This setting only keeps the handle while idle."),
             style = MaterialTheme.typography.bodySmall,
             color = colors.secondary,
         )
@@ -1287,7 +1298,7 @@ private fun BackgroundInteractionRow(
                 color = if (overlayGranted) colors.successSoft else colors.accentSoft,
             ) {
                 Text(
-                    if (overlayGranted) "悬浮窗已开启" else "开启悬浮窗",
+                    if (overlayGranted) localizedText("悬浮窗已开启", "Floating window enabled") else localizedText("开启悬浮窗", "Enable floating window"),
                     Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                     color = if (overlayGranted) colors.success else colors.accent,
                     style = MaterialTheme.typography.labelMedium,
@@ -1302,7 +1313,7 @@ private fun BackgroundInteractionRow(
                 color = if (notificationsGranted) colors.successSoft else colors.surfaceRaised,
             ) {
                 Text(
-                    if (notificationsGranted) "通知已开启" else "允许任务通知",
+                    if (notificationsGranted) localizedText("通知已开启", "Notifications enabled") else localizedText("允许任务通知", "Allow task notifications"),
                     Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                     color = if (notificationsGranted) colors.success else colors.secondary,
                     style = MaterialTheme.typography.labelMedium,
@@ -1326,9 +1337,9 @@ private fun DetailedLoggingRow(enabled: Boolean, onEnabled: (Boolean) -> Unit) {
                 .weight(1f)
                 .padding(end = 12.dp)
         ) {
-            Text("详细日志", style = MaterialTheme.typography.bodyMedium)
+            Text(localizedText("详细日志", "Detailed logs"), style = MaterialTheme.typography.bodyMedium)
             Text(
-                "输出运行、模型、工具和设备耗时到 Logcat，用于调试",
+                localizedText("输出运行、模型、工具和设备耗时到 Logcat，用于调试", "Write runtime, model, tool, and device timing to Logcat for debugging"),
                 Modifier.padding(top = 2.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.secondary,
@@ -1357,9 +1368,9 @@ private fun RootAccessRow(
                 .weight(1f)
                 .padding(end = 12.dp)
         ) {
-            Text("Root 权限", style = MaterialTheme.typography.bodyMedium)
+            Text(localizedText("Root 权限", "Root access"), style = MaterialTheme.typography.bodyMedium)
             Text(
-                state?.detail ?: "正在检查 Root 状态",
+                state?.detail ?: localizedText("正在检查 Root 状态", "Checking Root status"),
                 Modifier.padding(top = 2.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.secondary,
@@ -1420,20 +1431,100 @@ private fun ThemeOptionCard(
 }
 
 @Composable
-private fun SettingsValueRow(label: String, value: String) {
+private fun LanguageSettingsRow() {
+    var expanded by remember { mutableStateOf(false) }
+    val selected = currentAppLanguage()
+    val options = AppLanguage.entries
+
+    Box(Modifier.fillMaxWidth()) {
+        SettingsValueRow(
+            label = localizedText("语言", "Language"),
+            value = appLanguageLabel(selected),
+            onClick = { expanded = true },
+            showChevron = true,
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(appLanguageLabel(option), Modifier.weight(1f))
+                            if (option == selected) {
+                                ChatIcon(
+                                    R.drawable.lucide_circle_check,
+                                    null,
+                                    Modifier
+                                        .padding(start = 16.dp)
+                                        .size(18.dp),
+                                    LocalChatColors.current.accent,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        if (option != selected) setAppLanguage(option)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun currentAppLanguage(): AppLanguage =
+    when (AppCompatDelegate.getApplicationLocales()[0]?.language) {
+        null -> AppLanguage.SYSTEM
+        "zh" -> AppLanguage.CHINESE
+        else -> AppLanguage.ENGLISH
+    }
+
+private fun appLanguageLabel(language: AppLanguage): String = when (language) {
+    AppLanguage.SYSTEM -> localizedText("跟随系统", "Follow system")
+    AppLanguage.CHINESE -> "中文"
+    AppLanguage.ENGLISH -> "English"
+}
+
+private fun setAppLanguage(language: AppLanguage) {
+    // AppCompat 是语言状态的唯一所有者：空列表表示跟随系统，其余选项会同步到系统的应用语言设置。
+    val locales = language.languageTag
+        ?.let(LocaleListCompat::forLanguageTags)
+        ?: LocaleListCompat.getEmptyLocaleList()
+    AppCompatDelegate.setApplicationLocales(locales)
+}
+
+@Composable
+private fun SettingsValueRow(
+    label: String,
+    value: String,
+    onClick: (() -> Unit)? = null,
+    showChevron: Boolean = false,
+) {
     val colors = LocalChatColors.current
     Row(
         Modifier
             .fillMaxWidth()
+            .then(if (onClick == null) Modifier else Modifier.clickable(onClick = onClick))
             .padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
         Surface(shape = RoundedCornerShape(22.dp), color = colors.surfaceRaised) {
-            Text(
-                value, Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                color = colors.secondary, style = MaterialTheme.typography.bodyMedium
-            )
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(value, color = colors.secondary, style = MaterialTheme.typography.bodyMedium)
+                if (showChevron) {
+                    ChatIcon(
+                        R.drawable.lucide_chevron_down,
+                        null,
+                        Modifier
+                            .padding(start = 6.dp)
+                            .size(15.dp),
+                        colors.tertiary,
+                    )
+                }
+            }
         }
     }
 }
@@ -1491,7 +1582,7 @@ private fun ModelSettingsPage(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("模型列表", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+            Text(localizedText("模型列表", "Model list"), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
             Text(
                 "${settings.models.size}/$MAX_MODEL_PROFILES", color = colors.tertiary,
                 style = MaterialTheme.typography.labelSmall
@@ -1549,7 +1640,7 @@ private fun ModelSettingsPage(
                                 contentColor = colors.onAccent,
                             ) {
                                 Text(
-                                    "当前",
+                                    localizedText("当前", "Current"),
                                     Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                     style = MaterialTheme.typography.labelSmall,
                                 )
@@ -1578,7 +1669,7 @@ private fun ModelSettingsPage(
                 ) {
                     ChatIcon(R.drawable.lucide_plus, null, Modifier.size(17.dp), colors.secondary)
                     Text(
-                        if (canAdd) "新增模型" else "已达上限", Modifier.padding(start = 6.dp),
+                        if (canAdd) localizedText("新增模型", "Add model") else localizedText("已达上限", "Limit reached"), Modifier.padding(start = 6.dp),
                         style = MaterialTheme.typography.labelLarge,
                         color = if (canAdd) colors.text else colors.tertiary
                     )
@@ -1586,22 +1677,22 @@ private fun ModelSettingsPage(
             }
         }
 
-        Text("服务连接", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("服务连接", "Service connection"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
-            ModelField(name, { name = it }, "配置名称", Modifier.testTag("model_name"))
+            ModelField(name, { name = it }, localizedText("配置名称", "Configuration name"), Modifier.testTag("model_name"))
             ModelField(
                 url,
                 { url = it },
-                "服务地址",
+                localizedText("服务地址", "Service URL"),
                 Modifier.testTag("model_url"),
                 KeyboardType.Uri
             )
-            ModelField(model, { model = it }, "模型 ID", Modifier.testTag("model_id"))
+            ModelField(model, { model = it }, localizedText("模型 ID", "Model ID"), Modifier.testTag("model_id"))
             OutlinedTextField(
                 value = key,
                 onValueChange = { key = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(if (editingProfile?.hasApiKey == true) "API 密钥（留空则不修改）" else "API 密钥") },
+                label = { Text(if (editingProfile?.hasApiKey == true) localizedText("API 密钥（留空则不修改）", "API key (leave blank to keep unchanged)") else localizedText("API 密钥", "API key")) },
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 shape = RoundedCornerShape(15.dp),
@@ -1609,39 +1700,39 @@ private fun ModelSettingsPage(
             )
         }
 
-        Text("上下文", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("上下文", "Context"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
             ModelField(
                 window,
                 { window = it.filter(Char::isDigit) },
-                "上下文长度（Token）",
+                localizedText("上下文长度（Token）", "Context length (tokens)"),
                 Modifier.testTag("model_window"),
                 KeyboardType.Number,
             )
             ModelField(
                 output,
                 { output = it.filter(Char::isDigit) },
-                "最大输出（Token）",
+                localizedText("最大输出（Token）", "Maximum output (tokens)"),
                 Modifier.testTag("model_output"),
                 keyboardType = KeyboardType.Number,
             )
             Text(
-                "上下文总量包含输入和最大输出；App 会从总量中预留最大输出与少量协议余量。数值需要与模型服务支持的范围一致。",
+                localizedText("上下文总量包含输入和最大输出；App 会从总量中预留最大输出与少量协议余量。数值需要与模型服务支持的范围一致。", "The context includes input and maximum output. The app reserves space for maximum output and protocol overhead. Match the range supported by your model service."),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.secondary,
             )
         }
 
-        Text("思考强度", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("思考强度", "Reasoning effort"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
             ModelField(
                 reasoningField,
                 { reasoningField = it },
-                "参数名",
+                localizedText("参数名", "Parameter name"),
                 Modifier.testTag("reasoning_effort_field"),
             )
             Text(
-                "可选等级（从低到高）",
+                localizedText("可选等级（从低到高）", "Available levels (low to high)"),
                 style = MaterialTheme.typography.labelLarge,
                 color = colors.secondary,
             )
@@ -1678,23 +1769,23 @@ private fun ModelSettingsPage(
                 contentColor = colors.onAccent
             ),
         ) {
-            Text(if (saving) "正在保存…" else if (editingProfile == null) "添加模型" else "保存模型")
+            Text(if (saving) localizedText("正在保存…", "Saving…") else if (editingProfile == null) localizedText("添加模型", "Add model") else localizedText("保存模型", "Save model"))
         }
         editingProfile?.let { profile ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 if (profile.id != settings.selectedModel?.id) {
                     TextButton(enabled = !saving, onClick = { onSelect(profile.id) }) {
-                        Text("设为当前模型")
+                        Text(localizedText("设为当前模型", "Set as current model"))
                     }
                 } else {
                     Text(
-                        "聊天页当前使用", Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                        localizedText("聊天页当前使用", "Currently used in chat"), Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
                         color = colors.accent, style = MaterialTheme.typography.labelLarge
                     )
                 }
                 TextButton(enabled = !saving && canDelete, onClick = { deleteTarget = profile }) {
                     Text(
-                        if (canDelete) "删除模型" else "回复中不可删除",
+                        if (canDelete) localizedText("删除模型", "Delete model") else localizedText("回复中不可删除", "Cannot delete while responding"),
                         color = if (canDelete) colors.error else colors.tertiary
                     )
                 }
@@ -1708,16 +1799,16 @@ private fun ModelSettingsPage(
             onDismissRequest = { deleteTarget = null },
             shape = RoundedCornerShape(24.dp),
             containerColor = colors.surface,
-            title = { Text("删除模型配置？") },
-            text = { Text("将删除“${profile.name}”的服务地址、参数和已保存密钥，此操作无法撤销。") },
+            title = { Text(localizedText("删除模型配置？", "Delete model configuration?")) },
+            text = { Text(localizedText("将删除“${profile.name}”的服务地址、参数和已保存密钥，此操作无法撤销。", "The service URL, parameters, and saved key for “${profile.name}” will be deleted. This cannot be undone.")) },
             dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("取消") }
+                TextButton(onClick = { deleteTarget = null }) { Text(localizedText("取消", "Cancel")) }
             },
             confirmButton = {
                 TextButton(onClick = {
                     deleteTarget = null
                     onDelete(profile.id) { editingId = null }
-                }) { Text("删除", color = colors.error) }
+                }) { Text(localizedText("删除", "Delete"), color = colors.error) }
             },
         )
     }
@@ -1761,7 +1852,7 @@ private fun ReasoningEffortEditor(
                     ) {
                         ChatIcon(
                             R.drawable.lucide_x,
-                            "删除 $effort",
+                            localizedText("删除 $effort", "Delete $effort"),
                             Modifier.size(15.dp),
                             colors.secondary
                         )
@@ -1781,7 +1872,7 @@ private fun ReasoningEffortEditor(
             ) {
                 ChatIcon(R.drawable.lucide_plus, null, Modifier.size(16.dp), colors.secondary)
                 Text(
-                    "新增", Modifier.padding(start = 5.dp), color = colors.secondary,
+                    localizedText("新增", "Add"), Modifier.padding(start = 5.dp), color = colors.secondary,
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -1794,7 +1885,7 @@ private fun ReasoningEffortEditor(
                 value = candidate,
                 onValueChange = { candidate = it },
                 modifier = Modifier.weight(1f),
-                label = { Text("新等级值") },
+                label = { Text(localizedText("新等级值", "New level value")) },
                 singleLine = true,
                 shape = RoundedCornerShape(15.dp),
                 colors = modelFieldColors(),
@@ -1806,7 +1897,7 @@ private fun ReasoningEffortEditor(
                     candidate = ""
                     adding = false
                 },
-            ) { Text("添加") }
+            ) { Text(localizedText("添加", "Add")) }
         }
     }
 }
@@ -1884,11 +1975,11 @@ private fun DataSettings(
             .padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("用量信息", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("用量信息", "Usage"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
             if (usageRows.isEmpty()) {
                 Text(
-                    "暂无模型配置和可统计用量。",
+                    localizedText("暂无模型配置和可统计用量。", "No model configurations or usage data yet."),
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.secondary,
                 )
@@ -1900,10 +1991,10 @@ private fun DataSettings(
             }
         }
 
-        Text("存储清理", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("存储清理", "Storage cleanup"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
             Text(
-                "删除不再使用的缓存和临时文件。对话记录、正在使用的附件和手机原文件会保留。",
+                localizedText("删除不再使用的缓存和临时文件。对话记录、正在使用的附件和手机原文件会保留。", "Delete unused cache and temporary files. Conversations, active attachments, and original phone files are kept."),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.secondary,
             )
@@ -1915,11 +2006,11 @@ private fun DataSettings(
                     .testTag("cleanup_storage"),
                 shape = RoundedCornerShape(15.dp),
             ) {
-                Text(if (cleaning) "正在清理…" else "立即清理")
+                Text(if (cleaning) localizedText("正在清理…", "Cleaning…") else localizedText("立即清理", "Clean now"))
             }
             if (!canClean) {
                 Text(
-                    "任务执行期间无法清理，请等待任务完成。",
+                    localizedText("任务执行期间无法清理，请等待任务完成。", "Cleanup is unavailable while a task is running. Wait for it to finish."),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.tertiary,
                 )
@@ -1943,19 +2034,19 @@ private fun AboutSettings(
             .padding(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("应用", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("应用", "Apply"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
-            AboutValueRow("APP 版本号", "v$versionName")
+            AboutValueRow(localizedText("APP 版本号", "App version"), "v$versionName")
         }
 
-        Text("关于", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("关于", "About"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
-            AboutValueRow("作者", ABOUT_PLACEHOLDER)
+            AboutValueRow(localizedText("作者", "Authors"), ABOUT_PLACEHOLDER)
             SettingsDivider()
-            AboutValueRow("开源", OPEN_SOURCE_URL)
+            AboutValueRow(localizedText("开源", "Open source"), OPEN_SOURCE_URL)
         }
 
-        Text("鸣谢", style = MaterialTheme.typography.titleSmall)
+        Text(localizedText("鸣谢", "Acknowledgements"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
             acknowledgedLibraries.forEachIndexed { index, library ->
                 AboutActionRow(
@@ -1984,7 +2075,7 @@ private fun openAboutLink(
     runCatching {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }.onFailure {
-        onError(SettingsNotice("暂时无法打开 $name 项目页", false))
+        onError(SettingsNotice(localizedText("暂时无法打开 $name 项目页", "Could not open the $name project page"), false))
     }
 }
 
@@ -2056,7 +2147,7 @@ private fun ModelUsageRow(usage: ModelUsageSummary, configured: Boolean) {
             )
             if (!configured) {
                 Text(
-                    "已删除配置",
+                    localizedText("已删除配置", "Configuration deleted"),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.tertiary
                 )
@@ -2070,12 +2161,12 @@ private fun ModelUsageRow(usage: ModelUsageSummary, configured: Boolean) {
             )
         }
         Text(
-            "输入 ${formatUsageCount(usage.inputTokens)} · 输出 ${formatUsageCount(usage.outputTokens)} Token",
+            localizedText("输入 ${formatUsageCount(usage.inputTokens)} · 输出 ${formatUsageCount(usage.outputTokens)} Token", "Input ${formatUsageCount(usage.inputTokens)} · Output ${formatUsageCount(usage.outputTokens)} tokens"),
             style = MaterialTheme.typography.bodySmall,
             color = colors.secondary,
         )
         Text(
-            "合计 ${formatUsageCount(usage.totalTokens)} Token · ${formatUsageCount(usage.measuredRequests)} 次已统计请求",
+            localizedText("合计 ${formatUsageCount(usage.totalTokens)} Token · ${formatUsageCount(usage.measuredRequests)} 次已统计请求", "Total ${formatUsageCount(usage.totalTokens)} tokens · ${formatUsageCount(usage.measuredRequests)} measured requests"),
             style = MaterialTheme.typography.bodySmall,
             color = colors.secondary,
         )
