@@ -115,7 +115,7 @@ private enum class AppLanguage(val languageTag: String?) {
 }
 
 private const val ABOUT_PLACEHOLDER = "Codex、黑白辩思"
-private const val OPEN_SOURCE_URL = "https://github.com/"
+private const val OPEN_SOURCE_URL = "https://github.com/looper42/mobile_agent"
 
 private data class AcknowledgedLibrary(
     val name: String,
