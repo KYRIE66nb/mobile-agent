@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -51,10 +52,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -81,11 +84,19 @@ import xyz.chouxuewei.mobile_agent.core.ToolCallRecord
 import xyz.chouxuewei.mobile_agent.core.ToolCallStatus
 import xyz.chouxuewei.mobile_agent.core.UserQuestionRequest
 import xyz.chouxuewei.mobile_agent.core.localizedText
+import xyz.chouxuewei.mobile_agent.ui.theme.ChatColors
 import xyz.chouxuewei.mobile_agent.ui.theme.LocalChatColors
 import xyz.chouxuewei.mobile_agent.ui.theme.Mobile_agentTheme
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputState
 import kotlinx.coroutines.withTimeoutOrNull
 import android.os.SystemClock
+
+internal data class VirtualScreenPreview(
+    val revision: Long,
+    val image: ImageBitmap,
+    val width: Int,
+    val height: Int,
+)
 
 internal data class OverlayViewState(
     val presentation: OverlayPresentation = OverlayPresentation.EDGE_HANDLE,
@@ -108,6 +119,7 @@ internal data class OverlayViewState(
     val resizeHint: String? = null,
     val dockedAtStart: Boolean = false,
     val voiceInputState: VoiceInputState = VoiceInputState.Idle,
+    val virtualScreenPreview: VirtualScreenPreview? = null,
 )
 
 internal interface OverlayActions {
@@ -312,6 +324,7 @@ private fun EdgeHandle(state: OverlayViewState, actions: OverlayActions) {
 @Composable
 private fun SummaryOverlay(state: OverlayViewState, actions: OverlayActions) {
     val colors = LocalChatColors.current
+    val status = overlayStatusVisual(state, global = false)
     Surface(
         Modifier.fillMaxSize()
             .testTag("overlay_summary")
@@ -324,38 +337,43 @@ private fun SummaryOverlay(state: OverlayViewState, actions: OverlayActions) {
                     actions.dragSummary(amount.x, amount.y, false)
                 }
             },
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         color = colors.surface,
         border = BorderStroke(1.dp, colors.divider),
-        shadowElevation = 8.dp,
+        shadowElevation = 10.dp,
     ) {
         Row(
-            Modifier.fillMaxSize().padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+            Modifier.fillMaxSize().padding(start = 14.dp, end = 4.dp, top = 9.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                Modifier.weight(1f).fillMaxHeight()
+            Box(
+                Modifier.width(3.dp).height(38.dp)
+                    .background(status.foreground, RoundedCornerShape(3.dp)),
+            )
+            Column(
+                Modifier.weight(1f).fillMaxHeight().padding(start = 10.dp, end = 6.dp)
                     .clickable(role = Role.Button, onClick = actions::expandFullChat)
-                    .semantics { contentDescription = localizedText("查看完整悬浮对话", "View full floating conversation") },
-                verticalAlignment = Alignment.CenterVertically,
+                    .semantics { contentDescription = localizedText("查看任务详情", "View task details") },
+                verticalArrangement = Arrangement.Center,
             ) {
-                StatusBadge(state, size = 36.dp)
-                Column(Modifier.weight(1f).padding(start = 10.dp, end = 6.dp)) {
-                    Text(
-                        state.summaryTitle,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        state.summaryDetail,
-                        color = colors.secondary,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Text(
+                    state.summaryTitle,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    listOfNotNull(
+                        status.label,
+                        state.mode?.let(::executionModeLabel),
+                        state.summaryDetail.takeIf { it.isNotBlank() && it != status.label },
+                    ).joinToString(" · "),
+                    color = colors.secondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             if (state.selectedConversationId in state.activeConversations) {
                 OverlayIconAction(
@@ -386,32 +404,58 @@ private fun SummaryOverlay(state: OverlayViewState, actions: OverlayActions) {
 private fun FullChatOverlay(state: OverlayViewState, actions: OverlayActions) {
     val colors = LocalChatColors.current
     var sessionsOpen by rememberSaveable { mutableStateOf(false) }
+    var virtualScreenFocused by rememberSaveable { mutableStateOf(false) }
+    val approval = state.approvals.firstOrNull { it.conversationId == state.selectedConversationId }
+    val question = state.questions.firstOrNull { it.conversationId == state.selectedConversationId }
+    val showsVirtualScreen = state.mode == ExecutionMode.VIRTUAL_DISPLAY
+    LaunchedEffect(showsVirtualScreen, approval?.callId, question?.id) {
+        if (!showsVirtualScreen || approval != null || question != null) virtualScreenFocused = false
+    }
     Surface(
         Modifier.fillMaxSize().testTag("overlay_full_chat"),
-        shape = RoundedCornerShape(18.dp),
-        color = colors.background,
+        shape = RoundedCornerShape(22.dp),
+        color = colors.surface,
         border = BorderStroke(1.dp, colors.outline.copy(alpha = .72f)),
-        shadowElevation = 10.dp,
+        shadowElevation = 14.dp,
     ) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize()) {
                 FullHeader(
                     state = state,
                     sessionsOpen = sessionsOpen,
-                    onToggleSessions = { sessionsOpen = !sessionsOpen },
+                    onToggleSessions = {
+                        sessionsOpen = !sessionsOpen
+                        virtualScreenFocused = false
+                    },
                     actions = actions,
                 )
-                Surface(Modifier.fillMaxWidth().height(1.dp), color = colors.divider) {}
                 if (sessionsOpen) {
                     ConversationSwitcher(
                         state,
                         onSelect = { id -> sessionsOpen = false; actions.selectConversation(id) },
                         Modifier.weight(1f),
                     )
+                } else if (showsVirtualScreen && virtualScreenFocused) {
+                    FocusedVirtualScreen(
+                        state = state,
+                        modifier = Modifier.weight(1f),
+                        onReturnToConversation = { virtualScreenFocused = false },
+                    )
+                    FocusedVirtualScreenActions(
+                        state = state,
+                        actions = actions,
+                        onReturnToConversation = { virtualScreenFocused = false },
+                    )
                 } else {
+                    if (showsVirtualScreen) {
+                        CompactVirtualScreen(
+                            state = state,
+                            dense = approval != null || question != null,
+                            onFocus = { virtualScreenFocused = true },
+                            onStop = actions::stopCurrent,
+                        )
+                    }
                     OverlayTimeline(state, Modifier.weight(1f))
-                    val approval = state.approvals.firstOrNull { it.conversationId == state.selectedConversationId }
-                    val question = state.questions.firstOrNull { it.conversationId == state.selectedConversationId }
                     if (approval != null) {
                         ApprovalCard(approval, actions)
                     } else if (question != null) {
@@ -454,10 +498,11 @@ private fun FullHeader(
 ) {
     val colors = LocalChatColors.current
     val current = state.conversations.firstOrNull { it.id == state.selectedConversationId }
+    val status = overlayStatusVisual(state, global = false)
     val pendingElsewhere = (state.approvals.map { it.conversationId } + state.questions.map { it.conversationId })
         .distinct().count { it != state.selectedConversationId }
     Row(
-        Modifier.fillMaxWidth().height(56.dp).padding(start = 10.dp, end = 4.dp),
+        Modifier.fillMaxWidth().height(60.dp).padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -474,8 +519,8 @@ private fun FullHeader(
                 .clickable(onClick = onToggleSessions),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StatusBadge(state, size = 32.dp)
-            Column(Modifier.weight(1f).padding(start = 9.dp, end = 4.dp)) {
+            StatusBadge(state, size = 30.dp)
+            Column(Modifier.weight(1f).padding(start = 10.dp, end = 4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         current?.title ?: localizedText("选择对话", "Choose conversation"),
@@ -492,10 +537,17 @@ private fun FullHeader(
                         colors.secondary,
                     )
                 }
-                if (pendingElsewhere > 0) {
-                    Text(localizedText("另有 $pendingElsewhere 个对话需要处理", "$pendingElsewhere other conversations need attention"), color = colors.warning,
-                        style = MaterialTheme.typography.labelSmall)
-                }
+                Text(
+                    if (pendingElsewhere > 0) {
+                        localizedText("另有 $pendingElsewhere 个对话需要处理", "$pendingElsewhere other conversations need attention")
+                    } else {
+                        listOfNotNull(status.label, state.mode?.let(::executionModeLabel)).joinToString(" · ")
+                    },
+                    color = if (pendingElsewhere > 0) colors.warning else colors.secondary,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         OverlayIconAction(
@@ -511,6 +563,239 @@ private fun FullHeader(
             onClick = actions::openConversation,
         )
     }
+}
+
+@Composable
+private fun CompactVirtualScreen(
+    state: OverlayViewState,
+    dense: Boolean,
+    onFocus: () -> Unit,
+    onStop: () -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Surface(
+        modifier = Modifier.fillMaxWidth().height(if (dense) 76.dp else 176.dp)
+            .padding(start = 10.dp, end = 10.dp, top = 8.dp)
+            .testTag("overlay_virtual_screen_compact"),
+        shape = RoundedCornerShape(16.dp),
+        color = colors.surfaceRaised,
+        border = BorderStroke(1.dp, colors.divider),
+    ) {
+        if (dense) {
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                VirtualScreenImage(
+                    preview = state.virtualScreenPreview,
+                    modifier = Modifier.width(30.dp).fillMaxHeight()
+                        .clickable(role = Role.Button, onClick = onFocus),
+                )
+                Column(Modifier.weight(1f).padding(horizontal = 9.dp)) {
+                    Text(
+                        localizedText("虚拟屏仍在运行", "Virtual screen is still running"),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        localizedText("请先处理下方内容", "Action needed below"),
+                        color = colors.warning,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                    )
+                }
+                VirtualScreenActions(state, colors, onFocus, onStop)
+            }
+            return@Surface
+        }
+        Row(Modifier.fillMaxSize().padding(10.dp)) {
+            VirtualScreenImage(
+                preview = state.virtualScreenPreview,
+                modifier = Modifier.width(88.dp).fillMaxHeight()
+                    .clickable(role = Role.Button, onClick = onFocus)
+                    .semantics {
+                        contentDescription = localizedText("放大虚拟屏", "Enlarge virtual screen")
+                    },
+            )
+            Column(
+                Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
+                verticalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column {
+                    VirtualScreenBadge()
+                    Text(
+                        state.summaryTitle,
+                        Modifier.padding(top = 9.dp),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        state.summaryDetail,
+                        Modifier.padding(top = 3.dp),
+                        color = colors.secondary,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    VirtualScreenActions(state, colors, onFocus, onStop)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VirtualScreenActions(
+    state: OverlayViewState,
+    colors: ChatColors,
+    onFocus: () -> Unit,
+    onStop: () -> Unit,
+) {
+    OverlayIconAction(
+        icon = R.drawable.lucide_maximize_2,
+        description = localizedText("专注查看虚拟屏", "Focus virtual screen"),
+        foreground = colors.accent,
+        container = colors.accentSoft,
+        onClick = onFocus,
+    )
+    if (state.selectedConversationId in state.activeConversations) {
+        Box(Modifier.width(4.dp))
+        OverlayIconAction(
+            icon = R.drawable.lucide_square,
+            description = localizedText("停止当前任务", "Stop current task"),
+            foreground = colors.error,
+            container = colors.errorSoft,
+            onClick = onStop,
+        )
+    }
+}
+
+@Composable
+private fun FocusedVirtualScreen(
+    state: OverlayViewState,
+    modifier: Modifier,
+    onReturnToConversation: () -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth().testTag("overlay_virtual_screen_focused"),
+        color = Color(0xFF080A0C),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            VirtualScreenImage(
+                preview = state.virtualScreenPreview,
+                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp),
+            )
+            Box(Modifier.align(Alignment.TopStart).padding(12.dp)) { VirtualScreenBadge() }
+            Box(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+                OverlayIconAction(
+                    icon = R.drawable.lucide_minimize_2,
+                    description = localizedText("返回对话", "Return to conversation"),
+                    foreground = Color.White,
+                    container = Color.Black.copy(alpha = .62f),
+                    onClick = onReturnToConversation,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FocusedVirtualScreenActions(
+    state: OverlayViewState,
+    actions: OverlayActions,
+    onReturnToConversation: () -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Row(
+        Modifier.fillMaxWidth().height(58.dp).padding(start = 6.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = onReturnToConversation) {
+            ChatIcon(R.drawable.lucide_minimize_2, null, Modifier.size(16.dp), colors.accent)
+            Text(localizedText("返回对话", "Conversation"), Modifier.padding(start = 7.dp))
+        }
+        Box(Modifier.weight(1f))
+        if (state.selectedConversationId in state.activeConversations) {
+            OutlinedButton(
+                onClick = actions::stopCurrent,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.error),
+                border = BorderStroke(1.dp, colors.error.copy(alpha = .45f)),
+            ) {
+                ChatIcon(R.drawable.lucide_square, null, Modifier.size(14.dp), colors.error)
+                Text(localizedText("停止", "Stop"), Modifier.padding(start = 6.dp))
+            }
+        }
+        ResizeHandle(
+            ResizeCorner.BOTTOM_RIGHT,
+            Modifier.padding(start = 2.dp),
+            actions,
+        )
+    }
+}
+
+@Composable
+private fun VirtualScreenImage(preview: VirtualScreenPreview?, modifier: Modifier) {
+    Surface(
+        modifier = modifier.testTag("overlay_virtual_screen_image"),
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFF050607),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .12f)),
+    ) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (preview == null) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    color = Color.White.copy(alpha = .88f),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Image(
+                    bitmap = preview.image,
+                    contentDescription = localizedText(
+                        "虚拟屏实时画面，${preview.width} × ${preview.height}",
+                        "Live virtual screen, ${preview.width} by ${preview.height}",
+                    ),
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VirtualScreenBadge() {
+    val colors = LocalChatColors.current
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = Color.Black.copy(alpha = .72f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = .12f)),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(6.dp).background(colors.success, CircleShape))
+            Text(
+                localizedText("后台操作 · 实时画面", "Background · Live"),
+                Modifier.padding(start = 6.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    }
+}
+
+private fun executionModeLabel(mode: ExecutionMode): String = when (mode) {
+    ExecutionMode.MAIN_DISPLAY -> localizedText("可见操作（主屏）", "Visible operation (main screen)")
+    ExecutionMode.VIRTUAL_DISPLAY -> localizedText("后台操作", "Background operation")
 }
 
 @Composable

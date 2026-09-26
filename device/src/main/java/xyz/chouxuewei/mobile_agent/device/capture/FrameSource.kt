@@ -11,7 +11,12 @@ import xyz.chouxuewei.mobile_agent.device.root.DisplayAdapter
 
 /** Surface 在普通进程持有并通过 Binder 传给 Root；大图不经过 Binder。 */
 internal class FrameSource : AutoCloseable {
-    data class EncodedFrame(val revision: Long, val bytes: ByteArray)
+    data class EncodedFrame(
+        val revision: Long,
+        val bytes: ByteArray,
+        val width: Int,
+        val height: Int,
+    )
 
     private val thread = HandlerThread("virtual-display-frames").apply { start() }
     private val reader = ImageReader.newInstance(
@@ -50,11 +55,26 @@ internal class FrameSource : AutoCloseable {
      * 压缩发生在普通 App 进程，大图不会经过 Binder。
      * 界面截图是不透明画面，JPEG 在保留可读性的同时能显著减少发给模型的字节数。
      */
-    fun latestJpeg(quality: Int): EncodedFrame? = synchronized(this) {
+    fun latestJpeg(quality: Int, maxWidth: Int? = null): EncodedFrame? = synchronized(this) {
         latest?.let { bitmap ->
-            java.io.ByteArrayOutputStream().use { output ->
-                check(bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output)) { localizedText("虚拟屏画面编码失败", "Virtual display frame encoding failed.") }
-                EncodedFrame(revision, output.toByteArray())
+            val encodedBitmap = if (maxWidth != null && bitmap.width > maxWidth) {
+                val targetHeight = (bitmap.height.toLong() * maxWidth / bitmap.width).toInt().coerceAtLeast(1)
+                Bitmap.createScaledBitmap(bitmap, maxWidth, targetHeight, true)
+            } else bitmap
+            try {
+                java.io.ByteArrayOutputStream().use { output ->
+                    check(encodedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, output)) {
+                        localizedText("虚拟屏画面编码失败", "Virtual display frame encoding failed.")
+                    }
+                    EncodedFrame(
+                        revision = revision,
+                        bytes = output.toByteArray(),
+                        width = encodedBitmap.width,
+                        height = encodedBitmap.height,
+                    )
+                }
+            } finally {
+                if (encodedBitmap !== bitmap) encodedBitmap.recycle()
             }
         }
     }
