@@ -55,6 +55,16 @@ data class RootAccessState(
     val detail: String,
 )
 
+/**
+ * 只供本机悬浮助手展示的低分辨率帧。它不写入会话、数据库或日志，也不会替代发给模型的完整识别截图。
+ */
+data class VirtualDisplayPreviewFrame(
+    val revision: Long,
+    val jpegBytes: ByteArray,
+    val width: Int,
+    val height: Int,
+)
+
 /** App 层实现这个轻量接口，使设备模块无需反向依赖具体悬浮窗服务。 */
 fun interface MainDisplayOverlayController {
     suspend fun setHiddenForDeviceInteraction(hidden: Boolean): Boolean
@@ -68,6 +78,8 @@ class AndroidDeviceGateway(
         private const val ROOT_PREFERENCES = "root_access"
         private const val ROOT_ENABLED = "enabled"
         private const val SCREENSHOT_JPEG_QUALITY = 82
+        private const val PREVIEW_JPEG_QUALITY = 72
+        private const val PREVIEW_MAX_WIDTH = 480
         // Android 对同一窗口截图至少间隔 333ms，略留余量避免边界抖动再次触发限频。
         private const val WINDOW_SCREENSHOT_RETRY_DELAY_MS = 350L
         @Volatile private var shellConfigured = false
@@ -87,6 +99,27 @@ class AndroidDeviceGateway(
     private var active: ActiveSession? = null
     private val mutableActiveMode = MutableStateFlow<ExecutionMode?>(null)
     val activeMode: StateFlow<ExecutionMode?> = mutableActiveMode
+
+    /**
+     * 悬浮窗按需拉取新帧；先比较 revision，画面没有变化时不会重复缩放和编码。
+     * FrameSource 自身负责同步，因此设备会话在读取期间结束也只会得到 null，不会泄漏已回收 Bitmap。
+     */
+    suspend fun latestVirtualDisplayPreview(afterRevision: Long): VirtualDisplayPreviewFrame? {
+        val frames = mutex.withLock {
+            active?.takeIf { it.session.mode == ExecutionMode.VIRTUAL_DISPLAY }?.frames
+        } ?: return null
+        if (frames.latestRevision() <= afterRevision) return null
+        val encoded = withContext(Dispatchers.Default) {
+            frames.latestJpeg(PREVIEW_JPEG_QUALITY, PREVIEW_MAX_WIDTH)
+        } ?: return null
+        if (encoded.revision <= afterRevision) return null
+        return VirtualDisplayPreviewFrame(
+            revision = encoded.revision,
+            jpegBytes = encoded.bytes,
+            width = encoded.width,
+            height = encoded.height,
+        )
+    }
 
     private class ActiveSession(
         val session: ExecutionSession,

@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
@@ -20,6 +21,7 @@ import android.view.inputmethod.InputMethodManager
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -32,6 +34,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -111,6 +114,7 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
     private var completionConversationId: String? = null
     private var completionHold = false
     private var resizeHint: String? = null
+    private var virtualScreenPreview: VirtualScreenPreview? = null
     private var conversationJob: Job? = null
     private var idleCollapseJob: Job? = null
 
@@ -294,11 +298,52 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
         scope.launch {
             app.deviceGateway.activeMode.collectLatest { value ->
                 mode = value
+                virtualScreenPreview = null
                 scheduleIdleCollapse()
                 refreshOverlay()
                 refreshNotification()
                 stopIfUnused()
+                if (value == ExecutionMode.VIRTUAL_DISPLAY) {
+                    collectVirtualScreenPreview()
+                }
             }
+        }
+    }
+
+    /**
+     * 只有完整悬浮窗实际可见时才编码预览，摘要态和 App 前台不消耗持续的图片压缩资源。
+     * activeMode 使用 collectLatest；设备会话结束时这段循环会立即取消并清空旧帧。
+     */
+    private suspend fun collectVirtualScreenPreview() {
+        var revision = 0L
+        while (true) {
+            if (overlay != null && presentation.presentation == OverlayPresentation.FULL_CHAT) {
+                val frame = try {
+                    app.deviceGateway.latestVirtualDisplayPreview(revision)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                if (frame != null) {
+                    val preview = withContext(Dispatchers.Default) {
+                        BitmapFactory.decodeByteArray(frame.jpegBytes, 0, frame.jpegBytes.size)?.let { bitmap ->
+                            VirtualScreenPreview(
+                                revision = frame.revision,
+                                image = bitmap.asImageBitmap(),
+                                width = frame.width,
+                                height = frame.height,
+                            )
+                        }
+                    }
+                    revision = frame.revision
+                    if (preview != null) {
+                        virtualScreenPreview = preview
+                        publishState()
+                    }
+                }
+            }
+            delay(VIRTUAL_SCREEN_PREVIEW_INTERVAL_MILLIS)
         }
     }
 
@@ -437,6 +482,7 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
             resizeHint = resizeHint,
             dockedAtStart = dockedEdge == DockEdge.LEFT,
             voiceInputState = voiceInputState,
+            virtualScreenPreview = virtualScreenPreview,
         )
     }
 
@@ -588,7 +634,7 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
     }
 
     private fun windowFlags(): Int = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-        WindowManager.LayoutParams.FLAG_SECURE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
         if (presentation.presentation == OverlayPresentation.FULL_CHAT) 0
         else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
 
@@ -1117,6 +1163,7 @@ class DeviceOperationOverlayService : LifecycleService(), SavedStateRegistryOwne
         private const val MAX_RESIZE_TRANSITION_DP = 8
         private const val MAX_FULL_MARGIN_DP = 24
         private const val FULL_DRAG_DOCK_THRESHOLD_DP = 16
+        private const val VIRTUAL_SCREEN_PREVIEW_INTERVAL_MILLIS = 500L
         @Volatile private var running = false
         @Volatile private var latestAppVisible = false
         @Volatile private var activeInstance: DeviceOperationOverlayService? = null
