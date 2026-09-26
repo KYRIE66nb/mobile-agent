@@ -34,7 +34,7 @@ class FileToolProvider(
         ToolDefinition(
             "file_read", localizedText("读取文件", "Read file"),
             localizedText("使用 uri、artifact_id 或产物名称三者之一读取当前会话中的文本文件。附件使用 file_list 返回的 uri，AI 产物优先使用 artifact_id；返回 truncated=true 时用 next_offset 继续读取。", "Read a text file from the current conversation using exactly one of uri, artifact_id, or artifact name. Use the uri from file_list for attachments and prefer artifact_id for AI artifacts. Continue with next_offset when truncated=true."),
-            localizedJsonSchema("""{"type":"object","properties":{"artifact_id":{"type":"string","description":localizedText("file_list 返回的 AI 产物 ID", "AI artifact ID returned by file_list")},"uri":{"type":"string","description":localizedText("file_list 返回的已授权附件 URI", "Authorized attachment URI returned by file_list")},"name":{"type":"string","description":localizedText("AI 生成产物的准确名称，不能用于附件", "Exact name of an AI-generated artifact; cannot be used for attachments")},"offset":{"type":"integer","minimum":0,"default":0},"max_chars":{"type":"integer","minimum":1,"maximum":8000,"default":8000}},"oneOf":[{"required":["artifact_id"]},{"required":["uri"]},{"required":["name"]}],"additionalProperties":false}"""),
+            localizedJsonSchema("""{"type":"object","properties":{"artifact_id":{"type":"string","description":localizedText("file_list 返回的 AI 产物 ID", "AI artifact ID returned by file_list")},"uri":{"type":"string","description":localizedText("file_list 返回的已授权附件 URI", "Authorized attachment URI returned by file_list")},"name":{"type":"string","description":localizedText("AI 生成产物的准确名称，不能用于附件", "Exact name of an AI-generated artifact; cannot be used for attachments")},"offset":{"type":"integer","minimum":0,"default":0},"max_chars":{"type":"integer","minimum":1,"maximum":8000,"default":8000}},"additionalProperties":false}"""),
             ToolSideEffect.READ, "files",
             approvalDescription = localizedText("读取你添加或由 AI 生成的文本文件。", "Read text files you added or AI generated."),
         ),
@@ -48,7 +48,7 @@ class FileToolProvider(
         ToolDefinition(
             "file_share", localizedText("分享文件", "Share file"),
             localizedText("使用 file_list 返回的 artifact_id 或附件 uri 打开 Android 系统分享面板。只能分享当前对话中已有且仍可访问的文件，最终接收方由用户选择或确认。", "Open the Android share sheet using an artifact_id or attachment uri returned by file_list. Only accessible files in the current conversation can be shared, and the user chooses or confirms the recipient."),
-            """{"type":"object","properties":{"artifact_id":{"type":"string"},"uri":{"type":"string"},"title":{"type":"string","maxLength":200}},"oneOf":[{"required":["artifact_id"]},{"required":["uri"]}],"additionalProperties":false}""",
+            """{"type":"object","properties":{"artifact_id":{"type":"string"},"uri":{"type":"string"},"title":{"type":"string","maxLength":200}},"additionalProperties":false}""",
             ToolSideEffect.EXTERNAL_WRITE, "files",
             approvalDescription = localizedText("打开系统分享面板并分享对话中的文件。", "Open the system share sheet for a file in the conversation."),
         ),
