@@ -43,6 +43,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -104,9 +105,19 @@ import xyz.chouxuewei.mobile_agent.data.SpeechSettings
 import xyz.chouxuewei.mobile_agent.device.RootAccessState
 import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
 import xyz.chouxuewei.mobile_agent.ui.theme.LocalChatColors
+import xyz.chouxuewei.mobile_agent.update.AppUpdater
 
 private data class SettingsTab(val id: String, val label: String, val icon: Int)
 private data class SettingsNotice(val message: String, val success: Boolean)
+
+private sealed interface UpdateUiState {
+    data object Idle : UpdateUiState
+    data object Checking : UpdateUiState
+    data object UpToDate : UpdateUiState
+    data class Available(val info: AppUpdater.UpdateInfo) : UpdateUiState
+    data class Downloading(val progress: Float) : UpdateUiState
+    data class Failed(val message: String) : UpdateUiState
+}
 
 private enum class AppLanguage(val languageTag: String?) {
     SYSTEM(null),
@@ -2027,6 +2038,10 @@ private fun AboutSettings(
     context: Context,
     onError: (SettingsNotice) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    val updater = remember { AppUpdater(context.applicationContext) }
+    var updateState by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
+    var updateDialog by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -2037,6 +2052,38 @@ private fun AboutSettings(
         Text(localizedText("应用", "Apply"), style = MaterialTheme.typography.titleSmall)
         SettingsCard {
             AboutValueRow(localizedText("APP 版本号", "App version"), "v$versionName")
+            SettingsDivider()
+            AboutActionRow(
+                icon = R.drawable.lucide_arrow_up,
+                title = localizedText("检查更新", "Check for updates"),
+                caption = when (val state = updateState) {
+                    UpdateUiState.Idle -> localizedText("从 GitHub Releases 获取最新版本", "Fetch the latest release from GitHub")
+                    UpdateUiState.Checking -> localizedText("正在检查…", "Checking…")
+                    UpdateUiState.UpToDate -> localizedText("当前已是最新版本", "You're on the latest version")
+                    is UpdateUiState.Available -> localizedText("发现新版本 v${state.info.version}，点击查看", "New version v${state.info.version} available, tap to view")
+                    is UpdateUiState.Downloading -> localizedText(
+                        "正在下载… ${(state.progress * 100).toInt()}%",
+                        "Downloading… ${(state.progress * 100).toInt()}%",
+                    )
+                    is UpdateUiState.Failed -> state.message
+                },
+                trailingIcon = R.drawable.lucide_chevron_right,
+                onClick = {
+                    when (val state = updateState) {
+                        UpdateUiState.Checking, is UpdateUiState.Downloading -> Unit
+                        is UpdateUiState.Available -> updateDialog = state.info
+                        else -> scope.launch {
+                            updateState = UpdateUiState.Checking
+                            updateState = when (val result = updater.check(versionName)) {
+                                is AppUpdater.CheckResult.Available ->
+                                    UpdateUiState.Available(result.info).also { updateDialog = result.info }
+                                AppUpdater.CheckResult.UpToDate -> UpdateUiState.UpToDate
+                                is AppUpdater.CheckResult.Failed -> UpdateUiState.Failed(result.message)
+                            }
+                        }
+                    }
+                },
+            )
         }
 
         Text(localizedText("关于", "About"), style = MaterialTheme.typography.titleSmall)
@@ -2063,6 +2110,84 @@ private fun AboutSettings(
         }
 
         Spacer(Modifier.height(28.dp))
+    }
+
+    updateDialog?.let { info ->
+        val downloading = (updateState as? UpdateUiState.Downloading)?.progress
+        AlertDialog(
+            onDismissRequest = { if (downloading == null) updateDialog = null },
+            title = { Text(localizedText("发现新版本 v${info.version}", "Update available: v${info.version}")) },
+            text = {
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (downloading != null) {
+                        LinearProgressIndicator(
+                            progress = { downloading },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            localizedText("正在下载更新包… ${(downloading * 100).toInt()}%", "Downloading update… ${(downloading * 100).toInt()}%"),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else {
+                        Text(
+                            info.releaseNotes.ifBlank { localizedText("暂无更新说明", "No release notes") },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = downloading == null,
+                    onClick = {
+                        if (!updater.canRequestInstalls()) {
+                            runCatching { context.startActivity(updater.unknownSourcesIntent()) }
+                            onError(SettingsNotice(
+                                localizedText("请先允许本应用安装更新，然后重试", "Allow this app to install updates, then retry"),
+                                false,
+                            ))
+                            updateDialog = null
+                            return@TextButton
+                        }
+                        scope.launch {
+                            updateState = UpdateUiState.Downloading(0f)
+                            when (val result = updater.download(info.apkUrl) { progress ->
+                                updateState = UpdateUiState.Downloading(progress)
+                            }) {
+                                is AppUpdater.DownloadResult.Ready -> {
+                                    updateDialog = null
+                                    updateState = UpdateUiState.Idle
+                                    runCatching { context.startActivity(updater.installIntent(result.file)) }
+                                        .onFailure {
+                                            onError(SettingsNotice(
+                                                localizedText("无法启动系统安装器", "Could not launch the package installer"),
+                                                false,
+                                            ))
+                                        }
+                                }
+                                is AppUpdater.DownloadResult.Failed -> {
+                                    updateDialog = null
+                                    updateState = UpdateUiState.Failed(result.message)
+                                }
+                            }
+                        }
+                    },
+                ) {
+                    Text(localizedText("立即更新", "Update now"))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = downloading == null,
+                    onClick = { updateDialog = null },
+                ) {
+                    Text(localizedText("稍后", "Later"))
+                }
+            },
+        )
     }
 }
 

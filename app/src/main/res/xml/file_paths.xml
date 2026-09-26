@@ -8,4 +8,8 @@
     <files-path
         name="shared_attachments"
         path="shared-attachments/" />
+    <!-- 应用内更新下载的 APK，交给系统安装器读取。 -->
+    <cache-path
+        name="updates"
+        path="updates/" />
 </paths>

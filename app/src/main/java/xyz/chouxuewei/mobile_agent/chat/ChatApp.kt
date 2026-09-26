@@ -94,6 +94,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalUriHandler
@@ -1066,19 +1067,27 @@ private fun ChatTimeline(
 ) {
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
     var follow by rememberSaveable { mutableStateOf(true) }
     var programmaticScroll by remember { mutableStateOf(false) }
     val latestIndex = messages.size + if (notice != null) 1 else 0
     LaunchedEffect(list) {
         snapshotFlow { list.isScrollInProgress to list.canScrollForward }.collect { (scrolling, below) ->
-            if (scrolling && !programmaticScroll) follow = !below
+            if (scrolling && !programmaticScroll) {
+                focusManager.clearFocus()
+                follow = !below
+            }
         }
     }
     LaunchedEffect(messages.lastOrNull()?.text, messages.lastOrNull()?.assistantSteps, messages.size,
         toolCalls.lastOrNull()?.status, artifacts.lastOrNull()?.id, notice) {
         if (follow && messages.isNotEmpty()) list.scrollToItem(latestIndex)
     }
-    Box(modifier.fillMaxWidth()) {
+    Box(
+        modifier.fillMaxWidth().pointerInput(Unit) {
+            detectTapGestures(onTap = { focusManager.clearFocus() })
+        },
+    ) {
         if (messages.isEmpty()) {
             EmptyConversation(notice, Modifier.align(Alignment.CenterStart).offset(y = (-24).dp))
         } else {
