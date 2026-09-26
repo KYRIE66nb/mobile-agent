@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -13,6 +14,7 @@ import org.junit.runner.RunWith
 import xyz.chouxuewei.mobile_agent.chat.ComposerDraft
 import xyz.chouxuewei.mobile_agent.core.ToolApprovalRequest
 import xyz.chouxuewei.mobile_agent.core.UserQuestionRequest
+import xyz.chouxuewei.mobile_agent.core.ExecutionMode
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputSource
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputState
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputTarget
@@ -51,6 +53,26 @@ class OverlayEdgeStatusTest {
         compose.runOnIdle { state.value = OverlayViewState(completionConversationId = "completed") }
         compose.mainClock.advanceTimeBy(32)
         compose.onNodeWithTag("overlay_edge_progress").assertDoesNotExist()
+    }
+
+    @Test
+    fun virtualScreenCanSwitchBetweenCompactAndFocusedLayouts() {
+        val state = mutableStateOf(
+            OverlayViewState(
+                presentation = OverlayPresentation.FULL_CHAT,
+                mode = ExecutionMode.VIRTUAL_DISPLAY,
+            ),
+        )
+        compose.setContent { OverlayContent(state.value, NoOpOverlayActions) }
+
+        compose.onNodeWithTag("overlay_virtual_screen_compact").assertExists()
+        compose.onNodeWithTag("overlay_virtual_screen_focused").assertDoesNotExist()
+        compose.onNodeWithTag("overlay_virtual_screen_image").performClick()
+        compose.onNodeWithTag("overlay_virtual_screen_focused").assertExists()
+
+        compose.runOnIdle { state.value = state.value.copy(mode = ExecutionMode.MAIN_DISPLAY) }
+        compose.onNodeWithTag("overlay_virtual_screen_compact").assertDoesNotExist()
+        compose.onNodeWithTag("overlay_virtual_screen_focused").assertDoesNotExist()
     }
 
     private fun pixelsDiffer(first: androidx.compose.ui.graphics.PixelMap, second: androidx.compose.ui.graphics.PixelMap): Boolean {
