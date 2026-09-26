@@ -121,7 +121,10 @@ class OpenAiChatGateway(
             }
         }
 
-        val base = config.baseUrl.trimEnd('/').let { if (it.endsWith("/v1")) it else "$it/v1" }
+        // 端点自带版本号（如智谱 /api/paas/v4）时保持原样，否则补 OpenAI 默认 /v1。
+        val base = config.baseUrl.trimEnd('/').let { trimmed ->
+            if (Regex("/v\\d+$").containsMatchIn(trimmed)) trimmed else "$trimmed/v1"
+        }
         val payloadText = payload.toString()
         val requestStartedAt = System.currentTimeMillis()
         AgentLog.i("Model") {
