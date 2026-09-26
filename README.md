@@ -14,6 +14,14 @@ Mobile Agent is an open-source AI chat and local-tool application for Android. I
 - Reading and managing files, images, webpages, and generated artifacts.
 - Optional Root/accessibility-based device control, a floating assistant, and permission controls.
 
+## Roadmap
+
+- [ ] Expand file reading and generation support to PDF, Word, and Excel documents.
+- [ ] Improve model-call performance and reduce redundant steps during multi-tool task execution.
+- [ ] Improve screen recognition accuracy and efficiency for more reliable device automation.
+- [ ] Add degraded device-control support for non-root users through user-enabled Accessibility and Shizuku foreground operations.
+- [ ] Add more practical tools and integrations while preserving explicit permission and data boundaries.
+
 ## Permissions and Data Boundaries
 
 Mobile Agent may request access to the microphone, notifications, display-over-other-apps, startup after device boot, the installed-app list, and accessibility services. Root access, accessibility services, screenshots, and external model calls are highly privileged capabilities and should only be used after the user explicitly enables or approves them.
