@@ -24,9 +24,11 @@ class ModelConfig(
     val model: String?,
     val apiKey: String,
     val reasoningEffortField: String = "reasoning_effort",
+    /** 视觉模型才能接收截图等图片内容块；纯文本模型必须保持关闭。 */
+    val supportsImages: Boolean = false,
 ) {
     override fun toString(): String =
-        "ModelConfig(baseUrl=$baseUrl, model=$model, reasoningEffortField=$reasoningEffortField, apiKey=***)"
+        "ModelConfig(baseUrl=$baseUrl, model=$model, reasoningEffortField=$reasoningEffortField, supportsImages=$supportsImages, apiKey=***)"
 }
 
 sealed interface ModelProbeResult {

@@ -1,0 +1,69 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Mobile Agent 执行回路",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/assets/agent-loop.html"
+  },
+  "lanes": [
+    { "id": "app", "label": "App 层" },
+    { "id": "core", "label": "Agent 运行时" },
+    { "id": "policy", "label": "安全策略", "variant": "exception" },
+    { "id": "exec", "label": "设备与工具" }
+  ],
+  "phases": [
+    { "id": "input", "label": "输入", "fromCol": 0, "toCol": 1 },
+    { "id": "reason", "label": "推理与决策", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "act", "label": "执行与观察", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "loop", "label": "多轮工具循环", "lane": "core", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "device_path", "label": "真实设备操作", "lane": "exec", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["user", "ui", "runtime", "gateway", "plan", "gate", "tools", "device"],
+  "nodes": [
+    { "id": "user", "lane": "app", "col": 0, "type": "external", "label": "用户", "sublabel": "自然语言指令", "width": 132 },
+    { "id": "ui", "lane": "app", "col": 1, "type": "frontend", "label": "Chat UI", "sublabel": "Compose · 审批弹窗", "width": 132 },
+    { "id": "reply", "lane": "app", "col": 5, "type": "frontend", "label": "最终回复", "sublabel": "结果与过程记录", "width": 132 },
+    { "id": "runtime", "lane": "core", "col": 1, "type": "backend", "label": "ChatRuntime", "sublabel": "循环 · 压缩 · 取消", "width": 132 },
+    { "id": "gateway", "lane": "core", "col": 2, "type": "cloud", "label": "Model Gateway", "sublabel": "OpenAI 兼容 · SSE 流式", "tag": "GLM / GPT / DS", "width": 132 },
+    { "id": "plan", "lane": "core", "col": 3, "type": "backend", "label": "工具调用", "sublabel": "function calling", "width": 132 },
+    { "id": "gate", "lane": "policy", "col": 3, "type": "security", "label": "DecisionGate", "sublabel": "读操作直通 · 写操作语义裁决", "tag": "allow · confirm · block", "width": 150 },
+    { "id": "blocked", "lane": "policy", "col": 4, "type": "security", "label": "拒绝执行", "sublabel": "结构化原因回传", "width": 132 },
+    { "id": "tools", "lane": "exec", "col": 4, "type": "messagebus", "label": "ToolRegistry", "sublabel": "文件 · 网络 · 通知", "tag": "20+ 工具", "width": 132 },
+    { "id": "device", "lane": "exec", "col": 5, "type": "backend", "label": "Device 层", "sublabel": "无障碍 / Root 虚拟屏", "tag": "截图 + 触控注入", "width": 132 }
+  ],
+  "edges": [
+    { "id": "e-ask", "from": "user", "to": "ui" },
+    { "id": "e-submit", "from": "ui", "to": "runtime" },
+    { "id": "e-context", "from": "runtime", "to": "gateway", "label": "上下文 + 工具表", "variant": "emphasis" },
+    { "id": "e-call", "from": "gateway", "to": "plan", "label": "tool_calls", "variant": "emphasis" },
+    { "id": "e-gate", "from": "plan", "to": "gate", "label": "写操作过闸", "variant": "security" },
+    { "id": "e-allow", "from": "gate", "to": "tools", "label": "allow / 已确认", "variant": "emphasis" },
+    { "id": "e-block", "from": "gate", "to": "blocked", "label": "block", "variant": "security", "role": "error" },
+    { "id": "e-deny", "from": "blocked", "to": "plan", "label": "原因回传", "variant": "dashed", "role": "error" },
+    { "id": "e-exec", "from": "tools", "to": "device" },
+    { "id": "e-observe", "from": "device", "to": "gateway", "label": "截图 + 节点树回传", "variant": "emphasis", "role": "return", "width": 1.2 },
+    { "id": "e-final", "from": "runtime", "to": "reply", "label": "最终回复", "variant": "emphasis", "role": "return" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "双路径界面感知",
+      "items": [
+        "无障碍节点树：语义点击，精确省 token",
+        "截图 + 像素坐标：通吃图标与自绘界面"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "安全闸",
+      "items": [
+        "外部副作用动作执行前逐一语义裁决",
+        "裁决超时降级为用户确认，绝不静默放行"
+      ]
+    }
+  ]
+}

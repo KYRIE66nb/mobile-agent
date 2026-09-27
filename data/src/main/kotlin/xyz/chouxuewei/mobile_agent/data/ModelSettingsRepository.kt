@@ -41,6 +41,8 @@ data class ModelProfile(
     val reasoningEffortField: String = "reasoning_effort",
     val reasoningEfforts: List<String> = DEFAULT_REASONING_EFFORTS,
     val selectedReasoningEffort: String? = REASONING_EFFORT_OFF,
+    /** 开启后设备截图才会随识别结果发给该模型；纯文本模型保持关闭。 */
+    val supportsImages: Boolean = false,
 )
 
 data class ModelSettings(
@@ -116,6 +118,7 @@ class ModelSettingsRepository(
         contextPolicy: ContextPolicy,
         reasoningEffortField: String,
         reasoningEfforts: List<String>,
+        supportsImages: Boolean = false,
     ): String {
         contextPolicy.validate()
         val id = profileId ?: UUID.randomUUID().toString()
@@ -170,6 +173,7 @@ class ModelSettingsRepository(
                 reasoningEffortField = normalizedReasoningField,
                 reasoningEfforts = normalizedEfforts,
                 selectedReasoningEffort = selectedEffort,
+                supportsImages = supportsImages,
             )
             if (index >= 0) profiles[index] = updated else profiles += updated
             values[Keys.MODEL_PROFILES] = encodeProfiles(profiles)
@@ -325,6 +329,7 @@ class ModelSettingsRepository(
             model = profile.model,
             apiKey = apiKey,
             reasoningEffortField = profile.reasoningEffortField,
+            supportsImages = profile.supportsImages,
         )
     }
 
@@ -395,6 +400,7 @@ private data class StoredModelProfile(
     val reasoningEffortField: String,
     val reasoningEfforts: List<String>,
     val selectedReasoningEffort: String?,
+    val supportsImages: Boolean = false,
 ) {
     fun asPublic() = ModelProfile(
         id = id,
@@ -407,6 +413,7 @@ private data class StoredModelProfile(
         reasoningEffortField = reasoningEffortField,
         reasoningEfforts = reasoningEfforts,
         selectedReasoningEffort = selectedReasoningEffort,
+        supportsImages = supportsImages,
     )
 
     fun policy() = ContextPolicy(contextWindow, outputReserve)
@@ -432,6 +439,7 @@ private fun encodeProfiles(profiles: List<StoredModelProfile>): String = buildJs
                 "selectedReasoningEffort",
                 profile.selectedReasoningEffort?.let(::JsonPrimitive) ?: JsonNull,
             )
+            put("supportsImages", profile.supportsImages)
         })
     }
 }.toString()
@@ -458,6 +466,7 @@ private fun decodeProfiles(value: String): List<StoredModelProfile> = runCatchin
                 JsonNull -> null
                 else -> selected.jsonPrimitive.contentOrNull
             },
+            supportsImages = item["supportsImages"]?.jsonPrimitive?.contentOrNull == "true",
         )
     }
 }.getOrDefault(emptyList())
