@@ -1,6 +1,7 @@
 package xyz.chouxuewei.mobile_agent.tools
 
 import android.content.Context
+import xyz.chouxuewei.mobile_agent.core.AdGuardController
 import xyz.chouxuewei.mobile_agent.core.ArtifactStore
 import xyz.chouxuewei.mobile_agent.core.ConversationStore
 import xyz.chouxuewei.mobile_agent.core.DeviceGateway
@@ -15,6 +16,7 @@ object ToolCatalog {
         artifacts: ArtifactStore,
         device: DeviceGateway,
         questions: UserQuestionBroker,
+        adGuard: AdGuardController,
         deviceModePreference: () -> DeviceModePreference = { DeviceModePreference.AUTO },
     ): ToolRegistry = ToolRegistry(
         listOf(
@@ -26,6 +28,7 @@ object ToolCatalog {
             ClipboardToolProvider(context),
             NotificationToolProvider(context),
             SystemToolProvider(context, device),
+            AdGuardToolProvider(adGuard),
             InteractionToolProvider(questions),
         ),
     )
