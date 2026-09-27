@@ -50,6 +50,24 @@ Timeouts or verdict failures degrade to manual confirmation — **never silently
 - **Accessibility service** (no root): node-tree reads, taps, text input, swipes, foreground-app tracking;
 - **Root virtual display** (optional): a standalone `RootDeviceService` works on a `VirtualDisplay` — screenshots and touch injection run on a **background screen** while your main screen stays yours; watch the agent live via the floating overlay.
 
+**Execution target preference** (Settings → General → Device operation target):
+
+| Mode | Behaviour |
+|---|---|
+| **Auto** (default) | The agent picks main/background per task; when the virtual display is unavailable it **falls back to the main screen**, disclosed in both the approval text and tool results |
+| **Main screen only** | Always runs in the foreground — saves rootless devices a doomed virtual-display attempt |
+| **Background only** | Uses the virtual display or fails — **never silently touches your main screen** |
+
+### System cleanup
+
+Say "clean up my phone" or "free some memory" — three paths chosen automatically by permission level:
+
+- **Storage stats** `system_storage_stats` — per-app breakdown or a Top-N consumer ranking; querying other apps needs Usage access, and the agent opens the grant page instead of failing blind;
+- **Cache clearing** `system_clear_cache` — no argument cleans this app's caches; a package name + root makes `RootDeviceService` empty that app's `cache/code_cache` dirs and reports freed bytes (**sign-in state and user data untouched**); without root it degrades to opening the app's details page for on-screen clearing;
+- **Memory freeing** `system_free_memory` — `killBackgroundProcesses` for one app or everything launchable, reporting available RAM before and after.
+
+Cleanup calls are `EXTERNAL_WRITE`/`DESTRUCTIVE` — they pass the safety gate and an approval dialog.
+
 ### Ad guard
 
 Popups and shake ads flash for only a few seconds — far too fast for a model loop. Blocking runs on a **deterministic rule engine** inside the accessibility event stream (millisecond latency, no model in the loop); the model's job is configuring rules on demand:
@@ -64,7 +82,7 @@ Per-rule cooldowns plus a global circuit breaker stop misconfigured loops; every
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
-- **20+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats, app-cache clearing, background memory freeing);
+- **40+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing), ad-guard rule management;
 - **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable.
 
 ## Architecture
@@ -76,8 +94,8 @@ Six pure-Kotlin modules, zero frameworks (no Hilt / Koin / MVVM scaffolding); th
 | `:app` | Compose UI, manual wiring (`PrototypeApplication`), overlay, updater |
 | `:agent-core` | `ChatRuntime` loop, tool contracts, `DecisionGate` |
 | `:model` | OpenAI-compatible gateway (OkHttp + SSE), probing |
-| `:device` | Accessibility service, Root/AIDL service, VirtualDisplay, input injection |
-| `:tools` | Device / file / network / notification / clipboard tool providers |
+| `:device` | Accessibility service, ad-guard engine, Root/AIDL service, VirtualDisplay, input injection |
+| `:tools` | Device / file / network / notification / clipboard / system-maintenance / ad-guard tool providers |
 | `:data` | Room persistence, DataStore settings, Keystore secret protection |
 
 Stack: Kotlin 2.0 + Jetpack Compose (Material3) + Room + DataStore + Coil + libsu. Gradle Kotlin DSL with version catalog. minSdk 24, targetSdk 36.
@@ -107,8 +125,11 @@ Settings → Models → New profile:
 ## Roadmap
 
 - [x] Vision path for screen operation (observe → coordinate-action loop)
-- [x] Semantic action safety gate
-- [x] In-app upgrades via GitHub Releases
+- [x] Semantic action safety gate (allow / confirm / block verdicts)
+- [x] In-app upgrades via GitHub Releases (check → download → installer)
+- [x] Foreground / background virtual-display preference (with auto-fallback)
+- [x] System cleanup (storage stats / cache clearing / memory freeing; root direct-clear with no-root fallback)
+- [x] Ad guard (accessibility rule engine: splash skip / popup close / shake-ad interception, agent-programmable)
 - [ ] Reliable templates for high-frequency app flows (e.g. sending a WeChat message)
 - [ ] Triggers: notification / location / scheduled tasks
 - [ ] Non-root degraded control via Shizuku foreground operations

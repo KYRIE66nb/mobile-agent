@@ -50,6 +50,24 @@
 - **无障碍服务**（免 Root）：读节点树、点击、输入、滑动、监听前台应用切换；
 - **Root 虚拟屏**（可选）：独立的 `RootDeviceService` 进程在 VirtualDisplay 上干活，截屏 + 触控注入在**后台虚拟屏**执行，你主屏该干嘛干嘛；悬浮窗可实时围观 Agent 操作。
 
+**执行位置偏好**（设置 → 通用 → 设备操作位置）：
+
+| 档位 | 行为 |
+|---|---|
+| **自动**（默认） | Agent 按任务性质选主屏/后台；虚拟屏不可用时**自动降级主屏**继续执行，降级在审批文案和工具结果中如实披露 |
+| **仅主屏** | 固定前台操作，无 Root 设备省掉注定失败的虚拟屏尝试 |
+| **仅后台** | 只用虚拟屏，失败即失败，**绝不静默触碰主屏** |
+
+### 系统清理维护
+
+对 Agent 说"清理一下手机""释放点内存"即可触发，三条路径按权限自动选择：
+
+- **存储占用查询** `system_storage_stats`：单应用明细或占用 Top N 排行；查别的应用需"用量访问权限"，缺失时自动打开授权页引导一次授权；
+- **应用缓存清理** `system_clear_cache`：不传参清本应用缓存；传包名 + Root → `RootDeviceService` 直接清空该应用 `cache/code_cache` 目录并返回释放字节数（**不碰登录状态和用户数据**）；无 Root → 自动降级打开应用详情页走界面操作；
+- **后台内存释放** `system_free_memory`：`killBackgroundProcesses` 结束后台进程，支持单应用或一键全量，返回前后可用内存差。
+
+清理类操作属于 `EXTERNAL_WRITE`/`DESTRUCTIVE`，会过安全闸裁决并经审批弹窗确认。
+
 ### 广告守卫（Ad Guard）
 
 弹窗和摇一摇广告只闪现几秒，模型来不及反应——所以拦截交给无障碍事件流上的**确定性规则引擎**（毫秒级，不走模型），模型退居二线负责按需配规则：
@@ -64,7 +82,7 @@
 ### 模型与工具
 
 - **OpenAI 兼容网关**：自建 OkHttp + SSE 流式解析，智谱 GLM / OpenAI / DeepSeek / 任意兼容端点即插即用，支持多配置切换与 `reasoning_effort` 透传；
-- **20+ 内置工具**：设备操作（observe/action/gesture/batch/wait_for）、文件读写、网页抓取、通知管理、剪贴板、应用启动、语音转写（OpenAI / 讯飞兼容）、系统维护（存储占用查询、应用缓存清理、后台内存释放）；
+- **40+ 内置工具**：设备操作（observe/action/gesture/batch/wait_for）、文件读写、网页抓取、通知管理、剪贴板、应用启动、语音转写（OpenAI / 讯飞兼容）、系统维护（存储占用/缓存清理/内存释放）、广告守卫规则管理；
 - **多轮 Agent 循环**：上下文压缩、步数上限、随时取消、工具调用全程落库可回放。
 
 ## 架构
@@ -76,8 +94,8 @@
 | `:app` | Compose UI、手动装配（`PrototypeApplication`）、悬浮窗、更新器 |
 | `:agent-core` | `ChatRuntime` 循环、工具契约、`DecisionGate` 安全闸 |
 | `:model` | OpenAI 兼容网关（OkHttp + SSE）、探活 |
-| `:device` | 无障碍服务、Root/AIDL 服务、VirtualDisplay、触控注入 |
-| `:tools` | 设备/文件/网络/通知/剪贴板等工具实现 |
+| `:device` | 无障碍服务、广告守卫引擎、Root/AIDL 服务、VirtualDisplay、触控注入 |
+| `:tools` | 设备/文件/网络/通知/剪贴板/系统维护/广告守卫等工具实现 |
 | `:data` | Room 持久化、DataStore 设置、Keystore 密钥保护 |
 
 技术栈：Kotlin 2.0 + Jetpack Compose（Material3）+ Room + DataStore + Coil + libsu，Gradle Kotlin DSL 版本目录，minSdk 24 / targetSdk 36。
@@ -107,8 +125,11 @@ cd mobile-agent
 ## 路线图
 
 - [x] 视觉模型截图操作路径（观察 → 坐标动作闭环）
-- [x] 语义级操作安全闸
-- [x] App 内一键升级（GitHub Releases）
+- [x] 语义级操作安全闸（allow / confirm / block 三态裁决）
+- [x] App 内一键升级（GitHub Releases 检查 → 下载 → 调起安装器）
+- [x] 前台 / 后台虚拟屏执行位置偏好（自动降级）
+- [x] 系统清理维护（存储查询 / 缓存清理 / 内存释放，Root 直清 + 无 Root 降级）
+- [x] 广告守卫（无障碍规则引擎：开屏跳过 / 弹窗关闭 / 摇一摇拦截，Agent 可编程）
 - [ ] 高频 App 操作模板（微信发消息等固化为可靠指令）
 - [ ] 触发器系统：通知 / 位置 / 定时任务
 - [ ] 非 Root 降级：Shizuku 前台操作
