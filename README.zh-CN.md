@@ -53,7 +53,7 @@
 ### 模型与工具
 
 - **OpenAI 兼容网关**：自建 OkHttp + SSE 流式解析，智谱 GLM / OpenAI / DeepSeek / 任意兼容端点即插即用，支持多配置切换与 `reasoning_effort` 透传；
-- **20+ 内置工具**：设备操作（observe/action/gesture/batch/wait_for）、文件读写、网页抓取、通知管理、剪贴板、应用启动、语音转写（OpenAI / 讯飞兼容）；
+- **20+ 内置工具**：设备操作（observe/action/gesture/batch/wait_for）、文件读写、网页抓取、通知管理、剪贴板、应用启动、语音转写（OpenAI / 讯飞兼容）、系统维护（存储占用查询、应用缓存清理、后台内存释放）；
 - **多轮 Agent 循环**：上下文压缩、步数上限、随时取消、工具调用全程落库可回放。
 
 ## 架构

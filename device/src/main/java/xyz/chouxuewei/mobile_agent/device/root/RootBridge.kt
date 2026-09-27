@@ -72,6 +72,7 @@ internal class RootBridge(private val context: Context) {
     fun pressKey(displayId: Int, keyCode: Int) = service().pressKey(displayId, keyCode)
     fun launch(displayId: Int, target: AppTarget): String = service().launchApp(displayId, target.packageName)
     fun captureMain(): ParcelFileDescriptor = service().captureMain()
+    fun clearPackageCache(packageName: String): Long = service().clearPackageCache(packageName)
 
     suspend fun close() {
         val callback = connection ?: return

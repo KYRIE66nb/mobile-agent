@@ -202,4 +202,7 @@ interface DeviceGateway {
     /** 启动应用不依赖界面识别；其余界面动作必须携带最近一次识别的准确 ID。 */
     suspend fun execute(sessionId: String, observationId: String?, action: Action): ActionResult
     suspend fun closeSession(sessionId: String): DeviceResult<Unit>
+    /** 需要 Root 的维护操作：清空指定应用的缓存目录内容，返回释放的字节数。 */
+    suspend fun clearPackageCache(packageName: String): DeviceResult<Long> =
+        DeviceResult.Unsupported(localizedText("当前设备不支持清理应用缓存", "This device does not support clearing app caches."))
 }

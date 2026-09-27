@@ -53,7 +53,7 @@ Timeouts or verdict failures degrade to manual confirmation — **never silently
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
-- **20+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible);
+- **20+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats, app-cache clearing, background memory freeing);
 - **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable.
 
 ## Architecture

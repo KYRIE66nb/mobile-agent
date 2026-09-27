@@ -25,7 +25,7 @@ object ToolCatalog {
             DeviceToolProvider(device, deviceModePreference),
             ClipboardToolProvider(context),
             NotificationToolProvider(context),
-            SystemToolProvider(context),
+            SystemToolProvider(context, device),
             InteractionToolProvider(questions),
         ),
     )
