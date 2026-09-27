@@ -48,7 +48,9 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     override fun onServiceConnected() { connected = this }
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event != null) xyz.chouxuewei.mobile_agent.device.adguard.AdGuardEngine.onAccessibilityEvent(this, event)
+    }
     override fun onInterrupt() = Unit
     override fun onDestroy() { if (connected === this) connected = null; super.onDestroy() }
 

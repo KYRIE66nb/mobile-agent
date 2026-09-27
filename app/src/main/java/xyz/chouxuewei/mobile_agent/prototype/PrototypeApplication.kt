@@ -35,6 +35,8 @@ import xyz.chouxuewei.mobile_agent.core.StorageCleanupResult
 import xyz.chouxuewei.mobile_agent.core.UserQuestionBroker
 import xyz.chouxuewei.mobile_agent.data.SpeechSettingsRepository
 import xyz.chouxuewei.mobile_agent.data.AgentExecutionSettingsRepository
+import xyz.chouxuewei.mobile_agent.data.AdGuardRepository
+import xyz.chouxuewei.mobile_agent.device.adguard.AdGuardEngine
 import xyz.chouxuewei.mobile_agent.model.SpeechTranscriptionGateway
 import xyz.chouxuewei.mobile_agent.model.IflytekSpeechTranscriptionGateway
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputController
@@ -54,6 +56,7 @@ class PrototypeApplication : Application() {
     val appearance by lazy { AppearanceRepository(this) }
     val personalization by lazy { PersonalizationRepository(this) }
     val agentExecutionSettings by lazy { AgentExecutionSettingsRepository(this) }
+    val adGuardSettings by lazy { AdGuardRepository(this) }
     val speechSettings by lazy { SpeechSettingsRepository(this) }
     val toolPermissions by lazy { ToolPermissionRepository(this) }
     val userQuestions by lazy { UserQuestionBroker() }
@@ -64,7 +67,7 @@ class PrototypeApplication : Application() {
         )
     }
     val toolRegistry by lazy {
-        ToolCatalog.create(this, conversations, artifacts, deviceGateway, userQuestions) {
+        ToolCatalog.create(this, conversations, artifacts, deviceGateway, userQuestions, AdGuardEngine) {
             deviceModePreference.value
         }
     }
@@ -160,6 +163,15 @@ class PrototypeApplication : Application() {
             // 启动时没有正在写入的工具任务，适合安全回收上次异常中断留下的孤立文件。
             artifacts.cleanup()
             attachments.cleanup()
+        }
+        // 广告守卫：持久化配置单向灌入引擎；引擎里的修改经 persister 回写，applyPersisted 自身不触发回写。
+        AdGuardEngine.persister = { snapshot ->
+            adGuardSettings.save(snapshot.enabled, snapshot.showToast, snapshot.rules)
+        }
+        applicationScope.launch {
+            adGuardSettings.state.collectLatest { persisted ->
+                AdGuardEngine.applyPersisted(persisted.enabled, persisted.showToast, persisted.rules)
+            }
         }
     }
 }

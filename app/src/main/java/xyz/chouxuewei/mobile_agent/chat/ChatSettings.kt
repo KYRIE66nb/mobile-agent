@@ -104,6 +104,7 @@ import xyz.chouxuewei.mobile_agent.data.REASONING_EFFORT_OFF
 import xyz.chouxuewei.mobile_agent.data.SpeechApiFormat
 import xyz.chouxuewei.mobile_agent.data.SpeechSettings
 import xyz.chouxuewei.mobile_agent.device.RootAccessState
+import xyz.chouxuewei.mobile_agent.device.adguard.AdGuardEngine
 import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
 import xyz.chouxuewei.mobile_agent.ui.theme.LocalChatColors
 import xyz.chouxuewei.mobile_agent.update.AppUpdater
@@ -265,6 +266,7 @@ fun ChatSettings(
     val maxSteps by app.agentExecutionSettings.maxSteps.collectAsState(initial = DEFAULT_SINGLE_RUN_MAX_STEPS)
     val safetyGateEnabled by app.agentExecutionSettings.safetyGateEnabled.collectAsState(initial = true)
     val deviceMode by app.agentExecutionSettings.deviceModePreference.collectAsState(initial = DeviceModePreference.AUTO)
+    val adGuardState by app.adGuardSettings.state.collectAsState(initial = null)
     val personalizedInstructions by app.personalization.instructions.collectAsState(initial = "")
     val modelUsage by app.modelUsage.usage.collectAsState(initial = emptyList())
     val speechSettings by app.speechSettings.settings.collectAsState(initial = SpeechSettings())
@@ -601,6 +603,9 @@ fun ChatSettings(
                                 }
                         }
                     },
+                    adGuardEnabled = adGuardState?.enabled ?: false,
+                    adGuardRuleCount = adGuardState?.rules?.size ?: 0,
+                    adGuardConnected = AdGuardEngine.accessibilityConnected(),
                     onSafetyGate = { enabled ->
                         scope.launch {
                             runCatching { app.agentExecutionSettings.setSafetyGateEnabled(enabled) }
@@ -614,6 +619,14 @@ fun ChatSettings(
                             runCatching { app.agentExecutionSettings.setDeviceModePreference(mode) }
                                 .onFailure {
                                     feedback = SettingsNotice(localizedText("执行位置设置未保存，请重试", "Execution target setting was not saved. Please try again."), false)
+                                }
+                        }
+                    },
+                    onAdGuardEnabled = { enabled ->
+                        scope.launch {
+                            runCatching { app.adGuardSettings.setEnabled(enabled) }
+                                .onFailure {
+                                    feedback = SettingsNotice(localizedText("广告守卫设置未保存，请重试", "Ad guard setting was not saved. Please try again."), false)
                                 }
                         }
                     },
@@ -1107,6 +1120,9 @@ private fun GeneralSettings(
     maxSteps: Int,
     safetyGate: Boolean,
     deviceMode: DeviceModePreference,
+    adGuardEnabled: Boolean,
+    adGuardRuleCount: Int,
+    adGuardConnected: Boolean,
     rootAccess: RootAccessState?,
     rootChanging: Boolean,
     overlayGranted: Boolean,
@@ -1117,6 +1133,7 @@ private fun GeneralSettings(
     onMaxSteps: (Int) -> Unit,
     onSafetyGate: (Boolean) -> Unit,
     onDeviceMode: (DeviceModePreference) -> Unit,
+    onAdGuardEnabled: (Boolean) -> Unit,
     onRootEnabled: (Boolean) -> Unit,
     onOverlaySettings: () -> Unit,
     onPersistentOverlay: (Boolean) -> Unit,
@@ -1173,6 +1190,7 @@ private fun GeneralSettings(
             onFieldBoundsChanged = { maxStepsFieldBounds = it },
         )
         SafetyGateRow(safetyGate, onSafetyGate)
+        AdGuardRow(adGuardEnabled, adGuardRuleCount, adGuardConnected, onAdGuardEnabled)
         DeviceModeRow(deviceMode, onDeviceMode)
         DetailedLoggingRow(detailedLogging, onDetailedLogging)
         BackgroundInteractionRow(
@@ -1382,6 +1400,42 @@ private fun SafetyGateRow(enabled: Boolean, onEnabled: (Boolean) -> Unit) {
                 Modifier.padding(top = 2.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.secondary,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabled)
+    }
+}
+
+@Composable
+private fun AdGuardRow(
+    enabled: Boolean,
+    ruleCount: Int,
+    accessibilityConnected: Boolean,
+    onEnabled: (Boolean) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Text(localizedText("广告守卫", "Ad guard"), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                localizedText(
+                    if (accessibilityConnected) "自动跳过开屏广告、关闭广告弹窗、拦截摇一摇跳转（$ruleCount 条规则）；可对 Agent 说“帮我拦截 XX 的广告”来添加规则"
+                    else "需要开启无障碍服务才能生效；开启后自动跳过广告、拦截摇一摇跳转，也可让 Agent 按描述添加规则",
+                    if (accessibilityConnected) "Auto-skip splash ads, close ad popups, and cancel shake-ad jumps ($ruleCount rules); ask the agent to block ads in a specific app to add rules"
+                    else "Requires the accessibility service to take effect; once on, it auto-skips ads and cancels shake-ad jumps, and the agent can add rules from your descriptions",
+                ),
+                Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (!accessibilityConnected && enabled) colors.error else colors.secondary,
             )
         }
         Switch(checked = enabled, onCheckedChange = onEnabled)
