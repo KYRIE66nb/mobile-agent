@@ -6,8 +6,11 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import xyz.chouxuewei.mobile_agent.core.ChatConnection
 import xyz.chouxuewei.mobile_agent.core.ChatRuntime
+import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
 import xyz.chouxuewei.mobile_agent.core.LlmDecisionGate
 import xyz.chouxuewei.mobile_agent.data.AppearanceRepository
 import xyz.chouxuewei.mobile_agent.data.RoomConversationStore
@@ -54,8 +57,16 @@ class PrototypeApplication : Application() {
     val speechSettings by lazy { SpeechSettingsRepository(this) }
     val toolPermissions by lazy { ToolPermissionRepository(this) }
     val userQuestions by lazy { UserQuestionBroker() }
+    /** 设置项的热快照，供同步的审批摘要与工具逻辑直接读取。 */
+    private val deviceModePreference by lazy {
+        agentExecutionSettings.deviceModePreference.stateIn(
+            applicationScope, SharingStarted.Eagerly, DeviceModePreference.AUTO
+        )
+    }
     val toolRegistry by lazy {
-        ToolCatalog.create(this, conversations, artifacts, deviceGateway, userQuestions)
+        ToolCatalog.create(this, conversations, artifacts, deviceGateway, userQuestions) {
+            deviceModePreference.value
+        }
     }
     val chatWorkspace by lazy { xyz.chouxuewei.mobile_agent.chat.ChatWorkspace(this) }
     val chatRuntime by lazy {

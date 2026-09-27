@@ -88,6 +88,7 @@ import xyz.chouxuewei.mobile_agent.BuildConfig
 import xyz.chouxuewei.mobile_agent.R
 import xyz.chouxuewei.mobile_agent.core.ContextPolicy
 import xyz.chouxuewei.mobile_agent.core.DEFAULT_SINGLE_RUN_MAX_STEPS
+import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
 import xyz.chouxuewei.mobile_agent.core.MAX_SINGLE_RUN_MAX_STEPS
 import xyz.chouxuewei.mobile_agent.core.MIN_SINGLE_RUN_MAX_STEPS
 import xyz.chouxuewei.mobile_agent.core.ThemePreference
@@ -263,6 +264,7 @@ fun ChatSettings(
     val persistentOverlay by app.appearance.persistentOverlay.collectAsState(initial = false)
     val maxSteps by app.agentExecutionSettings.maxSteps.collectAsState(initial = DEFAULT_SINGLE_RUN_MAX_STEPS)
     val safetyGateEnabled by app.agentExecutionSettings.safetyGateEnabled.collectAsState(initial = true)
+    val deviceMode by app.agentExecutionSettings.deviceModePreference.collectAsState(initial = DeviceModePreference.AUTO)
     val personalizedInstructions by app.personalization.instructions.collectAsState(initial = "")
     val modelUsage by app.modelUsage.usage.collectAsState(initial = emptyList())
     val speechSettings by app.speechSettings.settings.collectAsState(initial = SpeechSettings())
@@ -568,6 +570,7 @@ fun ChatSettings(
                     detailedLogging = detailedLogging,
                     maxSteps = maxSteps,
                     safetyGate = safetyGateEnabled,
+                    deviceMode = deviceMode,
                     rootAccess = rootAccess,
                     rootChanging = rootChanging,
                     overlayGranted = overlayGranted,
@@ -603,6 +606,14 @@ fun ChatSettings(
                             runCatching { app.agentExecutionSettings.setSafetyGateEnabled(enabled) }
                                 .onFailure {
                                     feedback = SettingsNotice(localizedText("安全闸设置未保存，请重试", "Safety gate setting was not saved. Please try again."), false)
+                                }
+                        }
+                    },
+                    onDeviceMode = { mode ->
+                        scope.launch {
+                            runCatching { app.agentExecutionSettings.setDeviceModePreference(mode) }
+                                .onFailure {
+                                    feedback = SettingsNotice(localizedText("执行位置设置未保存，请重试", "Execution target setting was not saved. Please try again."), false)
                                 }
                         }
                     },
@@ -1095,6 +1106,7 @@ private fun GeneralSettings(
     detailedLogging: Boolean,
     maxSteps: Int,
     safetyGate: Boolean,
+    deviceMode: DeviceModePreference,
     rootAccess: RootAccessState?,
     rootChanging: Boolean,
     overlayGranted: Boolean,
@@ -1104,6 +1116,7 @@ private fun GeneralSettings(
     onDetailedLogging: (Boolean) -> Unit,
     onMaxSteps: (Int) -> Unit,
     onSafetyGate: (Boolean) -> Unit,
+    onDeviceMode: (DeviceModePreference) -> Unit,
     onRootEnabled: (Boolean) -> Unit,
     onOverlaySettings: () -> Unit,
     onPersistentOverlay: (Boolean) -> Unit,
@@ -1160,6 +1173,7 @@ private fun GeneralSettings(
             onFieldBoundsChanged = { maxStepsFieldBounds = it },
         )
         SafetyGateRow(safetyGate, onSafetyGate)
+        DeviceModeRow(deviceMode, onDeviceMode)
         DetailedLoggingRow(detailedLogging, onDetailedLogging)
         BackgroundInteractionRow(
             overlayGranted = overlayGranted,
@@ -1372,6 +1386,86 @@ private fun SafetyGateRow(enabled: Boolean, onEnabled: (Boolean) -> Unit) {
         }
         Switch(checked = enabled, onCheckedChange = onEnabled)
     }
+}
+
+@Composable
+private fun DeviceModeRow(mode: DeviceModePreference, onMode: (DeviceModePreference) -> Unit) {
+    val colors = LocalChatColors.current
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { expanded = true }
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp)
+            ) {
+                Text(localizedText("设备操作位置", "Device operation target"), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    localizedText("自动：模型按任务选择，后台不可用时改用主屏；仅后台需要 Root", "Auto: the model picks per task and falls back to the main screen if the virtual display is unavailable; background-only requires root"),
+                    Modifier.padding(top = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.secondary,
+                )
+            }
+            Surface(shape = RoundedCornerShape(22.dp), color = colors.surfaceRaised) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(deviceModeLabel(mode), color = colors.secondary, style = MaterialTheme.typography.bodyMedium)
+                    ChatIcon(
+                        R.drawable.lucide_chevron_down,
+                        null,
+                        Modifier
+                            .padding(start = 6.dp)
+                            .size(15.dp),
+                        colors.secondary,
+                    )
+                }
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.align(Alignment.BottomEnd),
+        ) {
+            DeviceModePreference.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(deviceModeLabel(option), Modifier.weight(1f))
+                            if (option == mode) {
+                                ChatIcon(
+                                    R.drawable.lucide_circle_check,
+                                    null,
+                                    Modifier
+                                        .padding(start = 16.dp)
+                                        .size(18.dp),
+                                    LocalChatColors.current.accent,
+                                )
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        if (option != mode) onMode(option)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun deviceModeLabel(mode: DeviceModePreference): String = when (mode) {
+    DeviceModePreference.AUTO -> localizedText("自动", "Auto")
+    DeviceModePreference.MAIN_DISPLAY -> localizedText("仅主屏", "Main screen")
+    DeviceModePreference.VIRTUAL_DISPLAY -> localizedText("仅后台", "Background")
 }
 
 @Composable

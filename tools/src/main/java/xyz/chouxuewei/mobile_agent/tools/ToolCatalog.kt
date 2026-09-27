@@ -4,6 +4,7 @@ import android.content.Context
 import xyz.chouxuewei.mobile_agent.core.ArtifactStore
 import xyz.chouxuewei.mobile_agent.core.ConversationStore
 import xyz.chouxuewei.mobile_agent.core.DeviceGateway
+import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
 import xyz.chouxuewei.mobile_agent.core.ToolRegistry
 import xyz.chouxuewei.mobile_agent.core.UserQuestionBroker
 
@@ -14,13 +15,14 @@ object ToolCatalog {
         artifacts: ArtifactStore,
         device: DeviceGateway,
         questions: UserQuestionBroker,
+        deviceModePreference: () -> DeviceModePreference = { DeviceModePreference.AUTO },
     ): ToolRegistry = ToolRegistry(
         listOf(
             HistoryToolProvider(conversations),
             FileToolProvider(context, conversations, artifacts),
             ImageRenderToolProvider(context, artifacts),
             NetworkToolProvider(),
-            DeviceToolProvider(device),
+            DeviceToolProvider(device, deviceModePreference),
             ClipboardToolProvider(context),
             NotificationToolProvider(context),
             SystemToolProvider(context),
