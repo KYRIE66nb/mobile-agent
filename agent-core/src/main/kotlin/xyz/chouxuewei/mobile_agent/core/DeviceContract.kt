@@ -2,6 +2,9 @@ package xyz.chouxuewei.mobile_agent.core
 
 enum class ExecutionMode { MAIN_DISPLAY, VIRTUAL_DISPLAY }
 
+/** 用户在设置中对设备会话执行位置的偏好；AUTO 表示由模型按任务选择。 */
+enum class DeviceModePreference { AUTO, MAIN_DISPLAY, VIRTUAL_DISPLAY }
+
 enum class DeviceCapability {
     SCREENSHOT,
     NODES,

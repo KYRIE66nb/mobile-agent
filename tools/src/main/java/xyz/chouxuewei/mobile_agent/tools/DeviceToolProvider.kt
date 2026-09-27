@@ -20,7 +20,11 @@ internal fun resolveDeviceExecutionMode(args: JsonObject): ExecutionMode =
         ExecutionMode.VIRTUAL_DISPLAY
     }
 
-class DeviceToolProvider(private val gateway: DeviceGateway) : ToolProvider {
+class DeviceToolProvider(
+    private val gateway: DeviceGateway,
+    /** 同步读取用户对执行位置的偏好；装配层用已订阅的 StateFlow 快照。 */
+    private val modePreference: () -> DeviceModePreference = { DeviceModePreference.AUTO },
+) : ToolProvider {
     private val sessionGate = Mutex()
     private val sessionsByRun = mutableMapOf<String, MutableSet<String>>()
     override val id = "device"
@@ -58,7 +62,7 @@ class DeviceToolProvider(private val gateway: DeviceGateway) : ToolProvider {
         ToolDefinition(
             "device_open",
             localizedText("开始手机操作", "Start phone operation"),
-            localizedText("开启当前执行轮次专用的设备会话。mode 必须根据用户要求和任务目标选择：用户明确指定前台或后台时直接照做；未指定时，打开或切换应用、展示页面，以及需要用户看到当前屏幕结果的任务使用 main；能够在隔离屏独立完成且不应打扰当前屏幕的任务使用 virtual。不得为了选择前台或后台询问用户；后续只使用本次返回的 session_id。", "Open a device session dedicated to the current run. Choose mode from the user request and task goal: follow explicit foreground or background requests; otherwise use main for opening or switching apps, presenting pages, or results the user must see, and virtual for independent work on an isolated display that should not interrupt the current screen. Do not ask the user merely to choose foreground or background. Use only the returned session_id afterward."),
+            localizedText("开启当前执行轮次专用的设备会话。mode 必须根据用户要求和任务目标选择：用户明确指定前台或后台时直接照做；未指定时，打开或切换应用、展示页面，以及需要用户看到当前屏幕结果的任务使用 main；能够在隔离屏独立完成且不应打扰当前屏幕的任务使用 virtual。不得为了选择前台或后台询问用户；后续只使用本次返回的 session_id。实际执行位置可能受用户设置约束，且 virtual 失败时可自动降级为 main；结果中的 mode 为实际生效值，发生降级时附带 requested_mode 与 fell_back。", "Open a device session dedicated to the current run. Choose mode from the user request and task goal: follow explicit foreground or background requests; otherwise use main for opening or switching apps, presenting pages, or results the user must see, and virtual for independent work on an isolated display that should not interrupt the current screen. Do not ask the user merely to choose foreground or background. Use only the returned session_id afterward. The effective target may be constrained by user settings, and virtual can automatically degrade to main on failure; the returned mode is the effective one, with requested_mode and fell_back marking a downgrade."),
             localizedJsonSchema("""{"type":"object","properties":{"mode":{"type":"string","enum":["main","virtual"],"description":localizedText("根据用户要求和任务目标选择。打开或切换应用、展示页面、需要用户看到屏幕结果时使用 main；可在隔离屏独立完成且不应打扰当前屏幕时使用 virtual", "Choose from the user request and task goal. Use main when opening or switching apps, presenting a page, or when the user must see the result. Use virtual when the work can finish independently on an isolated display without interrupting the current screen.")}},"required":["mode"],"additionalProperties":false}"""),
             ToolSideEffect.EXTERNAL_WRITE,
             "device",
@@ -160,10 +164,14 @@ class DeviceToolProvider(private val gateway: DeviceGateway) : ToolProvider {
             }
 
             "device_batch" -> batchApprovalSummary(args)
-            "device_open" -> if (resolveDeviceExecutionMode(args) == ExecutionMode.MAIN_DISPLAY) {
-                localizedText("以前台主屏方式开始手机操作", "Start phone operation on the foreground main display")
-            } else {
-                localizedText("以后台隔离方式开始手机操作", "Start phone operation on an isolated background display")
+            "device_open" -> when (effectiveExecutionMode(resolveDeviceExecutionMode(args))) {
+                ExecutionMode.MAIN_DISPLAY ->
+                    localizedText("以前台主屏方式开始手机操作", "Start phone operation on the foreground main display")
+                ExecutionMode.VIRTUAL_DISPLAY -> if (modePreference() == DeviceModePreference.AUTO) {
+                    localizedText("以后台隔离方式开始手机操作（虚拟屏不可用时改用主屏）", "Start phone operation on an isolated background display (falls back to the main display if unavailable)")
+                } else {
+                    localizedText("以后台隔离方式开始手机操作", "Start phone operation on an isolated background display")
+                }
             }
             "device_observe" -> args["query"]?.jsonPrimitive?.contentOrNull
                 ?.takeIf(String::isNotBlank)?.take(80)?.let { localizedText("识别当前界面中的：$it", "Inspect on the current screen: $it") }
@@ -214,26 +222,64 @@ class DeviceToolProvider(private val gateway: DeviceGateway) : ToolProvider {
         }
     }
 
-    private suspend fun open(args: JsonObject, context: ToolExecutionContext): ToolResult = when (
-        val result = gateway.openSession(resolveDeviceExecutionMode(args))
-    ) {
-        is DeviceResult.Success -> {
-            // 会话已经由设备层创建后，即使此刻收到停止，也必须先登记，随后由 Run 清理路径关闭。
-            withContext(NonCancellable) {
-                sessionGate.withLock {
-                    sessionsByRun.getOrPut(context.runId, ::mutableSetOf).add(result.value.id)
-                }
-            }
-            ToolResult(buildJsonObject {
-                put("session_id", result.value.id)
-                put("mode", result.value.mode.name.lowercase())
-                putJsonArray("capabilities") { result.value.capabilities.forEach { add(it.name.lowercase()) } }
-            }.toString(), localizedText("手机操作已开始", "Phone operation started"))
+    /** 用户设置可能覆盖模型选择的执行位置；AUTO 时才允许 virtual 失败后降级主屏。 */
+    private fun effectiveExecutionMode(requested: ExecutionMode): ExecutionMode =
+        when (modePreference()) {
+            DeviceModePreference.MAIN_DISPLAY -> ExecutionMode.MAIN_DISPLAY
+            DeviceModePreference.VIRTUAL_DISPLAY -> ExecutionMode.VIRTUAL_DISPLAY
+            DeviceModePreference.AUTO -> requested
         }
 
-        is DeviceResult.Unsupported -> failed(result.reason)
-        is DeviceResult.SessionExpired -> failed(result.reason)
-        is DeviceResult.Failure -> failed(result.reason)
+    private suspend fun open(args: JsonObject, context: ToolExecutionContext): ToolResult {
+        val requested = resolveDeviceExecutionMode(args)
+        val preference = modePreference()
+        val attempts = when (preference) {
+            DeviceModePreference.MAIN_DISPLAY -> listOf(ExecutionMode.MAIN_DISPLAY)
+            DeviceModePreference.VIRTUAL_DISPLAY -> listOf(ExecutionMode.VIRTUAL_DISPLAY)
+            DeviceModePreference.AUTO -> if (requested == ExecutionMode.VIRTUAL_DISPLAY) {
+                // 未 Root 或系统版本不足时自动降级主屏，结果中用 requested_mode/fell_back 标明。
+                listOf(ExecutionMode.VIRTUAL_DISPLAY, ExecutionMode.MAIN_DISPLAY)
+            } else {
+                listOf(ExecutionMode.MAIN_DISPLAY)
+            }
+        }
+        var lastFailure: String? = null
+        for (mode in attempts) {
+            when (val result = gateway.openSession(mode)) {
+                is DeviceResult.Success -> {
+                    // 会话已经由设备层创建后，即使此刻收到停止，也必须先登记，随后由 Run 清理路径关闭。
+                    withContext(NonCancellable) {
+                        sessionGate.withLock {
+                            sessionsByRun.getOrPut(context.runId, ::mutableSetOf).add(result.value.id)
+                        }
+                    }
+                    val actual = result.value.mode
+                    val fellBack = actual != requested
+                    return ToolResult(buildJsonObject {
+                        put("session_id", result.value.id)
+                        put("mode", actual.name.lowercase())
+                        if (fellBack) {
+                            put("requested_mode", requested.name.lowercase())
+                            put("fell_back", true)
+                        }
+                        putJsonArray("capabilities") { result.value.capabilities.forEach { add(it.name.lowercase()) } }
+                    }.toString(), if (fellBack) {
+                        if (preference == DeviceModePreference.MAIN_DISPLAY) {
+                            localizedText("手机操作已开始（设置限定仅使用主屏）", "Phone operation started on the main display, as required by settings")
+                        } else {
+                            localizedText("手机操作已开始（后台虚拟屏不可用，已改用主屏）", "Phone operation started on the main display; the virtual display was unavailable")
+                        }
+                    } else {
+                        localizedText("手机操作已开始", "Phone operation started")
+                    })
+                }
+
+                is DeviceResult.SessionExpired -> return failed(result.reason)
+                is DeviceResult.Unsupported -> lastFailure = result.reason
+                is DeviceResult.Failure -> lastFailure = result.reason
+            }
+        }
+        return failed(lastFailure ?: localizedText("设备会话启动失败", "Could not start the device session"))
     }
 
     private suspend fun observe(args: JsonObject, context: ToolExecutionContext): ToolResult {
