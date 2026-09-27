@@ -262,6 +262,7 @@ fun ChatSettings(
     val detailedLogging by app.appearance.detailedLogging.collectAsState(initial = false)
     val persistentOverlay by app.appearance.persistentOverlay.collectAsState(initial = false)
     val maxSteps by app.agentExecutionSettings.maxSteps.collectAsState(initial = DEFAULT_SINGLE_RUN_MAX_STEPS)
+    val safetyGateEnabled by app.agentExecutionSettings.safetyGateEnabled.collectAsState(initial = true)
     val personalizedInstructions by app.personalization.instructions.collectAsState(initial = "")
     val modelUsage by app.modelUsage.usage.collectAsState(initial = emptyList())
     val speechSettings by app.speechSettings.settings.collectAsState(initial = SpeechSettings())
@@ -345,7 +346,7 @@ fun ChatSettings(
                     settings = settings,
                     saving = saving,
                     canDelete = activeRuns.isEmpty(),
-                    onSave = { profileId, name, url, model, key, window, output, reasoningField, reasoningEfforts, saved ->
+                    onSave = { profileId, name, url, model, key, window, output, reasoningField, reasoningEfforts, vision, saved ->
                         scope.launch {
                             saving = true
                             feedback = null
@@ -364,6 +365,7 @@ fun ChatSettings(
                                     contextPolicy = policy,
                                     reasoningEffortField = reasoningField,
                                     reasoningEfforts = reasoningEfforts,
+                                    supportsImages = vision,
                                 )
                                 saved(savedId)
                                 feedback = SettingsNotice(localizedText("模型配置已保存", "Model configuration saved"), true)
@@ -565,6 +567,7 @@ fun ChatSettings(
                     preference = preference,
                     detailedLogging = detailedLogging,
                     maxSteps = maxSteps,
+                    safetyGate = safetyGateEnabled,
                     rootAccess = rootAccess,
                     rootChanging = rootChanging,
                     overlayGranted = overlayGranted,
@@ -592,6 +595,14 @@ fun ChatSettings(
                                         userFacingMessage(it, localizedText("单轮最大步骤未保存，请重试", "Maximum steps were not saved. Please try again.")),
                                         false,
                                     )
+                                }
+                        }
+                    },
+                    onSafetyGate = { enabled ->
+                        scope.launch {
+                            runCatching { app.agentExecutionSettings.setSafetyGateEnabled(enabled) }
+                                .onFailure {
+                                    feedback = SettingsNotice(localizedText("安全闸设置未保存，请重试", "Safety gate setting was not saved. Please try again."), false)
                                 }
                         }
                     },
@@ -1083,6 +1094,7 @@ private fun GeneralSettings(
     preference: ThemePreference,
     detailedLogging: Boolean,
     maxSteps: Int,
+    safetyGate: Boolean,
     rootAccess: RootAccessState?,
     rootChanging: Boolean,
     overlayGranted: Boolean,
@@ -1091,6 +1103,7 @@ private fun GeneralSettings(
     onSelect: (ThemePreference) -> Unit,
     onDetailedLogging: (Boolean) -> Unit,
     onMaxSteps: (Int) -> Unit,
+    onSafetyGate: (Boolean) -> Unit,
     onRootEnabled: (Boolean) -> Unit,
     onOverlaySettings: () -> Unit,
     onPersistentOverlay: (Boolean) -> Unit,
@@ -1146,6 +1159,7 @@ private fun GeneralSettings(
             onChange = onMaxSteps,
             onFieldBoundsChanged = { maxStepsFieldBounds = it },
         )
+        SafetyGateRow(safetyGate, onSafetyGate)
         DetailedLoggingRow(detailedLogging, onDetailedLogging)
         BackgroundInteractionRow(
             overlayGranted = overlayGranted,
@@ -1331,6 +1345,32 @@ private fun BackgroundInteractionRow(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun SafetyGateRow(enabled: Boolean, onEnabled: (Boolean) -> Unit) {
+    val colors = LocalChatColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Text(localizedText("操作安全闸", "Action safety gate"), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                localizedText("执行发消息、修改设置等有外部影响的动作前，先由模型做语义级安全判断", "Before outward-facing actions like sending messages or changing settings, the model runs a semantic safety check"),
+                Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabled)
     }
 }
 
@@ -1546,7 +1586,7 @@ private fun ModelSettingsPage(
     saving: Boolean,
     canDelete: Boolean,
     onSave: (
-        String?, String, String, String, String, String, String, String, List<String>, (String) -> Unit,
+        String?, String, String, String, String, String, String, String, List<String>, Boolean, (String) -> Unit,
     ) -> Unit,
     onSelect: (String) -> Unit,
     onDelete: (String, () -> Unit) -> Unit,
@@ -1583,6 +1623,9 @@ private fun ModelSettingsPage(
     }
     val reasoningEfforts =
         reasoningEffortsText.split(',').map(String::trim).filter(String::isNotEmpty)
+    var supportsImages by rememberSaveable(editorKey) {
+        mutableStateOf(editingProfile?.supportsImages ?: false)
+    }
     var deleteTarget by remember { mutableStateOf<ModelProfile?>(null) }
 
     Column(
@@ -1753,6 +1796,28 @@ private fun ModelSettingsPage(
             )
         }
 
+        SettingsCard {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp)
+                ) {
+                    Text(localizedText("视觉模型", "Vision model"), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        localizedText("支持图片输入的模型（如 GLM-4.5V、GPT-4o）开启后，设备截图会随界面识别结果发给模型，可按截图像素直接操作图标和图片界面；纯文本模型请保持关闭", "For models that accept image input (e.g. GLM-4.5V, GPT-4o). When enabled, device screenshots are sent with screen observations so the model can act on icons and image-based UI by pixel. Keep off for text-only models."),
+                        Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.secondary,
+                    )
+                }
+                Switch(checked = supportsImages, onCheckedChange = { supportsImages = it })
+            }
+        }
+
         Button(
             enabled = !saving,
             onClick = {
@@ -1766,6 +1831,7 @@ private fun ModelSettingsPage(
                     output,
                     reasoningField,
                     reasoningEfforts,
+                    supportsImages,
                 ) { savedId ->
                     key = ""
                     editingId = savedId

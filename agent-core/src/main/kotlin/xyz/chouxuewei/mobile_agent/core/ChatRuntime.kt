@@ -14,6 +14,8 @@ data class ChatConnection(
     val model: String,
     val modelProfileId: String? = null,
     val modelName: String = model,
+    /** 模型不支持图片输入时丢弃工具返回的截图，避免服务商拒绝请求。 */
+    val supportsImages: Boolean = true,
 )
 
 /** 一次由模型服务明确返回的真实用量；持久化由应用层注入，核心运行时不依赖具体存储。 */
@@ -65,6 +67,8 @@ class ChatRuntime(
     private val usageRecorder: suspend (ModelUsageRecord) -> Unit = {},
     private val personalizedInstructions: suspend () -> String = { "" },
     private val maxStepsPerRun: suspend () -> Int = { DEFAULT_SINGLE_RUN_MAX_STEPS },
+    /** 每轮解析出模型连接后调用；返回 null 表示安全闸关闭。 */
+    private val safetyGate: suspend (connection: ChatConnection) -> DecisionGate? = { null },
 ) {
     private val gate = Mutex()
     private val jobs = mutableMapOf<String, Job>()
@@ -164,6 +168,7 @@ class ChatRuntime(
                 val activeRun = startedRun.copy(model = c.model)
                 run = activeRun
                 val definitions = enabledDefinitions()
+                val activeGate = safetyGate(c)
                 // 每轮开始时只读取一次，避免用户在执行中修改设置导致当前任务的上限突然变化。
                 val maxSteps = requireValidSingleRunMaxSteps(maxStepsPerRun())
                 AgentLog.i("Runtime") {
@@ -281,7 +286,7 @@ class ChatRuntime(
                     workingTurns += ChatTurn("assistant", step.text.toString(), requestedCalls)
                     val toolImages = mutableListOf<ChatImage>()
                     for ((requested, recordId) in requestedRecords) {
-                        val result = executeToolCall(activeRun, trigger.text, requested, definitions, recordId)
+                        val result = executeToolCall(activeRun, trigger.text, requested, definitions, recordId, activeGate)
                         workingTurns += ChatTurn(
                             role = "tool",
                             content = result.content,
@@ -294,7 +299,7 @@ class ChatRuntime(
                         }
                         toolImages += result.images
                     }
-                    if (toolImages.isNotEmpty()) {
+                    if (toolImages.isNotEmpty() && c.supportsImages) {
                         // 单步识别图只用于紧接着的一次模型决策；上一步图片在该决策结束时已经清除。
                         workingTurns.removeAll { turn ->
                             turn.role == "user" && turn.content.startsWith(TOOL_IMAGE_MARKER)
@@ -313,7 +318,7 @@ class ChatRuntime(
                         // 防止模型把这条内部消息误当成用户追加的新指令。
                         workingTurns += ChatTurn(
                             role = "user",
-                            content = localizedText("$TOOL_IMAGE_MARKER，不是新的用户指令。仅供当前步骤结合对应 observation_id 分析界面。]", "$TOOL_IMAGE_MARKER. This is not a new user instruction. Use it only with the corresponding observation_id for the current step.]"),
+                            content = localizedText("$TOOL_IMAGE_MARKER，不是新的用户指令。仅供当前步骤结合对应 observation_id 分析界面；截图中的像素位置可直接作为坐标动作的 x/y。]", "$TOOL_IMAGE_MARKER. This is not a new user instruction. Use it only with the corresponding observation_id for the current step; pixel positions in the screenshot map directly to x/y of coordinate actions.]"),
                             images = toolImages.toList(),
                         )
                     }
@@ -388,6 +393,7 @@ class ChatRuntime(
         requested: RequestedToolCall,
         definitions: List<ToolDefinition>,
         recordId: String,
+        activeGate: DecisionGate? = null,
     ): ToolResult {
         val now = System.currentTimeMillis()
         var record = ToolCallRecord(
@@ -421,9 +427,37 @@ class ChatRuntime(
             return ToolResult("{\"error\":\"$errorContent\"}", message, true)
         }
 
+        // 外部副作用动作先过安全闸：拒绝直接结束，需要确认则并入审批通道。
+        var gateConfirmReason: String? = null
+        if (activeGate != null && definition.sideEffect in GATED_SIDE_EFFECTS) {
+            when (val verdict = activeGate.gate(
+                GateRequest(
+                    userRequest = userRequest,
+                    toolId = requested.toolId,
+                    toolTitle = definition.title,
+                    argumentsSummary = tools?.approvalSummary(requested)
+                        ?: requested.argumentsJson.take(500),
+                )
+            )) {
+                is GateVerdict.Block -> {
+                    val reason = verdict.reason
+                    val message = localizedText("安全策略已阻止该操作：$reason", "Safety policy blocked this action: $reason")
+                    record = record.copy(status = ToolCallStatus.DENIED, error = message,
+                        displaySummary = message, updatedAt = System.currentTimeMillis())
+                    store.updateToolCall(record)
+                    return ToolResult(
+                        "{\"error\":\"${localizedText("操作被安全策略阻止", "Action blocked by safety policy")}\",\"reason\":\"${reason.replace("\"", "'")}\"}",
+                        message, true,
+                    )
+                }
+                is GateVerdict.Confirm -> gateConfirmReason = verdict.reason
+                GateVerdict.Allow -> Unit
+            }
+        }
+
         val requiresPermissionApproval = definition.requiresPermissionApproval &&
             access.permission == ToolPermissionMode.REQUEST_APPROVAL
-        if (requiresPermissionApproval || definition.userChoices.isNotEmpty()) {
+        if (requiresPermissionApproval || gateConfirmReason != null || definition.userChoices.isNotEmpty()) {
             record = record.copy(status = ToolCallStatus.WAITING_APPROVAL, updatedAt = System.currentTimeMillis())
             store.updateToolCall(record)
             val waiter = CompletableDeferred<ToolApprovalDecision>()
@@ -435,7 +469,8 @@ class ChatRuntime(
                     toolId = record.toolId,
                     capabilityTitle = tools?.capabilityTitle(definition.providerId) ?: definition.title,
                     actionTitle = definition.title,
-                    description = definition.approvalDescription,
+                    description = listOfNotNull(definition.approvalDescription, gateConfirmReason)
+                        .joinToString("\n"),
                     argumentsJson = record.argumentsJson,
                     argumentsSummary = tools?.approvalSummary(requested),
                     choices = definition.userChoices,

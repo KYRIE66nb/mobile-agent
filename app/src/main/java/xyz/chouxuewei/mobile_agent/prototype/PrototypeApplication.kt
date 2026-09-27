@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import xyz.chouxuewei.mobile_agent.core.ChatConnection
 import xyz.chouxuewei.mobile_agent.core.ChatRuntime
+import xyz.chouxuewei.mobile_agent.core.LlmDecisionGate
 import xyz.chouxuewei.mobile_agent.data.AppearanceRepository
 import xyz.chouxuewei.mobile_agent.data.RoomConversationStore
 import xyz.chouxuewei.mobile_agent.data.RoomArtifactStore
@@ -68,6 +69,7 @@ class PrototypeApplication : Application() {
                     model = resolved.config.model.orEmpty(),
                     modelProfileId = resolved.profileId,
                     modelName = resolved.profileName,
+                    supportsImages = resolved.config.supportsImages,
                 )
             },
             scope = applicationScope,
@@ -77,6 +79,11 @@ class PrototypeApplication : Application() {
             usageRecorder = modelUsage::record,
             personalizedInstructions = personalization::currentInstructions,
             maxStepsPerRun = agentExecutionSettings::currentMaxSteps,
+            safetyGate = { connection ->
+                if (agentExecutionSettings.currentSafetyGateEnabled()) {
+                    LlmDecisionGate(connection.gateway)
+                } else null
+            },
         )
     }
     private val debugModelConfig by lazy {
