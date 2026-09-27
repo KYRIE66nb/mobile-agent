@@ -11,6 +11,7 @@ import android.os.ParcelFileDescriptor
 import android.view.KeyEvent
 import android.view.Surface
 import com.topjohnwu.superuser.ipc.RootService
+import java.io.File
 import xyz.chouxuewei.mobile_agent.core.AgentLog
 import xyz.chouxuewei.mobile_agent.device.accessibility.AgentAccessibilityService
 
@@ -144,7 +145,34 @@ class RootDeviceService : RootService() {
             }, "main-display-capture").apply { isDaemon = true; start() }
             pipe[0]
         }
+
+        override fun clearPackageCache(packageName: String): Long = call {
+            require(PACKAGE_PATTERN.matches(packageName)) { localizedText("应用包名格式无效", "Invalid app package name.") }
+            var freed = 0L
+            for (path in cacheDirs(packageName)) {
+                File(path).listFiles()?.forEach { child ->
+                    freed += deepSize(child)
+                    // 只清目录内容、保留目录本身，运行中的应用无需重建目录结构。
+                    if (!child.deleteRecursively()) {
+                        AgentLog.w("Root") { "cache_delete_failed path=${child.absolutePath}" }
+                    }
+                }
+            }
+            AgentLog.i("Root") { "cache_cleared package=$packageName freed=$freed" }
+            freed
+        }
     }
+
+    private fun cacheDirs(packageName: String) = listOf(
+        "/data/data/$packageName/cache",
+        "/data/data/$packageName/code_cache",
+        "/data/user_de/0/$packageName/cache",
+        "/data/user_de/0/$packageName/code_cache",
+        "/sdcard/Android/data/$packageName/cache",
+    )
+
+    private fun deepSize(file: File): Long =
+        if (file.isFile) file.length() else file.listFiles()?.sumOf(::deepSize) ?: 0L
 
     private fun launchOnDisplay(displayId: Int, label: String, packageName: String, component: String): String {
         requireDisplay(displayId)

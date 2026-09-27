@@ -1,23 +1,28 @@
 package xyz.chouxuewei.mobile_agent.tools
 
 import xyz.chouxuewei.mobile_agent.core.localizedText
+import android.app.ActivityManager
+import android.app.AppOpsManager
+import android.app.usage.StorageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
+import android.os.Process
 import android.provider.Settings
 import android.view.Surface
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.*
 import xyz.chouxuewei.mobile_agent.core.*
 
-class SystemToolProvider(context: Context) : ToolProvider {
+class SystemToolProvider(context: Context, private val device: DeviceGateway? = null) : ToolProvider {
     private val appContext = context.applicationContext
     private val audio = appContext.getSystemService(AudioManager::class.java)
 
     override val id = "system"
     override val title get() = localizedText("系统功能", "System features")
-    override val description get() = localizedText("打开安全的深链接和系统面板，分享文字，并读取或调整音量、亮度与屏幕旋转。", "Open safe deep links and system panels, share text, and read or adjust volume, brightness, and screen rotation.")
+    override val description get() = localizedText("打开安全的深链接和系统面板，分享文字，读取或调整音量、亮度与屏幕旋转，查询存储占用、清理应用缓存、释放内存。", "Open safe deep links and system panels, share text, read or adjust volume, brightness, and screen rotation, and query storage usage, clear app caches, or free memory.")
     override val definitions get() = listOf(
         ToolDefinition(
             "system_get_state",
@@ -58,8 +63,8 @@ class SystemToolProvider(context: Context) : ToolProvider {
         ToolDefinition(
             "system_open_panel",
             localizedText("打开系统面板", "Open system panel"),
-            localizedText("打开指定系统设置页，实际开关和授权仍由用户或后续可见设备操作完成。", "Open a specified system settings page. The user or a later visible device action must still change settings or grant access."),
-            """{"type":"object","properties":{"panel":{"type":"string","enum":["internet","wifi","bluetooth","location","notifications","notification_listener","accessibility","overlay","write_settings","app_details","date_time","battery_saver"]}},"required":["panel"],"additionalProperties":false}""",
+            localizedText("打开指定系统设置页，实际开关和授权仍由用户或后续可见设备操作完成。app_details 可携带 package_name 打开指定应用详情页。", "Open a specified system settings page. The user or a later visible device action must still change settings or grant access. app_details accepts package_name to open a specific app's details page."),
+            """{"type":"object","properties":{"panel":{"type":"string","enum":["internet","wifi","bluetooth","location","notifications","notification_listener","accessibility","overlay","write_settings","app_details","date_time","battery_saver","usage_access"]},"package_name":{"type":"string","maxLength":255,"description":localizedText("仅用于 app_details：目标应用真实包名，缺省为本应用", "Only for app_details: real package name of the target app; defaults to this app")}},"required":["panel"],"additionalProperties":false}""",
             ToolSideEffect.EXTERNAL_WRITE,
             id,
             approvalDescription = localizedText("打开一个系统设置页面。", "Open a system settings page."),
@@ -72,6 +77,33 @@ class SystemToolProvider(context: Context) : ToolProvider {
             ToolSideEffect.EXTERNAL_WRITE,
             id,
             approvalDescription = localizedText("打开系统分享面板并准备分享文字。", "Open the system share sheet and prepare text to share."),
+        ),
+        ToolDefinition(
+            "system_storage_stats",
+            localizedText("查询存储占用", "Query storage usage"),
+            localizedText("查询应用占用的存储空间。不传参数返回本应用占用；传 package_name 查指定应用；传 top 返回占用最大的前 N 个应用。查询其他应用需要用量访问权限，缺失时用 system_open_panel 打开 usage_access 由用户授权后再查。", "Query app storage usage. With no arguments it reports this app; pass package_name for one app, or top for the N largest consumers. Querying other apps requires Usage access; when missing, open the usage_access system panel so the user can grant it, then retry."),
+            localizedJsonSchema("""{"type":"object","properties":{"package_name":{"type":"string","maxLength":255,"description":localizedText("可选，目标应用真实包名", "Optional real package name of the target app")},"top":{"type":"integer","minimum":1,"maximum":50,"description":localizedText("可选，返回占用最大的前 N 个应用", "Optional: return the N largest storage consumers")}},"additionalProperties":false}"""),
+            ToolSideEffect.READ,
+            id,
+            approvalDescription = localizedText("读取应用存储占用。", "Read app storage usage."),
+        ),
+        ToolDefinition(
+            "system_clear_cache",
+            localizedText("清理应用缓存", "Clear app cache"),
+            localizedText("清空应用缓存目录以释放存储空间，不删除登录状态和用户数据。不传 package_name 清理本应用；传真实包名清理指定应用，需要已开启 Root；未开启时改用 system_open_panel 打开该应用的 app_details 面板，再用界面操作点清除缓存。", "Empty an app's cache directories to free storage without removing sign-in state or user data. Omit package_name to clean this app; pass a real package name for another app, which requires enabled Root; otherwise open its app_details panel and clear the cache via on-screen actions."),
+            localizedJsonSchema("""{"type":"object","properties":{"package_name":{"type":"string","maxLength":255,"description":localizedText("可选，目标应用真实包名；缺省清理本应用", "Optional real package name of the target app; defaults to this app")}},"additionalProperties":false}"""),
+            ToolSideEffect.DESTRUCTIVE,
+            id,
+            approvalDescription = localizedText("清空应用缓存目录。", "Empty the app's cache directories."),
+        ),
+        ToolDefinition(
+            "system_free_memory",
+            localizedText("释放内存", "Free memory"),
+            localizedText("结束后台应用进程释放运行内存，不影响前台应用。不传 package_name 清理所有可启动应用的后台进程；传真实包名只清理该应用。返回操作前后的可用内存。", "Stop background app processes to free RAM without affecting the foreground app. Omit package_name to stop all launchable apps' background processes; pass a real package name for a single app. Returns available memory before and after."),
+            localizedJsonSchema("""{"type":"object","properties":{"package_name":{"type":"string","maxLength":255,"description":localizedText("可选，目标应用真实包名；缺省清理全部可启动应用", "Optional real package name; defaults to all launchable apps")}},"additionalProperties":false}"""),
+            ToolSideEffect.EXTERNAL_WRITE,
+            id,
+            approvalDescription = localizedText("结束后台应用进程以释放内存。", "Stop background app processes to free memory."),
         ),
     )
 
@@ -88,8 +120,11 @@ class SystemToolProvider(context: Context) : ToolProvider {
             "system_volume" -> volume(args)
             "system_display" -> display(args)
             "system_open_uri" -> openUri(args)
-            "system_open_panel" -> openPanel(required(args, "panel"))
+            "system_open_panel" -> openPanel(args)
             "system_share_text" -> shareText(args)
+            "system_storage_stats" -> storageStats(args)
+            "system_clear_cache" -> clearCache(args)
+            "system_free_memory" -> freeMemory(args)
             else -> error(localizedText("系统工具不支持 ${call.toolId}", "System tools do not support ${call.toolId}"))
         }
     }
@@ -104,6 +139,11 @@ class SystemToolProvider(context: Context) : ToolProvider {
             "system_open_uri" -> localizedText("打开链接：", "Open link: ") + safeUriSummary(required(args, "uri"))
             "system_open_panel" -> localizedText("打开系统面板：", "Open system panel: ") + required(args, "panel")
             "system_share_text" -> localizedText("打开系统分享面板", "Open system share sheet")
+            "system_storage_stats" -> localizedText("读取存储占用", "Read storage usage")
+            "system_clear_cache" -> localizedText("清空缓存：", "Clear cache: ") +
+                (args["package_name"]?.jsonPrimitive?.contentOrNull ?: localizedText("本应用", "this app"))
+            "system_free_memory" -> localizedText("结束后台进程：", "Stop background processes: ") +
+                (args["package_name"]?.jsonPrimitive?.contentOrNull ?: localizedText("全部可启动应用", "all launchable apps"))
             else -> null
         }
     }.getOrNull()
@@ -213,7 +253,8 @@ class SystemToolProvider(context: Context) : ToolProvider {
         }.toString(), localizedText("已打开链接", "Link opened"))
     }
 
-    private fun openPanel(panel: String): ToolResult {
+    private fun openPanel(args: JsonObject): ToolResult {
+        val panel = required(args, "panel")
         val intent = when (panel) {
             "internet" -> if (Build.VERSION.SDK_INT >= 29) {
                 Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY)
@@ -234,7 +275,14 @@ class SystemToolProvider(context: Context) : ToolProvider {
             "accessibility" -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             "overlay" -> Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${appContext.packageName}"))
             "write_settings" -> Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${appContext.packageName}"))
-            "app_details" -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${appContext.packageName}"))
+            "app_details" -> {
+                // 默认打开本应用详情页；带合法 package_name 时打开指定应用详情页，供界面化清理缓存等操作。
+                val target = args["package_name"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+                    ?: appContext.packageName
+                require(PACKAGE_PATTERN.matches(target)) { localizedText("应用包名格式无效", "Invalid app package name.") }
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$target"))
+            }
+            "usage_access" -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
             "date_time" -> Intent(Settings.ACTION_DATE_SETTINGS)
             "battery_saver" -> Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
             else -> error(localizedText("不支持的系统面板", "Unsupported system panel"))
@@ -257,6 +305,128 @@ class SystemToolProvider(context: Context) : ToolProvider {
         check(appContext.packageManager.resolveActivity(send, 0) != null) { localizedText("没有应用可以接收这次分享", "No app can receive this share.") }
         appContext.startActivity(Intent.createChooser(send, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         return ToolResult("""{"opened":true,"length":${text.length}}""", localizedText("已打开系统分享面板", "System share sheet opened"))
+    }
+
+    private fun storageStats(args: JsonObject): ToolResult {
+        check(Build.VERSION.SDK_INT >= 26) {
+            localizedText("查询存储占用需要 Android 8.0 或更高版本", "Storage stats require Android 8.0 or later.")
+        }
+        val packageName = args["package_name"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+        val top = args["top"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 50)
+        if (packageName != null) {
+            require(PACKAGE_PATTERN.matches(packageName)) { localizedText("应用包名格式无效", "Invalid app package name.") }
+        }
+        // 只有查询别的应用才需要用量访问权限；查本应用始终可用。
+        if (packageName != null || top != null) checkUsageAccess()
+        val manager = checkNotNull(appContext.getSystemService(StorageStatsManager::class.java))
+        fun statsJson(pkg: String) = runCatching {
+            val info = appContext.packageManager.getApplicationInfo(pkg, 0)
+            val stats = manager.queryStatsForPackage(info.storageUuid, pkg, Process.myUserHandle())
+            buildJsonObject {
+                put("package_name", pkg)
+                put("app_name", appContext.packageManager.getApplicationLabel(info).toString())
+                put("app_bytes", stats.appBytes)
+                put("data_bytes", stats.dataBytes)
+                put("cache_bytes", stats.cacheBytes)
+                put("total_bytes", stats.appBytes + stats.dataBytes + stats.cacheBytes)
+            }
+        }.getOrNull()
+
+        return when {
+            top != null -> {
+                val apps = appContext.packageManager.getInstalledApplications(0)
+                    .mapNotNull { statsJson(it.packageName) }
+                    .sortedByDescending { it["total_bytes"]?.jsonPrimitive?.longOrNull ?: 0L }
+                    .take(top)
+                ToolResult(buildJsonObject { putJsonArray("apps") { apps.forEach { add(it) } } }.toString(),
+                    localizedText("已列出占用最大的 ${apps.size} 个应用", "Listed the ${apps.size} largest apps"))
+            }
+            else -> {
+                val stats = statsJson(packageName ?: appContext.packageName)
+                    ?: error(localizedText("目标应用未安装或无法读取", "The target app is not installed or unreadable."))
+                ToolResult(stats.toString(), localizedText("已读取存储占用", "Storage usage read"))
+            }
+        }
+    }
+
+    private fun checkUsageAccess() {
+        val appOps = appContext.getSystemService(AppOpsManager::class.java)
+        val allowed = if (Build.VERSION.SDK_INT >= 29) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), appContext.packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), appContext.packageName)
+        } == AppOpsManager.MODE_ALLOWED
+        check(allowed) {
+            localizedText("查询其他应用的存储占用需要用量访问权限，请用 system_open_panel 打开 usage_access 面板请用户授权后重试", "Reading other apps' storage usage requires Usage access. Open the usage_access system panel for the user to grant it, then retry.")
+        }
+    }
+
+    private suspend fun clearCache(args: JsonObject): ToolResult {
+        val packageName = args["package_name"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+        if (packageName == null) {
+            var freed = 0L
+            val dirs = listOfNotNull(
+                appContext.cacheDir,
+                appContext.externalCacheDir,
+                if (Build.VERSION.SDK_INT >= 21) appContext.codeCacheDir else null,
+            )
+            for (dir in dirs) {
+                dir.listFiles()?.forEach { child ->
+                    freed += deepSize(child)
+                    child.deleteRecursively()
+                }
+            }
+            return ToolResult(buildJsonObject {
+                put("package_name", appContext.packageName)
+                put("freed_bytes", freed)
+            }.toString(), localizedText("已清理本应用缓存", "This app's cache cleared"))
+        }
+        require(PACKAGE_PATTERN.matches(packageName)) { localizedText("应用包名格式无效", "Invalid app package name.") }
+        val gateway = device ?: error(localizedText("当前环境不支持清理其他应用缓存", "Clearing other apps' caches is not supported here."))
+        return when (val result = gateway.clearPackageCache(packageName)) {
+            is DeviceResult.Success -> ToolResult(buildJsonObject {
+                put("package_name", packageName)
+                put("freed_bytes", result.value)
+            }.toString(), localizedText("已清理应用缓存", "App cache cleared"))
+
+            is DeviceResult.Unsupported -> error(result.reason + localizedText("；也可以用 system_open_panel 打开该应用的 app_details 页面，再用界面操作点清除缓存", "; alternatively open the app's app_details panel and clear the cache via on-screen actions"))
+            is DeviceResult.SessionExpired -> error(result.reason)
+            is DeviceResult.Failure -> error(result.reason)
+        }
+    }
+
+    private fun deepSize(file: java.io.File): Long =
+        if (file.isFile) file.length() else file.listFiles()?.sumOf(::deepSize) ?: 0L
+
+    private suspend fun freeMemory(args: JsonObject): ToolResult {
+        val manager = checkNotNull(appContext.getSystemService(ActivityManager::class.java))
+        val packageName = args["package_name"]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotBlank)
+        val targets = if (packageName != null) {
+            require(PACKAGE_PATTERN.matches(packageName)) { localizedText("应用包名格式无效", "Invalid app package name.") }
+            listOf(packageName)
+        } else {
+            val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+            @Suppress("DEPRECATION")
+            appContext.packageManager.queryIntentActivities(intent, 0)
+                .map { it.activityInfo.packageName }
+                .distinct()
+                .filter { it != appContext.packageName }
+        }
+        // killBackgroundProcesses 只结束缓存/后台进程，不会杀掉前台或持久运行的系统组件。
+        val before = ActivityManager.MemoryInfo().also(manager::getMemoryInfo).availMem
+        targets.forEach { runCatching { manager.killBackgroundProcesses(it) } }
+        // 进程回收是异步的，稍等片刻再读可用内存才能得到有意义的差值。
+        delay(400)
+        val after = ActivityManager.MemoryInfo().also(manager::getMemoryInfo).availMem
+        return ToolResult(buildJsonObject {
+            put("target_count", targets.size)
+            put("available_before_bytes", before)
+            put("available_after_bytes", after)
+            put("freed_bytes", after - before)
+        }.toString(), localizedText("已清理 ${targets.size} 个应用的后台进程", "Stopped background processes of ${targets.size} apps"))
     }
 
     private fun startResolved(intent: Intent) {

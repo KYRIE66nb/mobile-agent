@@ -188,6 +188,18 @@ class AndroidDeviceGateway(
         }
     }
 
+    override suspend fun clearPackageCache(packageName: String): DeviceResult<Long> {
+        if (!rootAccessState().enabled) {
+            return DeviceResult.Unsupported(localizedText("请先授予 Root 权限", "Grant Root access first."))
+        }
+        return try {
+            withContext(Dispatchers.IO) { bridge.connect() }
+            DeviceResult.Success(withContext(Dispatchers.IO) { bridge.clearPackageCache(packageName) })
+        } catch (error: Exception) {
+            DeviceResult.Failure(error.message ?: localizedText("清理应用缓存失败", "Failed to clear the app cache."))
+        }
+    }
+
     override suspend fun listApps(): DeviceResult<List<LaunchableApp>> {
         if (!rootAccessState().enabled) return DeviceResult.Unsupported(localizedText("请先授予 Root 权限", "Grant Root access first."))
         return try {

@@ -12,4 +12,6 @@ interface IRootDevice {
     void gesture(int displayId, int x1, int y1, int x2, int y2, int durationMs);
     void pressKey(int displayId, int keyCode);
     ParcelFileDescriptor captureMain();
+    // 仅清理指定应用的 cache/code_cache 目录内容；返回释放的字节数。
+    long clearPackageCache(String packageName);
 }
