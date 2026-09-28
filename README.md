@@ -101,7 +101,7 @@ Recipes run on the **main display in the foreground** (they drive the target app
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
-- **50+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, document read/write (PDF/Word/Excel extract and generate), webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing / **restricted shell** over Root or Shizuku), ad-guard rule management, recipe execution/saving, contacts/calendar queries (runtime-permission gated);
+- **50+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, document tools (PDF/Word/Excel extract; docx/xlsx generate and surgical edit), webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing / **restricted shell** over Root or Shizuku), ad-guard rule management, recipe execution/saving, contacts/calendar queries (runtime-permission gated);
 - **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable; read-only tool calls in one round **run in parallel** (writes stay sequential), and screen observations are compactly serialized with precomputed node centers to cut per-round token cost.
 
 ## Architecture
@@ -154,6 +154,7 @@ Settings → Models → New profile:
 - [ ] Triggers: notification / location / scheduled tasks
 - [x] Non-root degraded control via Shizuku shell channel (allow-listed commands, user-granted)
 - [x] PDF / Word / Excel reading and generation (fully local, no network)
+- [x] Surgical editing of existing documents (docx paragraph-level / xlsx cell-level; images and styles preserved)
 - [ ] Pluggable standalone decision-model backend (Jev-like)
 
 ## Permissions and data boundaries
