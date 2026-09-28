@@ -1,11 +1,13 @@
 package xyz.chouxuewei.mobile_agent.chat
 
 import android.Manifest
+import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Process
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -108,6 +110,11 @@ import xyz.chouxuewei.mobile_agent.data.SpeechApiFormat
 import xyz.chouxuewei.mobile_agent.data.SpeechSettings
 import xyz.chouxuewei.mobile_agent.device.RootAccessState
 import xyz.chouxuewei.mobile_agent.device.adguard.AdGuardEngine
+import xyz.chouxuewei.mobile_agent.device.accessibility.AgentAccessibilityService
+import xyz.chouxuewei.mobile_agent.device.root.ShizukuShell
+import xyz.chouxuewei.mobile_agent.tools.notifications.AgentNotificationListenerService
+import xyz.chouxuewei.mobile_agent.core.ToolCapability
+import xyz.chouxuewei.mobile_agent.core.ToolAvailabilityState
 import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
 import xyz.chouxuewei.mobile_agent.ui.theme.LocalChatColors
 import xyz.chouxuewei.mobile_agent.update.AppUpdater
@@ -217,7 +224,7 @@ fun ChatSettings(
     var page by rememberSaveable {
         mutableStateOf(
             initialPage.takeIf {
-                it in setOf("general", "personalization", "model", "voice", "data", "about")
+                it in setOf("general", "personalization", "capabilities", "model", "voice", "data", "about")
             } ?: "general",
         )
     }
@@ -274,9 +281,32 @@ fun ChatSettings(
     val personalizedInstructions by app.personalization.instructions.collectAsState(initial = "")
     val modelUsage by app.modelUsage.usage.collectAsState(initial = emptyList())
     val speechSettings by app.speechSettings.settings.collectAsState(initial = SpeechSettings())
+    var accessibilityConnected by remember { mutableStateOf(AgentAccessibilityService.connected != null) }
+    var notifListenerConnected by remember { mutableStateOf(AgentNotificationListenerService.connected != null) }
+    var usageAccessGranted by remember { mutableStateOf(false) }
+    var shizukuBinderAlive by remember { mutableStateOf(ShizukuShell.binderAlive()) }
+    var shizukuGranted by remember { mutableStateOf(ShizukuShell.hasPermission()) }
+    var capabilityList by remember { mutableStateOf<List<ToolCapability>?>(null) }
+    val refreshCapabilityStates = {
+        accessibilityConnected = AgentAccessibilityService.connected != null
+        notifListenerConnected = AgentNotificationListenerService.connected != null
+        val appOps = context.getSystemService(AppOpsManager::class.java)
+        usageAccessGranted = if (Build.VERSION.SDK_INT >= 29) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName,
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName)
+        } == AppOpsManager.MODE_ALLOWED
+        shizukuBinderAlive = ShizukuShell.binderAlive()
+        shizukuGranted = ShizukuShell.hasPermission()
+        overlayGranted = Settings.canDrawOverlays(context)
+    }
     val tabs = listOf(
         SettingsTab("general", localizedText("通用", "General"), R.drawable.lucide_settings),
         SettingsTab("personalization", localizedText("个性化", "Personalization"), R.drawable.lucide_sparkles),
+        SettingsTab("capabilities", localizedText("能力", "Capabilities"), R.drawable.lucide_circle_check),
         SettingsTab("voice", localizedText("语音", "Voice"), R.drawable.lucide_mic),
         SettingsTab("model", localizedText("模型服务", "Model service"), R.drawable.lucide_bot),
         SettingsTab("data", localizedText("数据管理", "Data"), R.drawable.lucide_database),
@@ -298,6 +328,18 @@ fun ChatSettings(
                 context,
                 Manifest.permission.RECORD_AUDIO,
             ) == PackageManager.PERMISSION_GRANTED
+        }
+        if (page == "capabilities") {
+            refreshCapabilityStates()
+            notificationsGranted = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            microphoneGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED
+            capabilityList = runCatching { app.toolRegistry.capabilities() }.getOrNull()
         }
     }
     LaunchedEffect(page, tabsScroll.maxValue) {
@@ -561,6 +603,51 @@ fun ChatSettings(
                             }
                         }
                     },
+                )
+
+                "capabilities" -> CapabilitiesPage(
+                    accessibilityConnected = accessibilityConnected,
+                    notifListenerConnected = notifListenerConnected,
+                    usageAccessGranted = usageAccessGranted,
+                    overlayGranted = overlayGranted,
+                    notificationsGranted = notificationsGranted,
+                    microphoneGranted = microphoneGranted,
+                    rootAccess = rootAccess,
+                    shizukuBinderAlive = shizukuBinderAlive,
+                    shizukuGranted = shizukuGranted,
+                    modelConfigured = settings.selectedModel?.let { it.baseUrl.isNotBlank() && it.model.isNotBlank() && it.hasApiKey } == true,
+                    speechConfigured = speechSettings.configured,
+                    capabilities = capabilityList,
+                    onOpenPanel = { panel ->
+                        val intent = when (panel) {
+                            "accessibility" -> Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            "notification_listener" -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                            "usage_access" -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                            else -> null
+                        }
+                        intent?.let { runCatching { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }
+                    },
+                    onOverlay = {
+                        overlayPermission.launch(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}"),
+                            )
+                        )
+                    },
+                    onNotificationPermission = {
+                        if (Build.VERSION.SDK_INT >= 33) {
+                            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    },
+                    onMicrophone = { microphonePermission.launch(Manifest.permission.RECORD_AUDIO) },
+                    onShizukuGrant = {
+                        scope.launch {
+                            ShizukuShell.ensurePermission()
+                            refreshCapabilityStates()
+                        }
+                    },
+                    onOpenPage = { page = it },
                 )
 
                 "about" -> AboutSettings(
@@ -2608,6 +2695,237 @@ private fun ModelUsageRow(usage: ModelUsageSummary, configured: Boolean) {
 
 private fun formatUsageCount(value: Long): String =
     java.text.NumberFormat.getIntegerInstance().format(value)
+
+@Composable
+private fun CapabilitiesPage(
+    accessibilityConnected: Boolean,
+    notifListenerConnected: Boolean,
+    usageAccessGranted: Boolean,
+    overlayGranted: Boolean,
+    notificationsGranted: Boolean,
+    microphoneGranted: Boolean,
+    rootAccess: RootAccessState?,
+    shizukuBinderAlive: Boolean,
+    shizukuGranted: Boolean,
+    modelConfigured: Boolean,
+    speechConfigured: Boolean,
+    capabilities: List<ToolCapability>?,
+    onOpenPanel: (String) -> Unit,
+    onOverlay: () -> Unit,
+    onNotificationPermission: () -> Unit,
+    onMicrophone: () -> Unit,
+    onShizukuGrant: () -> Unit,
+    onOpenPage: (String) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text(localizedText("系统授权", "System authorization"), style = MaterialTheme.typography.titleSmall)
+        SettingsCard {
+            CapabilityStatusRow(
+                title = localizedText("无障碍服务", "Accessibility service"),
+                ok = accessibilityConnected,
+                detail = localizedText("界面识别、广告守卫与应用内操作的执行通道", "Required for screen inspection, ad guard, and in-app actions"),
+                actionLabel = localizedText("去开启", "Enable"),
+            ) { onOpenPanel("accessibility") }
+            SettingsDivider()
+            CapabilityStatusRow(
+                title = localizedText("通知使用权", "Notification access"),
+                ok = notifListenerConnected,
+                detail = localizedText("读取通知、快捷回复与通知触发任务", "Read notifications, quick replies, and notification-triggered tasks"),
+                actionLabel = localizedText("去开启", "Enable"),
+            ) { onOpenPanel("notification_listener") }
+            SettingsDivider()
+            CapabilityStatusRow(
+                title = localizedText("用量访问", "Usage access"),
+                ok = usageAccessGranted,
+                detail = localizedText("查询其他应用的存储占用，缓存清理的辅助数据", "Read other apps' storage usage for cleanup insights"),
+                actionLabel = localizedText("去开启", "Enable"),
+            ) { onOpenPanel("usage_access") }
+            SettingsDivider()
+            CapabilityStatusRow(
+                title = localizedText("悬浮窗", "Floating window"),
+                ok = overlayGranted,
+                detail = localizedText("常驻悬浮按钮与任务中的前台提醒", "Floating button and in-task foreground status"),
+                actionLabel = localizedText("去开启", "Enable"),
+            ) { onOverlay() }
+            SettingsDivider()
+            CapabilityStatusRow(
+                title = localizedText("通知权限", "Notification permission"),
+                ok = notificationsGranted,
+                detail = localizedText("定时任务结果与运行状态的通知提醒", "Delivery of task results and run status notifications"),
+                actionLabel = localizedText("去开启", "Enable"),
+            ) { onNotificationPermission() }
+            SettingsDivider()
+            CapabilityStatusRow(
+                title = localizedText("麦克风", "Microphone"),
+                ok = microphoneGranted,
+                detail = localizedText("语音输入与语音对话", "Voice input and spoken conversations"),
+                actionLabel = localizedText("去开启", "Enable"),
+            ) { onMicrophone() }
+        }
+
+        Text(localizedText("高级通道", "Advanced channels"), style = MaterialTheme.typography.titleSmall)
+        SettingsCard {
+            CapabilityStatusRow(
+                title = localizedText("Root 权限", "Root access"),
+                ok = rootAccess?.let { it.enabled && it.granted } == true,
+                detail = rootAccess?.detail ?: localizedText("正在检测…", "Checking…"),
+                actionLabel = localizedText("管理", "Manage"),
+            ) { onOpenPage("general") }
+            SettingsDivider()
+            CapabilityStatusRow(
+                title = localizedText("Shizuku", "Shizuku"),
+                ok = shizukuBinderAlive && shizukuGranted,
+                detail = localizedText(
+                    if (shizukuBinderAlive) {
+                        if (shizukuGranted) "已授权，system_shell 可执行白名单命令" else "服务已启动，点击授予使用授权"
+                    } else "未检测到服务；安装并启动 Shizuku 后可用作非 Root 降级通道",
+                    if (shizukuBinderAlive) {
+                        if (shizukuGranted) "Granted; system_shell can run allowlisted commands" else "Service running; tap to grant permission"
+                    } else "Service not detected; install and start Shizuku as a non-root fallback channel",
+                ),
+                actionLabel = localizedText("授权", "Grant"),
+            ) { onShizukuGrant() }
+        }
+
+        Text(localizedText("服务配置", "Service configuration"), style = MaterialTheme.typography.titleSmall)
+        SettingsCard {
+            CapabilityStatusRow(
+                title = localizedText("模型服务", "Model service"),
+                ok = modelConfigured,
+                detail = localizedText(
+                    if (modelConfigured) "已配置可用的模型端点" else "还没有可用的模型，先完成端点与密钥配置",
+                    if (modelConfigured) "A model endpoint is configured" else "No usable model yet; configure an endpoint and key first",
+                ),
+                actionLabel = localizedText("配置", "Configure"),
+            ) { onOpenPage("model") }
+            SettingsDivider()
+            CapabilityStatusRow(
+                title = localizedText("语音服务", "Speech service"),
+                ok = speechConfigured,
+                detail = localizedText(
+                    if (speechConfigured) "语音识别服务已就绪" else "语音输入需要可用的识别服务配置",
+                    if (speechConfigured) "Speech recognition is ready" else "Voice input needs a working recognition endpoint",
+                ),
+                actionLabel = localizedText("配置", "Configure"),
+            ) { onOpenPage("voice") }
+        }
+
+        Text(localizedText("能力组", "Capability groups"), style = MaterialTheme.typography.titleSmall)
+        SettingsCard {
+            val list = capabilities
+            if (list == null) {
+                Text(
+                    localizedText("正在读取…", "Loading…"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.secondary,
+                )
+            } else {
+                list.forEachIndexed { index, capability ->
+                    CapabilityGroupRow(capability)
+                    if (index != list.lastIndex) SettingsDivider()
+                }
+            }
+        }
+        Spacer(Modifier.height(28.dp))
+    }
+}
+
+@Composable
+private fun CapabilityStatusRow(
+    title: String,
+    ok: Boolean,
+    detail: String,
+    actionLabel: String,
+    onAction: () -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (ok) colors.successSoft else colors.accentSoft,
+                ) {
+                    Text(
+                        if (ok) localizedText("已就绪", "Ready") else localizedText("待授权", "Action needed"),
+                        Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (ok) colors.success else colors.accent,
+                    )
+                }
+                Text(title, Modifier.padding(start = 9.dp), style = MaterialTheme.typography.bodyMedium)
+            }
+            Text(
+                detail,
+                Modifier.padding(top = 3.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
+        }
+        if (!ok) {
+            TextButton(onClick = onAction) { Text(actionLabel) }
+        }
+    }
+}
+
+@Composable
+private fun CapabilityGroupRow(capability: ToolCapability) {
+    val colors = LocalChatColors.current
+    val (label, color) = when (capability.availability.state) {
+        ToolAvailabilityState.AVAILABLE -> localizedText("可用", "Available") to colors.success
+        ToolAvailabilityState.DEGRADED -> localizedText("受限", "Limited") to colors.accent
+        ToolAvailabilityState.NEEDS_PERMISSION -> localizedText("需权限", "Needs permission") to colors.accent
+        ToolAvailabilityState.NEEDS_SETUP -> localizedText("需配置", "Needs setup") to colors.accent
+        ToolAvailabilityState.DISABLED -> localizedText("已关闭", "Disabled") to colors.secondary
+        ToolAvailabilityState.UNSUPPORTED -> localizedText("不支持", "Unsupported") to colors.secondary
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(capability.title, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    localizedText(" · ${capability.toolCount} 个工具", " · ${capability.toolCount} tools"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.secondary,
+                )
+            }
+            if (capability.availability.detail.isNotBlank()) {
+                Text(
+                    capability.availability.detail,
+                    Modifier.padding(top = 3.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.secondary,
+                )
+            }
+        }
+        Text(label, style = MaterialTheme.typography.labelSmall, color = color)
+    }
+}
 
 @Composable
 private fun SettingsDivider() {
