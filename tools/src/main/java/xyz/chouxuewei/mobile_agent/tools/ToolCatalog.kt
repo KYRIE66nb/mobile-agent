@@ -6,6 +6,7 @@ import xyz.chouxuewei.mobile_agent.core.ArtifactStore
 import xyz.chouxuewei.mobile_agent.core.ConversationStore
 import xyz.chouxuewei.mobile_agent.core.DeviceGateway
 import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
+import xyz.chouxuewei.mobile_agent.core.RecipeController
 import xyz.chouxuewei.mobile_agent.core.ToolRegistry
 import xyz.chouxuewei.mobile_agent.core.UserQuestionBroker
 
@@ -17,6 +18,7 @@ object ToolCatalog {
         device: DeviceGateway,
         questions: UserQuestionBroker,
         adGuard: AdGuardController,
+        recipes: RecipeController,
         deviceModePreference: () -> DeviceModePreference = { DeviceModePreference.AUTO },
     ): ToolRegistry = ToolRegistry(
         listOf(
@@ -29,6 +31,7 @@ object ToolCatalog {
             NotificationToolProvider(context),
             SystemToolProvider(context, device),
             AdGuardToolProvider(adGuard),
+            RecipeToolProvider(recipes),
             InteractionToolProvider(questions),
         ),
     )

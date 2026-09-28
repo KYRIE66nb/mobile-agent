@@ -36,7 +36,9 @@ import xyz.chouxuewei.mobile_agent.core.UserQuestionBroker
 import xyz.chouxuewei.mobile_agent.data.SpeechSettingsRepository
 import xyz.chouxuewei.mobile_agent.data.AgentExecutionSettingsRepository
 import xyz.chouxuewei.mobile_agent.data.AdGuardRepository
+import xyz.chouxuewei.mobile_agent.data.RecipeRepository
 import xyz.chouxuewei.mobile_agent.device.adguard.AdGuardEngine
+import xyz.chouxuewei.mobile_agent.device.recipe.RecipeEngine
 import xyz.chouxuewei.mobile_agent.model.SpeechTranscriptionGateway
 import xyz.chouxuewei.mobile_agent.model.IflytekSpeechTranscriptionGateway
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputController
@@ -57,6 +59,7 @@ class PrototypeApplication : Application() {
     val personalization by lazy { PersonalizationRepository(this) }
     val agentExecutionSettings by lazy { AgentExecutionSettingsRepository(this) }
     val adGuardSettings by lazy { AdGuardRepository(this) }
+    val recipeSettings by lazy { RecipeRepository(this) }
     val speechSettings by lazy { SpeechSettingsRepository(this) }
     val toolPermissions by lazy { ToolPermissionRepository(this) }
     val userQuestions by lazy { UserQuestionBroker() }
@@ -67,7 +70,7 @@ class PrototypeApplication : Application() {
         )
     }
     val toolRegistry by lazy {
-        ToolCatalog.create(this, conversations, artifacts, deviceGateway, userQuestions, AdGuardEngine) {
+        ToolCatalog.create(this, conversations, artifacts, deviceGateway, userQuestions, AdGuardEngine, RecipeEngine) {
             deviceModePreference.value
         }
     }
@@ -171,6 +174,13 @@ class PrototypeApplication : Application() {
         applicationScope.launch {
             adGuardSettings.state.collectLatest { persisted ->
                 AdGuardEngine.applyPersisted(persisted.enabled, persisted.showToast, persisted.rules)
+            }
+        }
+        // 操作模板：内置模板由引擎自带，自定义模板从持久化灌入；引擎改动经 persister 回写。
+        RecipeEngine.persister = { custom -> recipeSettings.save(custom) }
+        applicationScope.launch {
+            recipeSettings.customRecipes.collectLatest { custom ->
+                RecipeEngine.applyPersisted(custom)
             }
         }
     }
