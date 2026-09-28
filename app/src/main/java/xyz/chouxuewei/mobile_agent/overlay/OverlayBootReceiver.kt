@@ -13,7 +13,11 @@ import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
 /** 只恢复用户明确开启的常驻入口；开机后不恢复或重放上一次未完成的任务。 */
 class OverlayBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (intent.action !in setOf(
+                Intent.ACTION_BOOT_COMPLETED,
+                Intent.ACTION_TIME_CHANGED,
+                Intent.ACTION_TIMEZONE_CHANGED,
+            )) return
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
@@ -21,6 +25,8 @@ class OverlayBootReceiver : BroadcastReceiver() {
                 if (app.appearance.persistentOverlay.first()) {
                     DeviceOperationOverlayService.start(context)
                 }
+                // 开机后 AlarmManager 里的任务全丢，按持久化定义重排所有触发器。
+                app.triggers.rescheduleAll()
             } finally {
                 pendingResult.finish()
             }

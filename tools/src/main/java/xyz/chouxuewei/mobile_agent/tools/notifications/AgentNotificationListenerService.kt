@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.tools.notifications
 
+import xyz.chouxuewei.mobile_agent.core.TriggerNotificationEvent
 import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.app.Notification
 import android.service.notification.NotificationListenerService
@@ -26,6 +27,10 @@ class AgentNotificationListenerService : NotificationListenerService() {
         var connected: AgentNotificationListenerService? = null
             private set
 
+        /** 应用层注入的触发器事件入口；未注入时通知事件直接丢弃，服务照常工作。 */
+        @Volatile
+        var postedListener: ((TriggerNotificationEvent) -> Unit)? = null
+
         private val SENSITIVE_PATTERN = Regex(
             "验证码|校验码|动态码|安全码|一次性密码|otp|verification\\s*code|security\\s*code|one[- ]time\\s*(password|code)",
             RegexOption.IGNORE_CASE,
@@ -38,6 +43,29 @@ class AgentNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         if (connected === this) connected = null
+    }
+
+    /**
+     * 触发器事件源：敏感通知、进行中通知直接跳过；字段复用 snapshot() 的截断规则。
+     * 引擎不可用时静默忽略，绝不让监听服务崩溃——通知访问权限崩溃会被系统断开。
+     */
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        val item = sbn ?: return
+        val listener = postedListener ?: return
+        if (item.isSensitive()) return
+        runCatching {
+            val snap = snapshot(item)
+            listener(
+                TriggerNotificationEvent(
+                    packageName = snap.packageName,
+                    appName = snap.appName,
+                    title = snap.title.orEmpty(),
+                    text = snap.text.orEmpty(),
+                    postTime = snap.postTime,
+                    ongoing = snap.ongoing,
+                )
+            )
+        }
     }
 
     override fun onDestroy() {

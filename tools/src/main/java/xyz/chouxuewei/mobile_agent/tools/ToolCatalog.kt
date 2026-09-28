@@ -8,6 +8,7 @@ import xyz.chouxuewei.mobile_agent.core.DeviceGateway
 import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
 import xyz.chouxuewei.mobile_agent.core.RecipeController
 import xyz.chouxuewei.mobile_agent.core.ToolRegistry
+import xyz.chouxuewei.mobile_agent.core.TriggerController
 import xyz.chouxuewei.mobile_agent.core.UserQuestionBroker
 
 object ToolCatalog {
@@ -19,9 +20,11 @@ object ToolCatalog {
         questions: UserQuestionBroker,
         adGuard: AdGuardController,
         recipes: RecipeController,
+        triggers: TriggerController,
         deviceModePreference: () -> DeviceModePreference = { DeviceModePreference.AUTO },
-    ): ToolRegistry = ToolRegistry(
-        listOf(
+    ): ToolRegistry {
+        var registry: ToolRegistry? = null
+        val providers = listOf(
             HistoryToolProvider(conversations),
             FileToolProvider(context, conversations, artifacts),
             ImageRenderToolProvider(context, artifacts),
@@ -34,6 +37,11 @@ object ToolCatalog {
             RecipeToolProvider(recipes),
             PersonalDataToolProvider(context),
             InteractionToolProvider(questions),
-        ),
-    )
+            TriggerToolProvider(triggers) {
+                registry?.definitions?.mapTo(linkedSetOf()) { it.id }.orEmpty()
+            },
+        )
+        registry = ToolRegistry(providers)
+        return registry
+    }
 }

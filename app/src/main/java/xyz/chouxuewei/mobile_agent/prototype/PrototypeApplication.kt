@@ -37,10 +37,12 @@ import xyz.chouxuewei.mobile_agent.data.SpeechSettingsRepository
 import xyz.chouxuewei.mobile_agent.data.AgentExecutionSettingsRepository
 import xyz.chouxuewei.mobile_agent.data.AdGuardRepository
 import xyz.chouxuewei.mobile_agent.data.RecipeRepository
+import xyz.chouxuewei.mobile_agent.data.TriggerRepository
 import xyz.chouxuewei.mobile_agent.device.adguard.AdGuardEngine
 import xyz.chouxuewei.mobile_agent.device.recipe.RecipeEngine
 import xyz.chouxuewei.mobile_agent.model.SpeechTranscriptionGateway
 import xyz.chouxuewei.mobile_agent.model.IflytekSpeechTranscriptionGateway
+import xyz.chouxuewei.mobile_agent.tools.notifications.AgentNotificationListenerService
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputController
 import xyz.chouxuewei.mobile_agent.voice.VoiceInputDestination
 
@@ -60,6 +62,7 @@ class PrototypeApplication : Application() {
     val agentExecutionSettings by lazy { AgentExecutionSettingsRepository(this) }
     val adGuardSettings by lazy { AdGuardRepository(this) }
     val recipeSettings by lazy { RecipeRepository(this) }
+    val triggerSettings by lazy { TriggerRepository(this) }
     val speechSettings by lazy { SpeechSettingsRepository(this) }
     val toolPermissions by lazy { ToolPermissionRepository(this) }
     val userQuestions by lazy { UserQuestionBroker() }
@@ -70,9 +73,18 @@ class PrototypeApplication : Application() {
         )
     }
     val toolRegistry by lazy {
-        ToolCatalog.create(this, conversations, artifacts, deviceGateway, userQuestions, AdGuardEngine, RecipeEngine) {
+        ToolCatalog.create(this, conversations, artifacts, deviceGateway, userQuestions, AdGuardEngine, RecipeEngine, triggers) {
             deviceModePreference.value
         }
+    }
+    val triggers: xyz.chouxuewei.mobile_agent.triggers.TriggerManager by lazy {
+        xyz.chouxuewei.mobile_agent.triggers.TriggerManager(
+            context = this,
+            repository = triggerSettings,
+            runtime = { chatRuntime },
+            conversations = conversations,
+            scope = applicationScope,
+        )
     }
     val chatWorkspace by lazy { xyz.chouxuewei.mobile_agent.chat.ChatWorkspace(this) }
     val chatRuntime by lazy {
@@ -182,6 +194,11 @@ class PrototypeApplication : Application() {
             recipeSettings.customRecipes.collectLatest { custom ->
                 RecipeEngine.applyPersisted(custom)
             }
+        }
+        // 触发器：持久化定义驱动排期与事件匹配，通知监听器在线时把事件喂给引擎。
+        triggers.start()
+        AgentNotificationListenerService.postedListener = { event ->
+            applicationScope.launch(Dispatchers.IO) { triggers.onNotification(event) }
         }
     }
 }

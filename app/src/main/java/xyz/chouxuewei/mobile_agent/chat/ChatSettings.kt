@@ -92,6 +92,9 @@ import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
 import xyz.chouxuewei.mobile_agent.core.MAX_SINGLE_RUN_MAX_STEPS
 import xyz.chouxuewei.mobile_agent.core.MIN_SINGLE_RUN_MAX_STEPS
 import xyz.chouxuewei.mobile_agent.core.ThemePreference
+import xyz.chouxuewei.mobile_agent.core.TriggerEngine
+import xyz.chouxuewei.mobile_agent.core.TriggerKind
+import xyz.chouxuewei.mobile_agent.core.TriggerSpec
 import xyz.chouxuewei.mobile_agent.core.userFacingMessage
 import xyz.chouxuewei.mobile_agent.core.localizedText
 import xyz.chouxuewei.mobile_agent.data.DEFAULT_REASONING_EFFORTS
@@ -267,6 +270,7 @@ fun ChatSettings(
     val safetyGateEnabled by app.agentExecutionSettings.safetyGateEnabled.collectAsState(initial = true)
     val deviceMode by app.agentExecutionSettings.deviceModePreference.collectAsState(initial = DeviceModePreference.AUTO)
     val adGuardState by app.adGuardSettings.state.collectAsState(initial = null)
+    val triggerSpecs by app.triggers.specs.collectAsState()
     val personalizedInstructions by app.personalization.instructions.collectAsState(initial = "")
     val modelUsage by app.modelUsage.usage.collectAsState(initial = emptyList())
     val speechSettings by app.speechSettings.settings.collectAsState(initial = SpeechSettings())
@@ -606,6 +610,24 @@ fun ChatSettings(
                     adGuardEnabled = adGuardState?.enabled ?: false,
                     adGuardRuleCount = adGuardState?.rules?.size ?: 0,
                     adGuardConnected = AdGuardEngine.accessibilityConnected(),
+                    triggerSpecs = triggerSpecs,
+                    onTriggerToggle = { id, enabled ->
+                        scope.launch {
+                            runCatching { app.triggers.setEnabled(id, enabled) }
+                                .onFailure {
+                                    feedback = SettingsNotice(localizedText("任务状态未保存，请重试", "Task state was not saved. Please try again."), false)
+                                }
+                        }
+                    },
+                    onTriggerDelete = { id ->
+                        scope.launch {
+                            runCatching { app.triggers.remove(id) }
+                                .onSuccess { feedback = SettingsNotice(localizedText("定时任务已删除", "Scheduled task deleted"), true) }
+                                .onFailure {
+                                    feedback = SettingsNotice(localizedText("任务未删除，请重试", "The task was not deleted. Please try again."), false)
+                                }
+                        }
+                    },
                     onSafetyGate = { enabled ->
                         scope.launch {
                             runCatching { app.agentExecutionSettings.setSafetyGateEnabled(enabled) }
@@ -1123,6 +1145,9 @@ private fun GeneralSettings(
     adGuardEnabled: Boolean,
     adGuardRuleCount: Int,
     adGuardConnected: Boolean,
+    triggerSpecs: List<TriggerSpec>,
+    onTriggerToggle: (String, Boolean) -> Unit,
+    onTriggerDelete: (String) -> Unit,
     rootAccess: RootAccessState?,
     rootChanging: Boolean,
     overlayGranted: Boolean,
@@ -1191,6 +1216,7 @@ private fun GeneralSettings(
         )
         SafetyGateRow(safetyGate, onSafetyGate)
         AdGuardRow(adGuardEnabled, adGuardRuleCount, adGuardConnected, onAdGuardEnabled)
+        TriggersSection(triggerSpecs, onTriggerToggle, onTriggerDelete)
         DeviceModeRow(deviceMode, onDeviceMode)
         DetailedLoggingRow(detailedLogging, onDetailedLogging)
         BackgroundInteractionRow(
@@ -1439,6 +1465,74 @@ private fun AdGuardRow(
             )
         }
         Switch(checked = enabled, onCheckedChange = onEnabled)
+    }
+}
+
+@Composable
+private fun TriggersSection(
+    specs: List<TriggerSpec>,
+    onToggle: (String, Boolean) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    val engine = remember { TriggerEngine() }
+    val timeFormat = remember { java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()) }
+    Column(Modifier.fillMaxWidth()) {
+        Text(localizedText("定时任务", "Scheduled tasks"), style = MaterialTheme.typography.titleSmall)
+        Text(
+            localizedText(
+                "对 Agent 说「每天早上提醒我日程」即可创建；任务在授权工具范围内自动执行，结果以通知交付。省电策略可能延迟触发。",
+                "Tell the agent things like \"remind me of my schedule every morning\" to create one; tasks run within their authorized tool scope and report via notifications. Battery savers may delay firing.",
+            ),
+            Modifier.padding(top = 2.dp, bottom = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.secondary,
+        )
+        if (specs.isEmpty()) {
+            Text(
+                localizedText("还没有定时任务", "No scheduled tasks yet"),
+                Modifier.padding(vertical = 6.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
+        }
+        specs.forEach { spec ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
+                ) {
+                    Text(spec.name, style = MaterialTheme.typography.bodyMedium)
+                    val kindLabel = when (spec.kind) {
+                        TriggerKind.SCHEDULE -> localizedText("定时", "schedule")
+                        TriggerKind.NOTIFICATION -> localizedText("通知", "notification")
+                        TriggerKind.INTERVAL -> localizedText("每 ${spec.intervalMinutes} 分钟", "every ${spec.intervalMinutes}m")
+                    }
+                    val next = engine.nextFireAt(spec)?.let { timeFormat.format(java.util.Date(it)) }
+                    Text(
+                        buildString {
+                            append(kindLabel)
+                            if (next != null) append(localizedText(" · 下次 $next", " · next $next"))
+                            spec.lastStatus?.let { append(localizedText(" · 上次：", " · last: ")).append(it.take(30)) }
+                            append(localizedText(" · 工具 ${spec.toolScope.size} 项", " · ${spec.toolScope.size} tools"))
+                        },
+                        Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.secondary,
+                    )
+                }
+                IconButton(onClick = { onDelete(spec.id) }) {
+                    ChatIcon(R.drawable.lucide_x, localizedText("删除任务", "Delete task"), Modifier.size(18.dp))
+                }
+                Switch(checked = spec.enabled, onCheckedChange = { onToggle(spec.id, it) })
+            }
+        }
     }
 }
 
