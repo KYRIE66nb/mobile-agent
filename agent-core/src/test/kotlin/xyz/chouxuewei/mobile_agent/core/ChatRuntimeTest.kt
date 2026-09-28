@@ -10,12 +10,17 @@ class ChatRuntimeTest {
         val memory=MemoryConversationStore()
         val finishing=CompletableDeferred<Unit>(); val release=CompletableDeferred<Unit>()
         val store=object : ConversationStore by memory {
-            override suspend fun finishRun(run: Run,text: String,status: RunStatus,error: String?) {
+            // drain 调的是完整签名；只覆写短签名会被 by memory 委托绕过、握手信号永远不来。
+            override suspend fun finishRun(
+                run: Run,text: String,assistantSteps: List<AssistantStep>,
+                reasoningDurationMillis: Long?,status: RunStatus,error: String?,
+            ) {
                 if(status==RunStatus.CANCELLED) { finishing.complete(Unit); release.await() }
-                memory.finishRun(run,text,status,error)
+                memory.finishRun(run,text,assistantSteps,reasoningDurationMillis,status,error)
             }
         }
-        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined)
+        // Default 而非 Unconfined：Unconfined 让 drain 在测试线程重入恢复，握手Deferred 时序失控成死锁。
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
         val started=CompletableDeferred<Unit>(); var calls=0
         val gateway=ChatModelGateway { flow {
             calls++; if(calls==1) { started.complete(Unit); awaitCancellation() }
@@ -23,17 +28,18 @@ class ChatRuntimeTest {
         } }
         val runtime=ChatRuntime(store,{ _ -> ChatConnection(gateway,ContextPolicy(8192,1024),"test") },scope)
         try {
-            runtime.send("c","开始",emptyList()); started.await(); runtime.stop("c"); finishing.await()
+            runtime.send("c","开始",emptyList()); withTimeout(5000) { started.await() }; runtime.stop("c"); withTimeout(5000) { finishing.await() }
             runtime.send("c","停止之后补充",emptyList())
             assertEquals(1,memory.runs.size)
             release.complete(Unit)
-            withTimeout(3000) { while(runtime.active.value.isNotEmpty()) yield() }
+            // active 清空早于 beginRun 落库，直接等第二条 run 完成。
+            withTimeout(5000) { while(memory.runs.size<2 || memory.runs.last().status==RunStatus.GENERATING) yield() }
             assertEquals(2,memory.runs.size); assertEquals(RunStatus.SUCCEEDED,memory.runs.last().status)
         } finally { release.complete(Unit); scope.cancel() }
     }
     @Test fun stopKeepsPartialAndProcessesQueuedSupplementWithCorrectOrder()=runBlocking {
         val store=MemoryConversationStore()
-        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Unconfined)
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
         val started=CompletableDeferred<Unit>(); var calls=0
         val requests=mutableListOf<ChatRequest>()
         val gateway=ChatModelGateway { request -> flow {
@@ -43,10 +49,11 @@ class ChatRuntimeTest {
         } }
         val runtime=ChatRuntime(store,{ _ -> ChatConnection(gateway,ContextPolicy(16000,1024),"test") },scope)
         try {
-            runtime.send("c","第一条",emptyList()); started.await()
+            runtime.send("c","第一条",emptyList()); withTimeout(5000) { started.await() }
             runtime.send("c","补充",emptyList()); assertTrue(store.history.any { it.status==MessageStatus.QUEUED })
             runtime.stop("c")
-            withTimeout(3000) { while(runtime.active.value.isNotEmpty()) yield() }
+            // 仅等 active 清空有竞态：下一轮可能还没 startLocked。等运行落库完成再断言。
+            withTimeout(5000) { while(store.runs.size<2 || store.runs.last().status==RunStatus.GENERATING) yield() }
             assertEquals(listOf("第一条","部分中文","补充","收到补充"),store.history.map { it.text })
             assertEquals(MessageStatus.CANCELLED,store.history[1].status)
             assertTrue(requests.last().messages.any { it.content=="部分中文" })
