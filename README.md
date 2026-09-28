@@ -58,6 +58,8 @@ Timeouts or verdict failures degrade to manual confirmation — **never silently
 | **Main screen only** | Always runs in the foreground — saves rootless devices a doomed virtual-display attempt |
 | **Background only** | Uses the virtual display or fails — **never silently touches your main screen** |
 
+**Shizuku fallback channel**: on non-rooted devices with Shizuku installed and granted, `system_shell` runs allow-listed management commands (am/pm/dumpsys/settings/input/content…; pipes and chaining rejected) as shell(uid 2000) — query app info, clear caches, inject key events without taking over your screen.
+
 ### System cleanup
 
 Say "clean up my phone" or "free some memory" — three paths chosen automatically by permission level:
@@ -99,8 +101,8 @@ Recipes run on the **main display in the foreground** (they drive the target app
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
-- **40+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing), ad-guard rule management, recipe execution/saving;
-- **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable.
+- **50+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, document read/write (PDF/Word/Excel extract and generate), webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing / **restricted shell** over Root or Shizuku), ad-guard rule management, recipe execution/saving, contacts/calendar queries (runtime-permission gated);
+- **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable; read-only tool calls in one round **run in parallel** (writes stay sequential), and screen observations are compactly serialized with precomputed node centers to cut per-round token cost.
 
 ## Architecture
 
@@ -150,8 +152,8 @@ Settings → Models → New profile:
 - [x] Recipes for high-frequency app flows (deterministic steps, parameterized, model takes over at breakpoints)
 - [ ] More built-in recipes (Alipay, Meituan — version-adapted flows)
 - [ ] Triggers: notification / location / scheduled tasks
-- [ ] Non-root degraded control via Shizuku foreground operations
-- [ ] PDF / Word / Excel reading and generation
+- [x] Non-root degraded control via Shizuku shell channel (allow-listed commands, user-granted)
+- [x] PDF / Word / Excel reading and generation (fully local, no network)
 - [ ] Pluggable standalone decision-model backend (Jev-like)
 
 ## Permissions and data boundaries

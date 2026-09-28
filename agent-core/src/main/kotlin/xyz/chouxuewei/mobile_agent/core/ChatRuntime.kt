@@ -284,9 +284,25 @@ class ChatRuntime(
                     step.toolCallIds += requestedRecords.map { it.second }
                     store.updateReply(activeRun, output.toString(), stepsSnapshot())
                     workingTurns += ChatTurn("assistant", step.text.toString(), requestedCalls)
+                    // 同一轮全是只读工具时并行执行（如同时读多个文件/抓多个网页）；
+                    // 任何写操作保持顺序执行，保证动作之间的确定性。
+                    val allReadOnly = requestedRecords.all { (requested, _) ->
+                        definitions.firstOrNull { it.id == requested.toolId }?.sideEffect == ToolSideEffect.READ
+                    }
+                    val results = if (allReadOnly && requestedRecords.size > 1) {
+                        coroutineScope {
+                            requestedRecords.map { (requested, recordId) ->
+                                async { executeToolCall(activeRun, trigger.text, requested, definitions, recordId, activeGate) }
+                            }.awaitAll()
+                        }
+                    } else {
+                        requestedRecords.map { (requested, recordId) ->
+                            executeToolCall(activeRun, trigger.text, requested, definitions, recordId, activeGate)
+                        }
+                    }
                     val toolImages = mutableListOf<ChatImage>()
-                    for ((requested, recordId) in requestedRecords) {
-                        val result = executeToolCall(activeRun, trigger.text, requested, definitions, recordId, activeGate)
+                    requestedRecords.forEachIndexed { index, (requested, recordId) ->
+                        val result = results[index]
                         workingTurns += ChatTurn(
                             role = "tool",
                             content = result.content,

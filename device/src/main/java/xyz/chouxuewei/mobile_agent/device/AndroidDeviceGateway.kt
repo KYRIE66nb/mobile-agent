@@ -39,6 +39,7 @@ import xyz.chouxuewei.mobile_agent.core.NodeActionKind
 import xyz.chouxuewei.mobile_agent.core.NodeSnapshot
 import xyz.chouxuewei.mobile_agent.core.Observation
 import xyz.chouxuewei.mobile_agent.core.Screenshot
+import xyz.chouxuewei.mobile_agent.core.ShellResult
 import xyz.chouxuewei.mobile_agent.core.Viewport
 import xyz.chouxuewei.mobile_agent.device.accessibility.AgentAccessibilityService
 import xyz.chouxuewei.mobile_agent.device.accessibility.AccessibilityScreenshotException
@@ -47,6 +48,7 @@ import xyz.chouxuewei.mobile_agent.device.accessibility.AccessibilityWindowTarge
 import xyz.chouxuewei.mobile_agent.device.capture.FrameSource
 import xyz.chouxuewei.mobile_agent.device.root.DisplayAdapter
 import xyz.chouxuewei.mobile_agent.device.root.RootBridge
+import xyz.chouxuewei.mobile_agent.device.root.ShizukuShell
 
 data class RootAccessState(
     val available: Boolean,
@@ -198,6 +200,21 @@ class AndroidDeviceGateway(
         } catch (error: Exception) {
             DeviceResult.Failure(error.message ?: localizedText("清理应用缓存失败", "Failed to clear the app cache."))
         }
+    }
+
+    override suspend fun shell(command: String): DeviceResult<ShellResult> {
+        // 白名单在调用方（system_shell 工具）强制执行；这里只决定走哪条特权通道。
+        if (rootAccessState().enabled) {
+            return try {
+                val result = withContext(Dispatchers.IO) { Shell.cmd(command).exec() }
+                DeviceResult.Success(
+                    ShellResult(result.code, result.out.joinToString("\n"), result.err.joinToString("\n")),
+                )
+            } catch (error: Exception) {
+                DeviceResult.Failure(error.message ?: localizedText("Root 命令执行失败", "Root command failed."))
+            }
+        }
+        return ShizukuShell.exec(command)
     }
 
     override suspend fun listApps(): DeviceResult<List<LaunchableApp>> {

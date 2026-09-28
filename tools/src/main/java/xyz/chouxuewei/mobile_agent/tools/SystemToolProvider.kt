@@ -105,6 +105,15 @@ class SystemToolProvider(context: Context, private val device: DeviceGateway? = 
             id,
             approvalDescription = localizedText("结束后台应用进程以释放内存。", "Stop background app processes to free memory."),
         ),
+        ToolDefinition(
+            "system_shell",
+            localizedText("执行受限 shell 命令", "Run a restricted shell command"),
+            localizedText("执行一条白名单内的 Android 管理命令，用于查询系统状态、读取应用信息或执行安全的管理动作。通道自动选择：已开 Root 走 Root，否则尝试 Shizuku（会弹出授权框由用户批准）。只允许 am、pm、dumpsys、settings、getprop、input、cmd、wm、content、appops、uiautomator、cat、ls、df、ps、free、top、id、logcat 开头的单条命令；禁止管道、重定向、命令拼接和 shell 元字符。需要遍历应用列表优先用 device_open 的 list_apps，而不是 pm list。不要用它绕过付费、验证码或系统授权确认。", "Run a single allow-listed Android management command to query system state, read app info, or perform safe management actions. Channel is chosen automatically: Root if enabled, otherwise Shizuku (the user approves in a Shizuku prompt). Only commands starting with am, pm, dumpsys, settings, getprop, input, cmd, wm, content, appops, uiautomator, cat, ls, df, ps, free, top, id, or logcat; pipes, redirects, chaining, and shell metacharacters are forbidden. Prefer device_open list_apps over pm list for enumerating apps. Do not use it to bypass payments, verification codes, or system permission confirmations."),
+            localizedJsonSchema("""{"type":"object","properties":{"command":{"type":"string","minLength":2,"maxLength":400,"description":localizedText("白名单内的单条命令，例如 dumpsys meminfo 或 pm path com.xxx", "One allow-listed command, e.g. dumpsys meminfo or pm path com.xxx")},"timeout_ms":{"type":"integer","minimum":1000,"maximum":60000,"default":15000}},"required":["command"],"additionalProperties":false}"""),
+            ToolSideEffect.DESTRUCTIVE,
+            id,
+            approvalDescription = localizedText("以 Root 或 Shizuku 身份执行一条受限 shell 命令。", "Run a restricted shell command as Root or Shizuku."),
+        ),
     )
 
     override suspend fun availability(): ToolAvailability = if (audio == null) {
@@ -125,6 +134,7 @@ class SystemToolProvider(context: Context, private val device: DeviceGateway? = 
             "system_storage_stats" -> storageStats(args)
             "system_clear_cache" -> clearCache(args)
             "system_free_memory" -> freeMemory(args)
+            "system_shell" -> shellCommand(args)
             else -> error(localizedText("系统工具不支持 ${call.toolId}", "System tools do not support ${call.toolId}"))
         }
     }
@@ -144,6 +154,8 @@ class SystemToolProvider(context: Context, private val device: DeviceGateway? = 
                 (args["package_name"]?.jsonPrimitive?.contentOrNull ?: localizedText("本应用", "this app"))
             "system_free_memory" -> localizedText("结束后台进程：", "Stop background processes: ") +
                 (args["package_name"]?.jsonPrimitive?.contentOrNull ?: localizedText("全部可启动应用", "all launchable apps"))
+            "system_shell" -> localizedText("执行受限命令：", "Run restricted command: ") +
+                (args["command"]?.jsonPrimitive?.contentOrNull?.take(160) ?: "")
             else -> null
         }
     }.getOrNull()
@@ -458,6 +470,49 @@ class SystemToolProvider(context: Context, private val device: DeviceGateway? = 
         Surface.ROTATION_180 -> 180
         Surface.ROTATION_270 -> 270
         else -> 0
+    }
+
+    /** 允许以 shell/root 身份执行的首词命令；其余一律拒绝。 */
+    private val shellWhitelist = setOf(
+        "am", "pm", "dumpsys", "settings", "getprop", "input", "cmd", "wm",
+        "content", "appops", "uiautomator", "cat", "ls", "df", "ps", "free",
+        "top", "id", "logcat",
+    )
+
+    /** 拒绝 shell 元字符：白名单针对单条命令，绝不允许拼接逃逸。 */
+    private val shellMetachars = Regex("[;|&<>`]|\n|\\$\\(|\\$\\{")
+
+    private suspend fun shellCommand(args: JsonObject): ToolResult {
+        val command = required(args, "command").trim()
+        val timeout = (args["timeout_ms"]?.jsonPrimitive?.longOrNull ?: 15_000L).coerceIn(1_000, 60_000)
+        require(!shellMetachars.containsMatchIn(command)) {
+            localizedText("命令包含不允许的 shell 元字符（; | & > < ` $()），只能执行单条白名单命令", "The command contains forbidden shell metacharacters (; | & > < ` $()); only a single allow-listed command is allowed.")
+        }
+        val firstToken = command.split(Regex("\\s+")).firstOrNull()?.substringBefore('/')
+            ?: error(localizedText("命令为空", "The command is empty."))
+        require(firstToken in shellWhitelist) {
+            localizedText("命令 $firstToken 不在白名单内", "Command $firstToken is not on the allow-list.")
+        }
+        val gateway = device
+            ?: error(localizedText("设备通道不可用", "The device channel is unavailable."))
+        return when (val result = gateway.shell(command)) {
+            is DeviceResult.Success -> {
+                val out = result.value
+                ToolResult(
+                    buildJsonObject {
+                        put("command", command)
+                        put("exit_code", out.exitCode)
+                        put("stdout", out.stdout.take(8_000))
+                        put("stderr", out.stderr.take(2_000))
+                        put("stdout_truncated", out.stdout.length > 8_000)
+                    }.toString(),
+                    localizedText("命令已执行，退出码 ${out.exitCode}", "Command finished with exit code ${out.exitCode}"),
+                )
+            }
+            is DeviceResult.Unsupported -> error(result.reason)
+            is DeviceResult.Failure -> error(result.reason)
+            is DeviceResult.SessionExpired -> error(result.reason)
+        }
     }
 
     private fun required(args: JsonObject, name: String) =

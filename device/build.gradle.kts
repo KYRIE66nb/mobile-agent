@@ -22,6 +22,7 @@ android {
 dependencies {
     api(project(":agent-core"))
     implementation(libs.libsu.service)
+    implementation(libs.shizuku.api)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)
     testImplementation(libs.junit)

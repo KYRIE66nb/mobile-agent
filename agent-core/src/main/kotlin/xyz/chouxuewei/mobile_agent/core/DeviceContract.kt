@@ -186,6 +186,13 @@ sealed interface ActionResult {
     data class Failure(val reason: String, val retryable: Boolean = false) : ActionResult
 }
 
+/** 受限 shell 调用的结果。 */
+data class ShellResult(
+    val exitCode: Int,
+    val stdout: String,
+    val stderr: String,
+)
+
 interface DeviceGateway {
     /** 只读取当前能力状态，不应在工具列表页面触发 Root 授权弹窗。 */
     suspend fun availability(): DeviceResult<Unit> = DeviceResult.Success(Unit)
@@ -205,4 +212,10 @@ interface DeviceGateway {
     /** 需要 Root 的维护操作：清空指定应用的缓存目录内容，返回释放的字节数。 */
     suspend fun clearPackageCache(packageName: String): DeviceResult<Long> =
         DeviceResult.Unsupported(localizedText("当前设备不支持清理应用缓存", "This device does not support clearing app caches."))
+    /**
+     * 通过 Root 或 Shizuku 执行一条白名单 shell 命令。
+     * 实现方负责通道选择与安全约束；调用方只能给出单条命令文本。
+     */
+    suspend fun shell(command: String): DeviceResult<ShellResult> =
+        DeviceResult.Unsupported(localizedText("当前设备不支持 shell 命令", "This device does not support shell commands."))
 }
