@@ -86,10 +86,20 @@ Per-rule cooldowns plus a global circuit breaker stop misconfigured loops; every
 
 [Interactive ad-guard loop](docs/assets/ad-guard.html) — open locally; supports zoom, path tracing, and dark mode.
 
+### Recipes
+
+High-frequency flows should not be re-explored by the model every time. Recipes compile a proven flow into a **deterministic step sequence** — executed without a single model call, fast and repeatable:
+
+- **Built-in templates**: `wechat_send_message` (open WeChat → search contact → type → send) works out of the box;
+- **Agent-solidified**: after the agent drives a UI flow once with generic tools, `recipe_save` stores it as a template — next time `recipe_run` replays it in seconds, parameterized with `{contact}`, `{message}` placeholders;
+- **Graceful degradation**: when a step times out or a node misses, the error carries the **failed step index** and the model continues from the breakpoint via `device_observe` / `device_action` instead of restarting.
+
+Recipes run on the **main display in the foreground** (they drive the target app's UI) and require the accessibility service.
+
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
-- **40+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing), ad-guard rule management;
+- **40+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing), ad-guard rule management, recipe execution/saving;
 - **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable.
 
 ## Architecture
@@ -102,7 +112,7 @@ Six pure-Kotlin modules, zero frameworks (no Hilt / Koin / MVVM scaffolding); th
 | `:agent-core` | `ChatRuntime` loop, tool contracts, `DecisionGate` |
 | `:model` | OpenAI-compatible gateway (OkHttp + SSE), probing |
 | `:device` | Accessibility service, ad-guard engine, Root/AIDL service, VirtualDisplay, input injection |
-| `:tools` | Device / file / network / notification / clipboard / system-maintenance / ad-guard tool providers |
+| `:tools` | Device / file / network / notification / clipboard / system-maintenance / ad-guard / recipe tool providers |
 | `:data` | Room persistence, DataStore settings, Keystore secret protection |
 
 Stack: Kotlin 2.0 + Jetpack Compose (Material3) + Room + DataStore + Coil + libsu. Gradle Kotlin DSL with version catalog. minSdk 24, targetSdk 36.
@@ -137,7 +147,8 @@ Settings → Models → New profile:
 - [x] Foreground / background virtual-display preference (with auto-fallback)
 - [x] System cleanup (storage stats / cache clearing / memory freeing; root direct-clear with no-root fallback)
 - [x] Ad guard (accessibility rule engine: splash skip / popup close / shake-ad interception, agent-programmable)
-- [ ] Reliable templates for high-frequency app flows (e.g. sending a WeChat message)
+- [x] Recipes for high-frequency app flows (deterministic steps, parameterized, model takes over at breakpoints)
+- [ ] More built-in recipes (Alipay, Meituan — version-adapted flows)
 - [ ] Triggers: notification / location / scheduled tasks
 - [ ] Non-root degraded control via Shizuku foreground operations
 - [ ] PDF / Word / Excel reading and generation

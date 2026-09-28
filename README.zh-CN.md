@@ -86,10 +86,20 @@
 
 [交互式守卫回路图](docs/assets/ad-guard.html)（下载后用浏览器打开，支持缩放 / 路径追踪 / 暗色模式）
 
+### 操作模板（Recipes）
+
+高频流程不该每次让模型重新探索界面——操作模板把验证过的流程固化为**确定性步骤序列**，执行全程不进模型，又快又稳：
+
+- **内置模板**：`wechat_send_message`（打开微信 → 搜索联系人 → 输入 → 发送）开箱即用；
+- **Agent 可固化**：它用通用界面操作走通一遍流程后，可以 `recipe_save` 把步骤存成模板——下次同任务直接 `recipe_run` 秒级复现，参数化（`{contact}`、`{message}` 占位符）；
+- **优雅降级**：某步超时或节点未命中时，错误携带**失败步骤序号**返回，模型从断点改用 `device_observe`/`device_action` 继续，不会卡死重来。
+
+模板在**主屏前台**执行（要操作目标 App 的界面），需要无障碍服务在线。
+
 ### 模型与工具
 
 - **OpenAI 兼容网关**：自建 OkHttp + SSE 流式解析，智谱 GLM / OpenAI / DeepSeek / 任意兼容端点即插即用，支持多配置切换与 `reasoning_effort` 透传；
-- **40+ 内置工具**：设备操作（observe/action/gesture/batch/wait_for）、文件读写、网页抓取、通知管理、剪贴板、应用启动、语音转写（OpenAI / 讯飞兼容）、系统维护（存储占用/缓存清理/内存释放）、广告守卫规则管理；
+- **40+ 内置工具**：设备操作（observe/action/gesture/batch/wait_for）、文件读写、网页抓取、通知管理、剪贴板、应用启动、语音转写（OpenAI / 讯飞兼容）、系统维护（存储占用/缓存清理/内存释放）、广告守卫规则管理、操作模板执行与保存；
 - **多轮 Agent 循环**：上下文压缩、步数上限、随时取消、工具调用全程落库可回放。
 
 ## 架构
@@ -102,7 +112,7 @@
 | `:agent-core` | `ChatRuntime` 循环、工具契约、`DecisionGate` 安全闸 |
 | `:model` | OpenAI 兼容网关（OkHttp + SSE）、探活 |
 | `:device` | 无障碍服务、广告守卫引擎、Root/AIDL 服务、VirtualDisplay、触控注入 |
-| `:tools` | 设备/文件/网络/通知/剪贴板/系统维护/广告守卫等工具实现 |
+| `:tools` | 设备/文件/网络/通知/剪贴板/系统维护/广告守卫/操作模板等工具实现 |
 | `:data` | Room 持久化、DataStore 设置、Keystore 密钥保护 |
 
 技术栈：Kotlin 2.0 + Jetpack Compose（Material3）+ Room + DataStore + Coil + libsu，Gradle Kotlin DSL 版本目录，minSdk 24 / targetSdk 36。
@@ -137,7 +147,8 @@ cd mobile-agent
 - [x] 前台 / 后台虚拟屏执行位置偏好（自动降级）
 - [x] 系统清理维护（存储查询 / 缓存清理 / 内存释放，Root 直清 + 无 Root 降级）
 - [x] 广告守卫（无障碍规则引擎：开屏跳过 / 弹窗关闭 / 摇一摇拦截，Agent 可编程）
-- [ ] 高频 App 操作模板（微信发消息等固化为可靠指令）
+- [x] 高频 App 操作模板（确定性步骤固化，参数化执行，失败断点由模型兜底）
+- [ ] 更多内置模板（支付宝、美团等高频场景的版本适配）
 - [ ] 触发器系统：通知 / 位置 / 定时任务
 - [ ] 非 Root 降级：Shizuku 前台操作
 - [ ] PDF / Word / Excel 文档读写

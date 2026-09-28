@@ -19,6 +19,9 @@ import xyz.chouxuewei.mobile_agent.core.AdGuardRule
 import xyz.chouxuewei.mobile_agent.core.AdGuardSnapshot
 import xyz.chouxuewei.mobile_agent.core.AgentLog
 import xyz.chouxuewei.mobile_agent.device.accessibility.AgentAccessibilityService
+import xyz.chouxuewei.mobile_agent.device.accessibility.clickableSelfOrAncestor
+import xyz.chouxuewei.mobile_agent.device.accessibility.collectVisibleNodes
+import xyz.chouxuewei.mobile_agent.device.accessibility.nodeMatchesAny
 
 /**
  * 广告守卫引擎：在无障碍事件流上做毫秒级确定性匹配，代替模型处理转瞬即逝的广告。
@@ -167,7 +170,7 @@ object AdGuardEngine : AdGuardController {
                 if (breakerOpen(now)) return
                 val nodes = mutableListOf<AccessibilityNodeInfo>()
                 try {
-                    collectVisible(root, nodes)
+                    collectVisibleNodes(root, nodes, MAX_NODES_PER_WINDOW)
                     if (nodes.isEmpty()) continue
                     val texts = nodes.mapNotNull { it.text?.toString() } +
                         nodes.mapNotNull { it.contentDescription?.toString() }
@@ -176,7 +179,7 @@ object AdGuardEngine : AdGuardController {
                         if (!cooldownReady(rule, now)) continue
                         if (rule.contextTexts.isNotEmpty() &&
                             !rule.contextTexts.all { ctx -> texts.any { it.contains(ctx, ignoreCase = true) } }) continue
-                        val hit = nodes.firstOrNull { node -> matchesAny(node, rule.matchTexts) }
+                        val hit = nodes.firstOrNull { node -> nodeMatchesAny(node, rule.matchTexts) }
                             ?.let { clickableSelfOrAncestor(it, nodes) } ?: continue
                         val signature = nodeSignature(hit)
                         if (signature != null && nodeSignatures[signature]?.let { now - it < NODE_DEDUP_MS } == true) continue
@@ -198,37 +201,6 @@ object AdGuardEngine : AdGuardController {
                 root.recycle()
             }
         }
-    }
-
-    private fun collectVisible(node: AccessibilityNodeInfo, into: MutableList<AccessibilityNodeInfo>) {
-        if (into.size >= MAX_NODES_PER_WINDOW) return
-        if (node.isVisibleToUser) into += node
-        for (index in 0 until node.childCount) {
-            if (into.size >= MAX_NODES_PER_WINDOW) return
-            node.getChild(index)?.let { collectVisible(it, into) }
-        }
-    }
-
-    private fun matchesAny(node: AccessibilityNodeInfo, matchTexts: List<String>): Boolean {
-        val text = node.text?.toString()
-        val desc = node.contentDescription?.toString()
-        return matchTexts.any { match ->
-            text?.contains(match, ignoreCase = true) == true || desc?.contains(match, ignoreCase = true) == true
-        }
-    }
-
-    /** 命中的文字节点常嵌在可点父级里，向上找最近的可点击祖先再点；中间节点交给统一回收列表。 */
-    private fun clickableSelfOrAncestor(
-        node: AccessibilityNodeInfo,
-        recyclable: MutableList<AccessibilityNodeInfo>,
-    ): AccessibilityNodeInfo? {
-        var current: AccessibilityNodeInfo? = node
-        repeat(4) {
-            if (current == null) return null
-            if (current.isClickable && current.isEnabled) return current
-            current = current.parent?.also { recyclable += it }
-        }
-        return if (current?.isClickable == true && current.isEnabled) current else null
     }
 
     private fun nodeSignature(node: AccessibilityNodeInfo): String? {
