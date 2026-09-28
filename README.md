@@ -79,6 +79,13 @@ Popups and shake ads flash for only a few seconds — far too fast for a model l
 
 Per-rule cooldowns plus a global circuit breaker stop misconfigured loops; every block surfaces a toast, and `adguard_status` replays recent blocks. Requires the accessibility service; toggled in settings, off by default.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/ad-guard.dark.png">
+  <img src="docs/assets/ad-guard.light.png" alt="Ad guard bypass loop" width="100%">
+</picture>
+
+[Interactive ad-guard loop](docs/assets/ad-guard.html) — open locally; supports zoom, path tracing, and dark mode.
+
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;

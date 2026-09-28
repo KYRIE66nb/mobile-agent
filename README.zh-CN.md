@@ -79,6 +79,13 @@
 
 每规则独立冷却 + 全局熔断（防误配规则循环误点），拦截成功弹 Toast 提示，`adguard_status` 可回放最近拦截记录。需要无障碍服务在线；设置页一键开关，默认关闭。
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/ad-guard.dark.png">
+  <img src="docs/assets/ad-guard.light.png" alt="广告守卫旁路回路" width="100%">
+</picture>
+
+[交互式守卫回路图](docs/assets/ad-guard.html)（下载后用浏览器打开，支持缩放 / 路径追踪 / 暗色模式）
+
 ### 模型与工具
 
 - **OpenAI 兼容网关**：自建 OkHttp + SSE 流式解析，智谱 GLM / OpenAI / DeepSeek / 任意兼容端点即插即用，支持多配置切换与 `reasoning_effort` 透传；
