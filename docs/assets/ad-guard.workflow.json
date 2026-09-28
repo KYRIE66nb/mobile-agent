@@ -1,0 +1,71 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "广告守卫 · 旁路拦截回路",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/assets/ad-guard.html"
+  },
+  "lanes": [
+    { "id": "sys", "label": "Android 界面" },
+    { "id": "guard", "label": "守卫引擎（无障碍事件流，不进模型）" },
+    { "id": "agent", "label": "Agent 配置通道" }
+  ],
+  "phases": [
+    { "id": "sense", "label": "感知", "fromCol": 0, "toCol": 1 },
+    { "id": "decide", "label": "毫秒级匹配", "fromCol": 2, "toCol": 2, "variant": "emphasis" },
+    { "id": "block", "label": "拦截与回放", "fromCol": 3, "toCol": 4, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "program", "label": "Agent 可编程规则", "lane": "agent", "fromCol": 0, "toCol": 2, "variant": "dashed" }
+  ],
+  "mainPath": ["events", "intake", "match", "action", "record"],
+  "nodes": [
+    { "id": "events", "lane": "sys", "col": 0, "type": "external", "label": "广告事件", "sublabel": "开屏 / 弹窗 / 摇一摇跳转", "width": 132 },
+    { "id": "pass", "lane": "sys", "col": 3, "type": "external", "label": "正常界面", "sublabel": "未命中规则 · 不干预", "width": 132 },
+    { "id": "intake", "lane": "guard", "col": 1, "type": "backend", "label": "事件入口", "sublabel": "AdGuardEngine · 300ms 节流", "width": 138 },
+    { "id": "match", "lane": "guard", "col": 2, "type": "security", "label": "规则匹配", "sublabel": "文本命中 / 前台离守", "tag": "冷却 + 熔断", "width": 138 },
+    { "id": "action", "lane": "guard", "col": 3, "type": "backend", "label": "确定性动作", "sublabel": "点击可点祖先 · 全局返回", "width": 138 },
+    { "id": "record", "lane": "guard", "col": 4, "type": "messagebus", "label": "拦截完成", "sublabel": "Toast + 事件回放", "width": 132 },
+    { "id": "ask", "lane": "agent", "col": 0, "type": "external", "label": "用户描述", "sublabel": "“XX 一摇就跳广告”", "width": 132 },
+    { "id": "tools", "lane": "agent", "col": 1, "type": "backend", "label": "Agent 工具", "sublabel": "adguard_add_rule / status", "width": 138 },
+    { "id": "rules", "lane": "agent", "col": 2, "type": "database", "label": "规则库", "sublabel": "DataStore · 内置默认规则", "width": 132 }
+  ],
+  "edges": [
+    { "id": "e-in", "from": "events", "to": "intake", "label": "无障碍事件流", "variant": "emphasis" },
+    { "id": "e-eval", "from": "intake", "to": "match", "label": "界面快照" },
+    { "id": "e-hit", "from": "match", "to": "action", "label": "命中规则", "variant": "emphasis" },
+    { "id": "e-pass", "from": "match", "to": "pass", "label": "未命中", "variant": "dashed" },
+    { "id": "e-done", "from": "action", "to": "record" },
+    { "id": "e-ask", "from": "ask", "to": "tools" },
+    { "id": "e-write", "from": "tools", "to": "rules", "label": "写入规则", "variant": "emphasis" },
+    { "id": "e-load", "from": "rules", "to": "match", "label": "热加载", "variant": "dashed", "role": "return" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "毫秒级确定性",
+      "items": [
+        "拦截在无障碍事件流上完成，不走模型推理",
+        "广告闪现几秒内被点掉，零 token 成本"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "防误伤",
+      "items": [
+        "每规则独立冷却 + 同节点 4 秒去重",
+        "全局熔断 12 次/分钟；桌面与本应用豁免"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Agent 可编程",
+      "items": [
+        "自然语言抱怨 → 确定性规则，写一次终身有效",
+        "auto_back 撤销摇一摇跳转，click_text 秒关弹窗"
+      ]
+    }
+  ]
+}
