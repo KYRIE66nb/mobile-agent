@@ -98,10 +98,21 @@ High-frequency flows should not be re-explored by the model every time. Recipes 
 
 Recipes run on the **main display in the foreground** (they drive the target app's UI) and require the accessibility service.
 
+### Scheduled tasks (Triggers)
+
+Hand "every morning" / "when a notification arrives" automations to triggers — they run **unattended** in the background and deliver results as local notifications:
+
+- **Three kinds**: schedule (one-shot / daily / weekdays / weekly), notification matching (package + title + text regexes, AND), and interval polling (≥15 min); `AlarmManager` RTC_WAKEUP scheduling with automatic rescheduling after boot;
+- **Scope is a hard boundary**: every task carries a `tool_scope` allowlist — the model inside a triggered run **only sees authorized tools** and out-of-scope calls are denied outright; the default scope is read-only (files, notification reads, calendar/contacts queries); external side effects (messaging, cleanup, device control) require explicit authorization at creation time;
+- **Unattended ≠ unconstrained**: in-scope tools run without approval dialogs (nobody would see them anyway); per-trigger cooldown, daily run caps, and a 3-strike circuit breaker auto-disable runaway tasks; the app's own notifications, ongoing notifications, and OTP/account-security notifications **never trigger**; notification bodies are injected as low-trust data, never as instructions;
+- **Isolated history**: each task runs in a dedicated `Trigger·name` conversation, separate from day-to-day chats and fully replayable;
+- **Usage**: tell the agent "read my schedule at 8 every morning" or "alert me when the boss messages me on WeChat" and it assembles the trigger via `trigger_save`; manage them under Settings → General → Scheduled tasks (enable, inspect scope, delete);
+- **Platform limits**: battery savers and OEM background policies may delay firing (no exact-alarm permission is requested); notification matching needs Notification Access granted.
+
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
-- **50+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, document tools (PDF/Word/Excel extract; docx/xlsx generate and surgical edit), webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing / **restricted shell** over Root or Shizuku), ad-guard rule management, recipe execution/saving, contacts/calendar queries (runtime-permission gated);
+- **50+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, document tools (PDF/Word/Excel extract; docx/xlsx generate and surgical edit), webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing / **restricted shell** over Root or Shizuku), ad-guard rule management, recipe execution/saving, scheduled-task management, contacts/calendar queries (runtime-permission gated);
 - **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable; read-only tool calls in one round **run in parallel** (writes stay sequential), and screen observations are compactly serialized with precomputed node centers to cut per-round token cost.
 
 ## Architecture
@@ -151,7 +162,7 @@ Settings → Models → New profile:
 - [x] Ad guard (accessibility rule engine: splash skip / popup close / shake-ad interception, agent-programmable)
 - [x] Recipes for high-frequency app flows (deterministic steps, parameterized, model takes over at breakpoints)
 - [ ] More built-in recipes (Alipay, Meituan — version-adapted flows)
-- [ ] Triggers: notification / location / scheduled tasks
+- [x] Trigger system: scheduled / notification-matched / interval tasks (scoped tools, unattended-safe)
 - [x] Non-root degraded control via Shizuku shell channel (allow-listed commands, user-granted)
 - [x] PDF / Word / Excel reading and generation (fully local, no network)
 - [x] Surgical editing of existing documents (docx paragraph-level / xlsx cell-level; images and styles preserved)

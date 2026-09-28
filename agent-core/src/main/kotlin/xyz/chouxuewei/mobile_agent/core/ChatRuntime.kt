@@ -73,6 +73,7 @@ class ChatRuntime(
     private val gate = Mutex()
     private val jobs = mutableMapOf<String, Job>()
     private val preferencesByTrigger = mutableMapOf<String, RequestPreferences>()
+    private val policiesByTrigger = mutableMapOf<String, RunPolicy>()
     private val mutableActive = MutableStateFlow<Set<String>>(emptySet())
     val active: StateFlow<Set<String>> = mutableActive
     private val mutableNotices = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -97,6 +98,7 @@ class ChatRuntime(
         attachments: List<AttachmentRef>,
         reasoningEffort: String? = null,
         modelProfileId: String? = null,
+        policy: RunPolicy? = null,
     ) {
         require(text.isNotBlank() || attachments.any(AttachmentRef::isImage)) {
             localizedText("请输入文字说明你想如何处理附件", "Describe how you want to handle the attachment.")
@@ -106,6 +108,7 @@ class ChatRuntime(
             val trigger = store.enqueue(id, text.trim(), attachments)
             // 队列中的消息绑定发送时的模型与思考强度，随后切换只影响新消息。
             preferencesByTrigger[trigger.id] = RequestPreferences(reasoningEffort, modelProfileId)
+            if (policy != null) policiesByTrigger[trigger.id] = policy
             // 被取消的协程仍可能正在落盘；等 finally 移除所有权后才可启动下一轮。
             if (id !in jobs) startLocked(id)
         }
@@ -148,7 +151,9 @@ class ChatRuntime(
         while (true) {
             currentCoroutineContext().ensureActive()
             val trigger = store.messages(id).firstOrNull { it.status == MessageStatus.QUEUED } ?: return
-            val preferences = gate.withLock { preferencesByTrigger.remove(trigger.id) }
+            val (preferences, runPolicy) = gate.withLock {
+                preferencesByTrigger.remove(trigger.id) to policiesByTrigger.remove(trigger.id)
+            }
             val reasoningEffort = preferences?.reasoningEffort
             var run: Run? = null
             val output = StringBuilder()
@@ -167,8 +172,11 @@ class ChatRuntime(
                 store.setRunModel(startedRun, c.model)
                 val activeRun = startedRun.copy(model = c.model)
                 run = activeRun
-                val definitions = enabledDefinitions()
-                val activeGate = safetyGate(c)
+                // 无人值守运行的 scope 先于工具表生效：模型只能看到被授权的工具。
+                val definitions = enabledDefinitions().let { defs ->
+                    runPolicy?.let { p -> defs.filter { it.id in p.allowedToolIds } } ?: defs
+                }
+                val activeGate = runPolicy?.gate ?: safetyGate(c)
                 // 每轮开始时只读取一次，避免用户在执行中修改设置导致当前任务的上限突然变化。
                 val maxSteps = requireValidSingleRunMaxSteps(maxStepsPerRun())
                 AgentLog.i("Runtime") {
@@ -292,12 +300,12 @@ class ChatRuntime(
                     val results = if (allReadOnly && requestedRecords.size > 1) {
                         coroutineScope {
                             requestedRecords.map { (requested, recordId) ->
-                                async { executeToolCall(activeRun, trigger.text, requested, definitions, recordId, activeGate) }
+                                async { executeToolCall(activeRun, trigger.text, requested, definitions, recordId, activeGate, runPolicy) }
                             }.awaitAll()
                         }
                     } else {
                         requestedRecords.map { (requested, recordId) ->
-                            executeToolCall(activeRun, trigger.text, requested, definitions, recordId, activeGate)
+                            executeToolCall(activeRun, trigger.text, requested, definitions, recordId, activeGate, runPolicy)
                         }
                     }
                     val toolImages = mutableListOf<ChatImage>()
@@ -410,6 +418,7 @@ class ChatRuntime(
         definitions: List<ToolDefinition>,
         recordId: String,
         activeGate: DecisionGate? = null,
+        runPolicy: RunPolicy? = null,
     ): ToolResult {
         val now = System.currentTimeMillis()
         var record = ToolCallRecord(
@@ -471,9 +480,26 @@ class ChatRuntime(
             }
         }
 
+        // 无人值守策略下没有审批界面：scope 内工具按预授权执行，闸仍要求确认的一律拒绝，
+        // 需要模式选择的取第一个可选项保证确定性。
+        val autoApprove = runPolicy?.autoApproveWithinScope == true
         val requiresPermissionApproval = definition.requiresPermissionApproval &&
-            access.permission == ToolPermissionMode.REQUEST_APPROVAL
+            access.permission == ToolPermissionMode.REQUEST_APPROVAL && !autoApprove
         if (requiresPermissionApproval || gateConfirmReason != null || definition.userChoices.isNotEmpty()) {
+            if (autoApprove) {
+                if (gateConfirmReason != null) {
+                    val message = localizedText("安全闸要求人工确认，该触发器无法执行此操作", "The safety gate requires manual confirmation; this trigger cannot perform the action.")
+                    record = record.copy(status = ToolCallStatus.DENIED, error = message,
+                        displaySummary = message, updatedAt = System.currentTimeMillis())
+                    store.updateToolCall(record)
+                    return ToolResult("{\"error\":\"$message\"}", message, true)
+                }
+                if (definition.userChoices.isNotEmpty()) {
+                    record = record.copy(argumentsJson = definition.userChoices.first().argumentsJson,
+                        updatedAt = System.currentTimeMillis())
+                    store.updateToolCall(record)
+                }
+            } else {
             record = record.copy(status = ToolCallStatus.WAITING_APPROVAL, updatedAt = System.currentTimeMillis())
             store.updateToolCall(record)
             val waiter = CompletableDeferred<ToolApprovalDecision>()
@@ -542,6 +568,7 @@ class ChatRuntime(
                     val errorContent = localizedText("永久授权保存失败", "Failed to save permanent permission")
                     return ToolResult("{\"error\":\"$errorContent\"}", message, true)
                 }
+            }
             }
         }
 
