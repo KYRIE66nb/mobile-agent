@@ -275,6 +275,8 @@ fun ChatSettings(
     val persistentOverlay by app.appearance.persistentOverlay.collectAsState(initial = false)
     val maxSteps by app.agentExecutionSettings.maxSteps.collectAsState(initial = DEFAULT_SINGLE_RUN_MAX_STEPS)
     val safetyGateEnabled by app.agentExecutionSettings.safetyGateEnabled.collectAsState(initial = true)
+    val autoFailover by app.agentExecutionSettings.autoModelFailover.collectAsState(initial = true)
+    val announceTasks by app.agentExecutionSettings.announceTaskResults.collectAsState(initial = false)
     val deviceMode by app.agentExecutionSettings.deviceModePreference.collectAsState(initial = DeviceModePreference.AUTO)
     val adGuardState by app.adGuardSettings.state.collectAsState(initial = null)
     val triggerSpecs by app.triggers.specs.collectAsState()
@@ -603,6 +605,28 @@ fun ChatSettings(
                             }
                         }
                     },
+                    onPrune = {
+                        scope.launch {
+                            cleaning = true
+                            feedback = null
+                            try {
+                                val result = app.pruneGeneratedArtifacts(30)
+                                feedback = SettingsNotice(
+                                    if (result.filesDeleted == 0) {
+                                        localizedText("没有 30 天前的产物", "No artifacts older than 30 days")
+                                    } else {
+                                        localizedText("已删除 ${result.filesDeleted} 个过期产物，释放 ${formatStorageBytes(result.bytesFreed)}", "Removed ${result.filesDeleted} expired artifacts, freed ${formatStorageBytes(result.bytesFreed)}")
+                                    }, true)
+                            } catch (failure: Exception) {
+                                feedback = SettingsNotice(
+                                    userFacingMessage(failure, localizedText("清理未完成，请重试", "Cleanup was not completed. Please try again.")),
+                                    false
+                                )
+                            } finally {
+                                cleaning = false
+                            }
+                        }
+                    },
                 )
 
                 "capabilities" -> CapabilitiesPage(
@@ -720,6 +744,24 @@ fun ChatSettings(
                             runCatching { app.agentExecutionSettings.setSafetyGateEnabled(enabled) }
                                 .onFailure {
                                     feedback = SettingsNotice(localizedText("安全闸设置未保存，请重试", "Safety gate setting was not saved. Please try again."), false)
+                                }
+                        }
+                    },
+                    autoFailover = autoFailover,
+                    announceTasks = announceTasks,
+                    onAutoFailover = { enabled ->
+                        scope.launch {
+                            runCatching { app.agentExecutionSettings.setAutoModelFailover(enabled) }
+                                .onFailure {
+                                    feedback = SettingsNotice(localizedText("故障切换设置未保存，请重试", "Failover setting was not saved. Please try again."), false)
+                                }
+                        }
+                    },
+                    onAnnounceTasks = { enabled ->
+                        scope.launch {
+                            runCatching { app.agentExecutionSettings.setAnnounceTaskResults(enabled) }
+                                .onFailure {
+                                    feedback = SettingsNotice(localizedText("语音播报设置未保存，请重试", "Voice announcement setting was not saved. Please try again."), false)
                                 }
                         }
                     },
@@ -1244,6 +1286,10 @@ private fun GeneralSettings(
     onDetailedLogging: (Boolean) -> Unit,
     onMaxSteps: (Int) -> Unit,
     onSafetyGate: (Boolean) -> Unit,
+    autoFailover: Boolean,
+    announceTasks: Boolean,
+    onAutoFailover: (Boolean) -> Unit,
+    onAnnounceTasks: (Boolean) -> Unit,
     onDeviceMode: (DeviceModePreference) -> Unit,
     onAdGuardEnabled: (Boolean) -> Unit,
     onRootEnabled: (Boolean) -> Unit,
@@ -1302,6 +1348,18 @@ private fun GeneralSettings(
             onFieldBoundsChanged = { maxStepsFieldBounds = it },
         )
         SafetyGateRow(safetyGate, onSafetyGate)
+        ToggleSettingRow(
+            title = localizedText("模型故障切换", "Model failover"),
+            caption = localizedText("主模型彻底失败时自动尝试其它已保存的配置；运行记录中会显示实际使用的模型", "When the primary model fails outright, retry with another saved profile; the run record shows which model answered"),
+            checked = autoFailover,
+            onCheckedChange = onAutoFailover,
+        )
+        ToggleSettingRow(
+            title = localizedText("任务完成语音播报", "Speak task results"),
+            caption = localizedText("定时任务执行完成后用系统语音朗读结果摘要", "Read the result summary aloud with system TTS when a scheduled task finishes"),
+            checked = announceTasks,
+            onCheckedChange = onAnnounceTasks,
+        )
         AdGuardRow(adGuardEnabled, adGuardRuleCount, adGuardConnected, onAdGuardEnabled)
         TriggersSection(triggerSpecs, onTriggerToggle, onTriggerDelete)
         DeviceModeRow(deviceMode, onDeviceMode)
@@ -1516,6 +1574,32 @@ private fun SafetyGateRow(enabled: Boolean, onEnabled: (Boolean) -> Unit) {
             )
         }
         Switch(checked = enabled, onCheckedChange = onEnabled)
+    }
+}
+
+@Composable
+private fun ToggleSettingRow(title: String, caption: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val colors = LocalChatColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                caption,
+                Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -2358,6 +2442,7 @@ private fun DataSettings(
     cleaning: Boolean,
     canClean: Boolean,
     onClean: () -> Unit,
+    onPrune: () -> Unit,
 ) {
     val colors = LocalChatColors.current
     val configuredIds = models.mapTo(mutableSetOf(), ModelProfile::id)
@@ -2420,6 +2505,23 @@ private fun DataSettings(
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.tertiary,
                 )
+            }
+        }
+
+        Text(localizedText("产物保留", "Artifact retention"), style = MaterialTheme.typography.titleSmall)
+        SettingsCard {
+            Text(
+                localizedText("AI 生成的产物文件会登记在对话中并长期保留；可删除 30 天前的产物，对话里的对应文件卡片会显示为已失效。", "AI-generated artifacts stay registered in conversations indefinitely; you can remove artifacts older than 30 days — their file cards will then show as unavailable."),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
+            Button(
+                onClick = onPrune,
+                enabled = canClean && !cleaning,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(15.dp),
+            ) {
+                Text(localizedText("清理 30 天前产物", "Remove artifacts older than 30 days"))
             }
         }
 

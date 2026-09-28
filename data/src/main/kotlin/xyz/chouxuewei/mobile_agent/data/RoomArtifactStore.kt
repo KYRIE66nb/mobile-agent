@@ -72,6 +72,21 @@ class RoomArtifactStore internal constructor(
         StorageCleanupResult(filesDeleted, bytesFreed)
     }
 
+    override suspend fun pruneArtifacts(cutoffEpochMs: Long): StorageCleanupResult {
+        var filesDeleted = 0
+        var bytesFreed = 0L
+        dao.allAvailable()
+            .filter { it.createdAt < cutoffEpochMs }
+            .forEach { entity ->
+                val size = entity.sizeBytes.coerceAtLeast(0L)
+                if (runCatching { deleteArtifact(entity.id) }.getOrDefault(false)) {
+                    filesDeleted++
+                    bytesFreed += size
+                }
+            }
+        return StorageCleanupResult(filesDeleted, bytesFreed)
+    }
+
     private fun isInsideGeneratedRoot(file: File): Boolean {
         val canonical = file.canonicalFile
         return canonical != generatedRoot && canonical.path.startsWith(generatedRoot.path + File.separator)

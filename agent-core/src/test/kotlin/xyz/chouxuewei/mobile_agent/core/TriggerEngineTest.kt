@@ -107,6 +107,25 @@ class TriggerEngineTest {
         assertNotNull(engine.canFire(spec))
     }
 
+    @Test fun `persisted daily count survives restart`() {
+        // 冷启动时内存计数为空：spec 里持久化的当日计数必须继续参与日熔断。
+        val freshEngine = TriggerEngine(now = { nowMs })
+        val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date(nowMs)).toInt()
+        val spec = scheduleSpec().copy(maxRunsPerDay = 2, cooldownMinutes = 0, dailyFireDate = today, dailyFireCount = 2)
+        assertNotNull(freshEngine.canFire(spec))
+        assertEquals(2, freshEngine.firedToday(spec))
+        // 持久化日期不是今天（跨天）时归零放行。
+        val yesterday = spec.copy(dailyFireDate = today - 1)
+        assertNull(freshEngine.canFire(yesterday))
+    }
+
+    @Test fun `memory count wins over stale persisted count`() {
+        val spec = scheduleSpec().copy(maxRunsPerDay = 3, cooldownMinutes = 0)
+        engine.onFired(spec); engine.onFired(spec)
+        // 内存计数领先于尚未合并写回的 spec 计数。
+        assertEquals(2, engine.firedToday(spec.copy(dailyFireCount = 1, dailyFireDate = 0)))
+    }
+
     // ---- 通知匹配 ----
 
     @Test fun `notification match uses AND semantics`() {

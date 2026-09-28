@@ -297,6 +297,17 @@ class ModelSettingsRepository(
         )
     }
 
+    /** 故障切换的备用配置：凭据完整的其它 profile 中任选其一；没有可解析的备用时返回 null。 */
+    suspend fun backupConfiguration(excludeProfileId: String?): ResolvedModelConfiguration? {
+        val values = dataStore.data.first()
+        val backup = storedProfiles(values).firstOrNull {
+            it.id != excludeProfileId &&
+                !it.apiKeyCiphertext.isNullOrBlank() && !it.apiKeyIv.isNullOrBlank() &&
+                it.baseUrl.isNotBlank() && it.model.isNotBlank()
+        } ?: return null
+        return runCatching { resolveChatConfiguration(backup.id) }.getOrNull()
+    }
+
     private fun settingsFrom(values: Preferences): ModelSettings {
         val stored = storedProfiles(values)
         val selectedId = selectedProfileId(values, stored)

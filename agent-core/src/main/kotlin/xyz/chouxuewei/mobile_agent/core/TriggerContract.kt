@@ -64,6 +64,9 @@ data class TriggerSpec(
     val lastRunAt: Long? = null,
     val lastStatus: String? = null,
     val consecutiveFailures: Int = 0,
+    /** yyyyMMdd 持久化的当日触发计数：进程重启后日熔断不被绕过。 */
+    val dailyFireDate: Int = 0,
+    val dailyFireCount: Int = 0,
 ) {
     init {
         require(id.isNotBlank() && id.length <= 64) { localizedText("触发器 ID 无效", "Invalid trigger ID.") }
@@ -181,7 +184,7 @@ class TriggerEngine(private val now: () -> Long = { System.currentTimeMillis() }
             now() - reference < spec.cooldownMinutes * 60_000L) {
             return localizedText("冷却中", "Cooling down")
         }
-        if (firedToday(spec.id) >= spec.maxRunsPerDay) {
+        if (firedToday(spec) >= spec.maxRunsPerDay) {
             return localizedText("今日触发次数已达上限", "Daily run limit reached")
         }
         return null
@@ -207,8 +210,16 @@ class TriggerEngine(private val now: () -> Long = { System.currentTimeMillis() }
         dailyCount[spec.id] = if (key == day) day to count + 1 else day to 1
     }
 
-    fun firedToday(id: String): Int =
-        dailyCount[id]?.takeIf { it.first == dayKey(now()) }?.second ?: 0
+    /** 内存计数与 spec 持久化计数取大者：进程重启后 spec 是冷启动期的唯一来源。 */
+    fun firedToday(spec: TriggerSpec): Int {
+        val today = dayKey(now())
+        val memory = dailyCount[spec.id]?.takeIf { it.first == today }?.second ?: 0
+        val persisted = if (spec.dailyFireDate == today) spec.dailyFireCount else 0
+        return maxOf(memory, persisted)
+    }
+
+    /** (yyyyMMdd, count) 内存态快照；执行层把它合并写回 spec。 */
+    fun dailySnapshot(id: String): Pair<Int, Int>? = dailyCount[id]
 
     /** 计算下一次触发时间；null 表示不再需要排期（一次性已过、通知型、停用）。 */
     fun nextFireAt(spec: TriggerSpec, fromMs: Long = now()): Long? {
