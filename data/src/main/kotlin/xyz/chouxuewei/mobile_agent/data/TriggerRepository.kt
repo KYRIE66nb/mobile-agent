@@ -76,6 +76,8 @@ class TriggerRepository(context: Context) {
                 spec.lastRunAt?.let { put("last_run_at", it) }
                 spec.lastStatus?.let { put("last_status", it) }
                 put("consecutive_failures", spec.consecutiveFailures)
+                put("daily_fire_date", spec.dailyFireDate)
+                put("daily_fire_count", spec.dailyFireCount)
             })
         }
     }.toString()
@@ -118,6 +120,8 @@ class TriggerRepository(context: Context) {
                     lastRunAt = obj["last_run_at"]?.jsonPrimitive?.longOrNull,
                     lastStatus = obj["last_status"]?.jsonPrimitive?.content,
                     consecutiveFailures = obj["consecutive_failures"]?.jsonPrimitive?.intOrNull ?: 0,
+                    dailyFireDate = obj["daily_fire_date"]?.jsonPrimitive?.intOrNull ?: 0,
+                    dailyFireCount = obj["daily_fire_count"]?.jsonPrimitive?.intOrNull ?: 0,
                 )
             }.getOrNull()
         }

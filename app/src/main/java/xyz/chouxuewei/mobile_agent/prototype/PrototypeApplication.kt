@@ -11,7 +11,9 @@ import kotlinx.coroutines.flow.stateIn
 import xyz.chouxuewei.mobile_agent.core.ChatConnection
 import xyz.chouxuewei.mobile_agent.core.ChatRuntime
 import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
+import xyz.chouxuewei.mobile_agent.core.FailoverGateway
 import xyz.chouxuewei.mobile_agent.core.LlmDecisionGate
+import xyz.chouxuewei.mobile_agent.core.RetryingGateway
 import xyz.chouxuewei.mobile_agent.data.AppearanceRepository
 import xyz.chouxuewei.mobile_agent.data.RoomConversationStore
 import xyz.chouxuewei.mobile_agent.data.RoomArtifactStore
@@ -77,6 +79,7 @@ class PrototypeApplication : Application() {
             deviceModePreference.value
         }
     }
+    val voiceAnnouncer by lazy { xyz.chouxuewei.mobile_agent.voice.VoiceAnnouncer(this) }
     val triggers: xyz.chouxuewei.mobile_agent.triggers.TriggerManager by lazy {
         xyz.chouxuewei.mobile_agent.triggers.TriggerManager(
             context = this,
@@ -84,6 +87,8 @@ class PrototypeApplication : Application() {
             runtime = { chatRuntime },
             conversations = conversations,
             scope = applicationScope,
+            announcer = voiceAnnouncer,
+            announceEnabled = { agentExecutionSettings.currentAnnounceTaskResults() },
         )
     }
     val chatWorkspace by lazy { xyz.chouxuewei.mobile_agent.chat.ChatWorkspace(this) }
@@ -92,8 +97,15 @@ class PrototypeApplication : Application() {
             store = conversations,
             connection = { modelProfileId ->
                 val resolved = modelSettings.resolveChatConfiguration(modelProfileId)
+                // 每个端点自带瞬时故障重试；开启故障切换且存在备用配置时外包一层主备切换。
+                val primary = RetryingGateway(OpenAiChatGateway(resolved.config))
+                val gateway = if (agentExecutionSettings.currentAutoModelFailover()) {
+                    modelSettings.backupConfiguration(resolved.profileId)?.let { backup ->
+                        FailoverGateway(primary, RetryingGateway(OpenAiChatGateway(backup.config)))
+                    } ?: primary
+                } else primary
                 ChatConnection(
-                    gateway = OpenAiChatGateway(resolved.config),
+                    gateway = gateway,
                     policy = resolved.policy,
                     model = resolved.config.model.orEmpty(),
                     modelProfileId = resolved.profileId,
@@ -156,6 +168,14 @@ class PrototypeApplication : Application() {
             localizedText("正在生成回复，请结束后再清理", "A response is being generated. Stop it before cleaning storage.")
         }
         return artifacts.cleanup() + attachments.cleanup()
+    }
+
+    /** 保留策略入口：删除早于指定天数的登记产物（文件与索引一起移除），聊天里的产物卡片随后显示为已失效。 */
+    suspend fun pruneGeneratedArtifacts(olderThanDays: Int = 30): StorageCleanupResult {
+        require(chatRuntime.active.value.isEmpty()) {
+            localizedText("正在生成回复，请结束后再清理", "A response is being generated. Stop it before cleaning storage.")
+        }
+        return artifacts.pruneArtifacts(System.currentTimeMillis() - olderThanDays * 86_400_000L)
     }
 
     override fun onCreate() {

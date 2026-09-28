@@ -36,6 +36,9 @@ class TriggerManager(
     private val runtime: () -> ChatRuntime,
     private val conversations: ConversationStore,
     private val scope: CoroutineScope,
+    /** 任务完成后的系统 TTS 播报；为 null 或开关关闭时保持安静。 */
+    private val announcer: xyz.chouxuewei.mobile_agent.voice.VoiceAnnouncer? = null,
+    private val announceEnabled: suspend () -> Boolean = { false },
 ) : TriggerController {
 
     private val appContext = context.applicationContext
@@ -237,11 +240,14 @@ class TriggerManager(
         writeGate.withLock {
             val current = mutableSpecs.value.firstOrNull { it.id == spec.id }
             if (current != null) {
+                val daily = engine.dailySnapshot(spec.id)
                 val merged = current.copy(
                     conversationId = convId,
                     lastRunAt = System.currentTimeMillis(),
                     lastStatus = status,
                     consecutiveFailures = failures,
+                    dailyFireDate = daily?.first ?: current.dailyFireDate,
+                    dailyFireCount = daily?.second ?: current.dailyFireCount,
                     enabled = current.enabled && !broken,
                 )
                 finalSpec = merged
@@ -256,6 +262,15 @@ class TriggerManager(
             localizedText("模型没有产出文本，可能是调用失败或被中断", "No model output; the call may have failed or been interrupted")
         }
         notifier.notify(shown, succeeded, summary.take(300))
+        if (announceEnabled()) {
+            runCatching {
+                announcer?.speak(
+                    localizedText("任务 ${shown.name} ", "Task ${shown.name} ") +
+                        localizedText(if (succeeded) "完成：" else "失败：", if (succeeded) "finished: " else "failed: ") +
+                        summary.take(200)
+                )
+            }
+        }
         if (broken) {
             notifier.notify(
                 shown, false,

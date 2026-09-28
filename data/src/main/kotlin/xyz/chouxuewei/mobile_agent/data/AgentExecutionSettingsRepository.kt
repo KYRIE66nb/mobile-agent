@@ -24,6 +24,8 @@ class AgentExecutionSettingsRepository(context: Context) {
     private val maxStepsKey = intPreferencesKey("single_run_max_steps")
     private val safetyGateKey = booleanPreferencesKey("safety_gate_enabled")
     private val deviceModeKey = stringPreferencesKey("device_mode_preference")
+    private val failoverKey = booleanPreferencesKey("auto_model_failover")
+    private val announceKey = booleanPreferencesKey("announce_task_results")
 
     val maxSteps: Flow<Int> = store.data.map { preferences ->
         preferences[maxStepsKey]
@@ -53,6 +55,28 @@ class AgentExecutionSettingsRepository(context: Context) {
             else -> DeviceModePreference.AUTO
         }
     }.distinctUntilChanged()
+
+    /** 主模型配置彻底失败时自动尝试其它已保存配置；默认开启，失败路径在运行记录中可见。 */
+    val autoModelFailover: Flow<Boolean> = store.data.map { preferences ->
+        preferences[failoverKey] ?: true
+    }.distinctUntilChanged()
+
+    /** 定时任务完成时用系统 TTS 播报结果摘要；默认关闭。 */
+    val announceTaskResults: Flow<Boolean> = store.data.map { preferences ->
+        preferences[announceKey] ?: false
+    }.distinctUntilChanged()
+
+    suspend fun setAutoModelFailover(enabled: Boolean) {
+        store.edit { it[failoverKey] = enabled }
+    }
+
+    suspend fun setAnnounceTaskResults(enabled: Boolean) {
+        store.edit { it[announceKey] = enabled }
+    }
+
+    suspend fun currentAutoModelFailover(): Boolean = autoModelFailover.first()
+
+    suspend fun currentAnnounceTaskResults(): Boolean = announceTaskResults.first()
 
     suspend fun setDeviceModePreference(mode: DeviceModePreference) {
         store.edit { preferences ->

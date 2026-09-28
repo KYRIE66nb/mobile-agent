@@ -44,4 +44,6 @@ interface ArtifactStore {
     suspend fun deleteArtifact(id: String): Boolean
     /** 启动时修复缺失记录并清理由异常中断留下的临时或孤立文件。 */
     suspend fun cleanup(): StorageCleanupResult = StorageCleanupResult()
+    /** 保留策略：删除创建时间早于 cutoffEpochMs 的登记产物（文件与记录一起移除）。 */
+    suspend fun pruneArtifacts(cutoffEpochMs: Long): StorageCleanupResult = StorageCleanupResult()
 }
