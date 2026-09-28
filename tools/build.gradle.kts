@@ -28,6 +28,7 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.android.svg)
     implementation(libs.gif.encoder)
+    implementation(libs.pdfbox.android)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)

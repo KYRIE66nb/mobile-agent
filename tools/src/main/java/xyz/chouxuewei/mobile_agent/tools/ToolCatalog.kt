@@ -32,6 +32,7 @@ object ToolCatalog {
             SystemToolProvider(context, device),
             AdGuardToolProvider(adGuard),
             RecipeToolProvider(recipes),
+            PersonalDataToolProvider(context),
             InteractionToolProvider(questions),
         ),
     )

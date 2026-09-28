@@ -52,6 +52,13 @@ class FileToolProvider(
             ToolSideEffect.EXTERNAL_WRITE, "files",
             approvalDescription = localizedText("打开系统分享面板并分享对话中的文件。", "Open the system share sheet for a file in the conversation."),
         ),
+        ToolDefinition(
+            "document_write", localizedText("生成文档文件", "Generate document file"),
+            localizedText("在 App 工作区生成 PDF、Word(.docx) 或 Excel(.xlsx) 文档。docx/pdf 的 content 为纯文本（每行一段）；xlsx 的 content 用制表符或 | 分列、每行一条记录，以 \"Sheet: 名称\" 行开启新工作表。生成后用 file_share 发送给用户。", "Generate a PDF, Word (.docx), or Excel (.xlsx) document in the app workspace. For docx/pdf, content is plain text (one paragraph per line); for xlsx, rows are separated by newlines, columns by tabs or |, and a \"Sheet: name\" line starts a new sheet. Use file_share to deliver the document afterward."),
+            localizedJsonSchema("""{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":120,"description":localizedText("文件名，扩展名应与 format 一致", "Filename; the extension should match format")},"format":{"type":"string","enum":["pdf","docx","xlsx"]},"content":{"type":"string","maxLength":200000,"description":localizedText("文档正文；xlsx 用制表符或 | 分列", "Document body; xlsx separates columns by tabs or |")}},"required":["name","format","content"],"additionalProperties":false}"""),
+            ToolSideEffect.LOCAL_WRITE, "files",
+            approvalDescription = localizedText("在 Mobile Agent 中生成一个文档文件。", "Generate a document file in Mobile Agent."),
+        ),
     )
 
     override suspend fun execute(call: RequestedToolCall, context: ToolExecutionContext): ToolResult = toolResult {
@@ -60,6 +67,7 @@ class FileToolProvider(
             "file_read" -> read(call.arguments(), context)
             "file_write" -> write(call.arguments(), context)
             "file_share" -> share(call.arguments(), context)
+            "document_write" -> writeDocument(call.arguments(), context)
             else -> error(localizedText("文件工具不支持 ${call.toolId}", "File tools do not support ${call.toolId}"))
         }
     }
@@ -120,8 +128,16 @@ class FileToolProvider(
                 generatedSource(context.conversationId, match.id)
             }
         }
-        require(isTextMime(source.mimeType)) { localizedText("当前只读取文本、Markdown、JSON 或 XML 文件", "Only text, Markdown, JSON, and XML files can be read.") }
-        val chunk = withContext(Dispatchers.IO) { source.open().use { it.readChunk(offset, maxChars) } }
+        val documentFormat = DocumentCodec.detectFormat(source.name, source.mimeType)
+        val chunk = withContext(Dispatchers.IO) {
+            if (documentFormat != null) {
+                val extracted = source.openBytes().use { DocumentCodec.extractText(documentFormat, it.readBytes(), appContext) }
+                TextChunk(extracted.drop(offset).take(maxChars), extracted.length > offset + maxChars)
+            } else {
+                require(isTextMime(source.mimeType)) { localizedText("当前只读取文本、Markdown、JSON、XML 或文档(PDF/DOCX/XLSX)文件", "Only text, Markdown, JSON, XML, or document (PDF/DOCX/XLSX) files can be read.") }
+                source.open().use { it.readChunk(offset, maxChars) }
+            }
+        }
         val result = buildJsonObject {
             put("source_ref", source.reference)
             put("name", source.name)
@@ -153,6 +169,35 @@ class FileToolProvider(
             buildJsonObject {
                 put("artifact_id", artifact.id)
                 put("name", artifact.name)
+                put("mime_type", artifact.mimeType)
+                put("size", artifact.sizeBytes)
+                put("uri", artifact.contentUri)
+                put("content_stored", true)
+            }.toString(),
+            localizedText("已生成 ${artifact.name}", "Generated ${artifact.name}"),
+        )
+    }
+
+    private suspend fun writeDocument(args: JsonObject, context: ToolExecutionContext): ToolResult {
+        val requestedName = args["name"]?.jsonPrimitive?.content?.trim().orEmpty()
+        val formatName = args["format"]?.jsonPrimitive?.contentOrNull?.lowercase()
+            ?: error(localizedText("缺少 format 参数", "Missing format parameter."))
+        val format = runCatching { DocumentCodec.Format.valueOf(formatName.uppercase()) }.getOrNull()
+            ?: error(localizedText("format 只支持 pdf、docx、xlsx", "format must be pdf, docx, or xlsx."))
+        val content = args["content"]?.jsonPrimitive?.content ?: error(localizedText("缺少文档正文", "Document content is missing."))
+        require(content.length <= 200_000) { localizedText("文档正文不能超过 200000 个字符", "Document content cannot exceed 200000 characters.") }
+        val artifact = artifactPublisher.publish(
+            context = context,
+            requestedName = requestedName.ifBlank { "document.${formatName}" },
+            mimeType = DocumentCodec.mimeType(format),
+        ) { output ->
+            DocumentCodec.write(format, content, output)
+        }
+        return ToolResult(
+            buildJsonObject {
+                put("artifact_id", artifact.id)
+                put("name", artifact.name)
+                put("format", formatName)
                 put("mime_type", artifact.mimeType)
                 put("size", artifact.sizeBytes)
                 put("uri", artifact.contentUri)
@@ -200,16 +245,23 @@ class FileToolProvider(
             ?: error(localizedText("文件不存在或不属于当前对话", "The file does not exist or does not belong to the current conversation."))
         val file = File(artifact.storagePath).canonicalFile
         require(file.isFile && artifactPublisher.isManagedFile(file)) { localizedText("文件不可用，请重新生成", "The file is unavailable. Generate it again.") }
-        return TextSource("artifact:${artifact.id}", artifact.name, artifact.mimeType) { file.bufferedReader(Charsets.UTF_8) }
+        return TextSource("artifact:${artifact.id}", artifact.name, artifact.mimeType,
+            open = { file.bufferedReader(Charsets.UTF_8) },
+            openBytes = { file.inputStream() })
     }
 
     private suspend fun attachmentSource(conversationId: String, uriValue: String): TextSource {
         val attachment = attachments(conversationId).firstOrNull { it.uri == uriValue }
             ?: error(localizedText("这个附件不属于当前对话", "This attachment does not belong to the current conversation."))
-        return TextSource("attachment:$uriValue", attachment.name, attachment.mimeType) {
-            appContext.contentResolver.openInputStream(Uri.parse(uriValue))?.bufferedReader(Charsets.UTF_8)
-                ?: error(localizedText("无法打开附件", "Could not open the attachment."))
-        }
+        return TextSource("attachment:$uriValue", attachment.name, attachment.mimeType,
+            open = {
+                appContext.contentResolver.openInputStream(Uri.parse(uriValue))?.bufferedReader(Charsets.UTF_8)
+                    ?: error(localizedText("无法打开附件", "Could not open the attachment."))
+            },
+            openBytes = {
+                appContext.contentResolver.openInputStream(Uri.parse(uriValue))
+                    ?: error(localizedText("无法打开附件", "Could not open the attachment."))
+            })
     }
 
     private fun isTextMime(value: String?) = value == null || value.startsWith("text/") ||
@@ -230,6 +282,7 @@ class FileToolProvider(
         val name: String,
         val mimeType: String?,
         val open: () -> Reader,
+        val openBytes: () -> java.io.InputStream,
     )
 
     private data class TextChunk(val text: String, val hasMore: Boolean)

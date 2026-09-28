@@ -46,8 +46,8 @@ android {
         applicationId = "xyz.chouxuewei.mobile_agent"
         minSdk = 24
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.1.7"
+        versionCode = 8
+        versionName = "0.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -123,6 +123,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
     implementation(libs.coil.svg)
+    // ShizukuProvider 自动初始化 Shizuku binder 连接，api 本体经 :device 传递。
+    implementation(libs.shizuku.provider)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
