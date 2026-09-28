@@ -43,6 +43,15 @@ class NotificationToolProvider(context: Context) : ToolProvider {
             approvalDescription = localizedText("执行一条通知中的操作按钮。", "Run an action button in a notification."),
         ),
         ToolDefinition(
+            "notifications_reply",
+            localizedText("回复通知", "Reply to notification"),
+            localizedText("把文字通过 notifications_list 标记 accepts_text_reply 的通知操作直接回复给来源应用（如聊天消息的快捷回复）。验证码或账户安全通知不允许自动回复。", "Send text back to the source app through a notification action marked accepts_text_reply by notifications_list (e.g. chat quick reply). Verification-code or account-security notifications cannot be replied to automatically."),
+            """{"type":"object","properties":{"key":{"type":"string","maxLength":1000},"action_index":{"type":"integer","minimum":0,"maximum":20},"text":{"type":"string","minLength":1,"maxLength":2000}},"required":["key","action_index","text"],"additionalProperties":false}""",
+            ToolSideEffect.EXTERNAL_WRITE,
+            id,
+            approvalDescription = localizedText("通过通知向来源应用发送一条文字回复。", "Send a text reply to the source app through a notification."),
+        ),
+        ToolDefinition(
             "notifications_dismiss",
             localizedText("清除通知", "Dismiss notification"),
             localizedText("清除 notifications_list 返回且允许清除的通知。验证码或账户安全通知不允许自动清除。", "Dismiss a notification returned by notifications_list when allowed. Verification-code and account-security notifications cannot be dismissed automatically."),
@@ -103,6 +112,7 @@ class NotificationToolProvider(context: Context) : ToolProvider {
                         putJsonArray("actions") { item.actions.forEachIndexed { index, title -> add(buildJsonObject {
                             put("action_index", index)
                             put("title", title)
+                            put("accepts_text_reply", index in item.replyActionIndexes)
                         }) } }
                     }) } }
                 }.toString(), localizedText("已读取 ${returned.size} 条系统通知", "Read ${returned.size} system notifications"))
@@ -114,6 +124,10 @@ class NotificationToolProvider(context: Context) : ToolProvider {
             "notifications_action" -> {
                 service.invokeAction(required(args, "key"), int(args, "action_index"))
                 ToolResult("""{"performed":true}""", localizedText("已执行通知操作", "Notification action executed"))
+            }
+            "notifications_reply" -> {
+                service.reply(required(args, "key"), int(args, "action_index"), required(args, "text").take(2_000))
+                ToolResult("""{"replied":true}""", localizedText("已通过通知回复", "Replied through the notification"))
             }
             "notifications_dismiss" -> {
                 service.dismiss(required(args, "key"))
@@ -127,6 +141,7 @@ class NotificationToolProvider(context: Context) : ToolProvider {
         "notifications_list" -> localizedText("读取当前通知", "Read current notifications")
         "notifications_open" -> localizedText("打开指定通知", "Open specified notification")
         "notifications_action" -> localizedText("执行指定通知按钮", "Run specified notification action")
+        "notifications_reply" -> localizedText("回复指定通知中的消息", "Reply to the message in a notification")
         "notifications_dismiss" -> localizedText("清除指定通知", "Dismiss specified notification")
         "notifications_open_settings" -> localizedText("打开通知访问设置", "Open notification access settings")
         else -> null
