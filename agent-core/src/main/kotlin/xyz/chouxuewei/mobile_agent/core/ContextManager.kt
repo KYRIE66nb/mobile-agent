@@ -261,7 +261,8 @@ class ContextManager(
         return turn.attachmentRefs.count(AttachmentRef::isImage) * 2_125L
     }
 
-    private fun currentSystemPrompt(personalization: String): String {
+    /** internal 而非 private：测试需要按真实系统提示估算预算，避免与技能注入漂移。 */
+    internal fun currentSystemPrompt(personalization: String): String {
         val zone = TimeZone.getDefault()
         val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).apply { timeZone = zone }
         return buildString {

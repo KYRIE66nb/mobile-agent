@@ -8,11 +8,17 @@ import org.junit.Test
 class ContextManagerTest {
     @Test fun automaticSummaryFailureUsesOriginalOnlyBelowHardLimit()=runBlocking {
         val store=MemoryConversationStore().apply { repeat(3) { add(MessageRole.USER,"问题"); add(MessageRole.ASSISTANT,"x".repeat(30)) } }
-        val manager=ContextManager(store); val small=ContextPolicy(2048,512)
-        val original=manager.estimate(listOf(ChatTurn("system",ContextManager.SYSTEM))+store.history.map { ChatTurn(it.role.name.lowercase(),it.text) })
-        val padding=(small.inputBudget*.9).toInt()-original
-        assertTrue(padding>0)
-        store.history[1]=store.history[1].copy(text=store.history[1].text+"x".repeat(padding))
+        val manager=ContextManager(store) { "" }; val small=ContextPolicy(16000,1024)
+        // 用内部真实系统提示估算：技能注入会让 SYSTEM 之外的提示增长，只量 SYSTEM 会低估。
+        val prompt=manager.currentSystemPrompt("")
+        fun originalEstimate()=manager.estimate(listOf(ChatTurn("system",prompt))+store.history.map { ChatTurn(it.role.name.lowercase(),it.text) })
+        // 填充到预算的 85%：越过 .8 触发整理，又留出全文回退的余量。
+        val target=(small.inputBudget*.85).toInt()
+        repeat(4) {
+            val gap=target-originalEstimate()
+            if(gap<=0) return@repeat
+            store.history[1]=store.history[1].copy(text=store.history[1].text+"x".repeat(gap*4))
+        }
         var attempts=0
         val turns=manager.prepare("c",Long.MAX_VALUE,small,"test",ChatModelGateway { flow { attempts++; emit(ModelEvent.Error("摘要超时")) } })
         assertEquals(1,attempts); assertNull(store.saved)
@@ -21,9 +27,10 @@ class ContextManagerTest {
     }
     private val policy=ContextPolicy(16000,1024)
     private val summary="目标：保留用户要求\n约束：参考原文\n纠正：按最新修改\n事实：来源 m1\n进展：讨论中\n待办：继续"
+    // 体积要同时超过 .8 触发线和单块摘要预算，才能进入整理路径并产生多次摘要请求。
     private fun fixture()=MemoryConversationStore().apply {
         repeat(8) { add(MessageRole.USER,if(it==0) "更正：预算不是500，而是800元，必须中文。" else "讨论方案$it")
-            add(MessageRole.ASSISTANT,"较早建议："+"旅行规划和说明。".repeat(80)) }
+            add(MessageRole.ASSISTANT,"较早建议："+"旅行规划和说明。".repeat(280)) }
         add(MessageRole.USER,"继续比较方案")
     }
     private fun gateway(onRequest: (ChatRequest)->Unit = {})=ChatModelGateway { request -> flow {
@@ -33,7 +40,7 @@ class ContextManagerTest {
     @Test fun budgetsCountChineseAndUseConfiguredDefaults() {
         val manager=ContextManager(MemoryConversationStore())
         assertTrue(manager.estimate(listOf(ChatTurn("user","你好")))>=6)
-        assertEquals(14176,policy.inputBudget)
+        assertEquals(16000-1024-policy.safetyTokens,policy.inputBudget)
         assertEquals(DEFAULT_CONTEXT_WINDOW_TOKENS, ContextPolicy().windowTokens)
         assertEquals(DEFAULT_MAX_OUTPUT_TOKENS, ContextPolicy().outputReserve)
         ContextPolicy().validate()
@@ -91,9 +98,10 @@ class ContextManagerTest {
     @Test fun cancellationNeverPublishesPartialSnapshot()=runBlocking {
         val store=fixture()
         val started=CompletableDeferred<Unit>()
+        // manual=true 跳过 .8 快速返回：fixture 体积不依赖估算阈值，摘要流一定被真正启动。
         val job=launch { ContextManager(store).prepare("c",Long.MAX_VALUE,policy,"test",ChatModelGateway { flow {
             emit(ModelEvent.TextDelta("目标：尚未完成")); started.complete(Unit); awaitCancellation()
-        } }) }
+        } },manual=true) }
         started.await(); job.cancelAndJoin(); assertNull(store.saved)
     }
     @Test fun repeatedCompactionRebuildsSourcesAndRetrievesExactOriginal()=runBlocking {
@@ -105,7 +113,10 @@ class ContextManagerTest {
         assertTrue(store.saved!!.boundary>firstBoundary)
         store.add(MessageRole.USER,"请引用 m1 的原文，预算是多少？")
         val turns=manager.prepare("c",Long.MAX_VALUE,policy,"test",gateway())
-        assertTrue(turns.any { it.content.startsWith("[取回的原始消息") && it.content.contains("800元") })
+        // 精确原文不再由 ContextManager 绕过权限注入为取回块（改由 history_search/history_read 工具按授权取回）；
+        // 但显式纠正仍以"关键用户原文"形式随摘要逐字保留。
+        assertFalse(turns.any { it.content.startsWith("[取回的原始消息") })
+        assertTrue(turns.any { it.content.contains("800元") })
         store.add(MessageRole.USER,"不可截断的当前请求".repeat(1000))
         assertTrue(runCatching { manager.prepare("c",Long.MAX_VALUE,ContextPolicy(2048,512),"smaller",gateway()) }.isFailure)
     }
