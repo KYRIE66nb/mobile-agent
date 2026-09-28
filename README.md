@@ -106,6 +106,7 @@ Hand "every morning" / "when a notification arrives" automations to triggers —
 - **Scope is a hard boundary**: every task carries a `tool_scope` allowlist — the model inside a triggered run **only sees authorized tools** and out-of-scope calls are denied outright; the default scope is read-only (files, notification reads, calendar/contacts queries); external side effects (messaging, cleanup, device control) require explicit authorization at creation time;
 - **Unattended ≠ unconstrained**: in-scope tools run without approval dialogs (nobody would see them anyway); per-trigger cooldown, daily run caps, and a 3-strike circuit breaker auto-disable runaway tasks; the app's own notifications, ongoing notifications, and OTP/account-security notifications **never trigger**; notification bodies are injected as low-trust data, never as instructions;
 - **Isolated history**: each task runs in a dedicated `Trigger·name` conversation, separate from day-to-day chats and fully replayable;
+- **Quick replies**: `notifications_reply` sends text straight back to the source app through the notification's own RemoteInput (reply to chat messages without opening the app); it is an external side-effect tool — notification tasks need it explicitly in scope;
 - **Usage**: tell the agent "read my schedule at 8 every morning" or "alert me when the boss messages me on WeChat" and it assembles the trigger via `trigger_save`; manage them under Settings → General → Scheduled tasks (enable, inspect scope, delete);
 - **Platform limits**: battery savers and OEM background policies may delay firing (no exact-alarm permission is requested); notification matching needs Notification Access granted.
 
@@ -113,7 +114,8 @@ Hand "every morning" / "when a notification arrives" automations to triggers —
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
 - **50+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, document tools (PDF/Word/Excel extract; docx/xlsx generate and surgical edit), webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing / **restricted shell** over Root or Shizuku), ad-guard rule management, recipe execution/saving, scheduled-task management, contacts/calendar queries (runtime-permission gated);
-- **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable; read-only tool calls in one round **run in parallel** (writes stay sequential), and screen observations are compactly serialized with precomputed node centers to cut per-round token cost.
+- **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable; read-only tool calls in one round **run in parallel** (writes stay sequential), and screen observations are compactly serialized with precomputed node centers to cut per-round token cost;
+- **Capability overview**: Settings → Capabilities shows every system authorization (accessibility, notification access, usage access, overlay, notifications, microphone), advanced channels (Root/Shizuku), service configuration (model/speech), and each capability group's availability — with one-tap jumps to the matching grant screen.
 
 ## Architecture
 
@@ -166,6 +168,8 @@ Settings → Models → New profile:
 - [x] Non-root degraded control via Shizuku shell channel (allow-listed commands, user-granted)
 - [x] PDF / Word / Excel reading and generation (fully local, no network)
 - [x] Surgical editing of existing documents (docx paragraph-level / xlsx cell-level; images and styles preserved)
+- [x] Notification RemoteInput quick replies (reply without opening the app; sensitive notifications excluded)
+- [x] Capability/authorization overview page (system grants + advanced channels + capability groups + one-tap setup)
 - [ ] Pluggable standalone decision-model backend (Jev-like)
 
 ## Permissions and data boundaries
