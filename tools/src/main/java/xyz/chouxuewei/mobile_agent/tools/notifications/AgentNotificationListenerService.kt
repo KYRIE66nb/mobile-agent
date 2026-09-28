@@ -3,6 +3,9 @@ package xyz.chouxuewei.mobile_agent.tools.notifications
 import xyz.chouxuewei.mobile_agent.core.TriggerNotificationEvent
 import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.app.Notification
+import android.app.RemoteInput
+import android.content.Intent
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 
@@ -19,6 +22,8 @@ data class NotificationSnapshot(
     val clearable: Boolean,
     val sensitive: Boolean,
     val actions: List<String>,
+    /** actions 中带 RemoteInput、可承载文字回复的序号。 */
+    val replyActionIndexes: List<Int> = emptyList(),
 )
 
 class AgentNotificationListenerService : NotificationListenerService() {
@@ -92,6 +97,26 @@ class AgentNotificationListenerService : NotificationListenerService() {
         checkNotNull(actions[index].actionIntent) { localizedText("该通知操作当前不可用", "This notification action is currently unavailable.") }.send()
     }
 
+    /**
+     * 通过通知 action 携带的 RemoteInput 把文字直接送回来源应用（如聊天消息快捷回复）。
+     * 只有该 action 声明了 RemoteInput 才能承载回复；contentIntent 打开应用的操作不算。
+     */
+    fun reply(key: String, index: Int, text: String) {
+        val item = requireNotification(key)
+        check(!item.isSensitive()) { localizedText("验证码或账户安全通知不允许自动回复", "Verification-code or account-security notifications cannot be replied to automatically.") }
+        val actions = item.notification.actions.orEmpty()
+        require(index in actions.indices) { localizedText("通知操作序号无效", "Invalid notification action index.") }
+        val action = actions[index]
+        val remoteInputs = action.remoteInputs.orEmpty()
+        check(remoteInputs.isNotEmpty()) { localizedText("该操作不支持文字回复，请改用执行通知按钮", "This action does not accept text input; run the notification action instead.") }
+        val fillIntent = Intent()
+        val results = Bundle()
+        remoteInputs.forEach { results.putCharSequence(it.resultKey, text) }
+        RemoteInput.addResultsToIntent(remoteInputs, fillIntent, results)
+        checkNotNull(action.actionIntent) { localizedText("该通知操作当前不可用", "This notification action is currently unavailable.") }
+            .send(this, 0, fillIntent)
+    }
+
     fun dismiss(key: String) {
         val item = requireNotification(key)
         check(item.isClearable) { localizedText("该通知不能被清除", "This notification cannot be dismissed.") }
@@ -126,6 +151,9 @@ class AgentNotificationListenerService : NotificationListenerService() {
             sensitive = sensitive,
             actions = if (sensitive) emptyList() else notification.actions.orEmpty().mapIndexed { index, action ->
                 action.title?.toString()?.take(100).orEmpty().ifBlank { localizedText("操作 ${index + 1}", "Action ${index + 1}") }
+            },
+            replyActionIndexes = if (sensitive) emptyList() else notification.actions.orEmpty().mapIndexedNotNull { index, action ->
+                index.takeIf { !action.remoteInputs.isNullOrEmpty() }
             },
         )
     }
