@@ -59,6 +59,20 @@ class FileToolProvider(
             ToolSideEffect.LOCAL_WRITE, "files",
             approvalDescription = localizedText("在 Mobile Agent 中生成一个文档文件。", "Generate a document file in Mobile Agent."),
         ),
+        ToolDefinition(
+            "document_inspect", localizedText("查看文档结构", "Inspect document structure"),
+            localizedText("编辑前先看结构：docx 返回非空段落的编号和前 80 字预览；xlsx 返回每个工作表的行列数和前几行预览（TSV）。段落编号用于 set_paragraph / delete_paragraph / insert_paragraph，工作表名用于 sheet 参数。", "Inspect before editing: docx returns numbered non-empty paragraphs with an 80-char preview; xlsx returns each sheet's row/column counts and first rows as TSV. Paragraph indices feed set_paragraph/delete_paragraph/insert_paragraph; sheet names feed the sheet parameter."),
+            localizedJsonSchema("""{"type":"object","properties":{"artifact_id":{"type":"string"},"uri":{"type":"string"},"name":{"type":"string"},"preview_rows":{"type":"integer","minimum":1,"maximum":50,"default":15,"description":localizedText("xlsx 每个工作表返回的预览行数", "Rows previewed per xlsx sheet")}},"additionalProperties":false}"""),
+            ToolSideEffect.READ, "files",
+            approvalDescription = localizedText("查看文档的段落或工作表结构。", "Inspect the document's paragraphs or sheets."),
+        ),
+        ToolDefinition(
+            "document_edit", localizedText("编辑文档", "Edit document"),
+            localizedText("对已有 docx/xlsx 做手术式编辑并生成新文件（原文件不变）。先用 document_inspect 拿段落编号或工作表结构。docx 操作：replace(find,replace,all)、set_paragraph(index,text)、insert_paragraph(after_index,text,-1 插最前)、delete_paragraph(index)、append(text)；xlsx 操作：set_cell(sheet,cell,value)、append_row(sheet,values[])、clear_range(sheet,range 如 A1:C5)、insert_sheet(name)。编辑会保留原文件的图片、样式等其余内容；docx 段落重写保留段落样式但抹平段内混合格式；PDF 和老 .doc/.xls 不支持编辑。", "Surgically edit an existing docx/xlsx into a new file (the original is untouched). Call document_inspect first for paragraph indices or sheet structure. docx ops: replace(find,replace,all), set_paragraph(index,text), insert_paragraph(after_index,text; -1 inserts at top), delete_paragraph(index), append(text); xlsx ops: set_cell(sheet,cell,value), append_row(sheet,values[]), clear_range(sheet,range like A1:C5), insert_sheet(name). Other content (images, styles) is preserved; docx paragraph rewrites keep paragraph style but flatten mixed inline formatting. PDF and legacy .doc/.xls are not editable."),
+            localizedJsonSchema("""{"type":"object","properties":{"artifact_id":{"type":"string"},"uri":{"type":"string"},"name":{"type":"string"},"operations":{"type":"array","minItems":1,"maxItems":50,"items":{"type":"object"},"description":localizedText("操作数组，元素形如 {\"op\":\"replace\",\"find\":\"旧文本\",\"replace\":\"新文本\"}", "Operation array, e.g. {\"op\":\"replace\",\"find\":\"old\",\"replace\":\"new\"}")}},"required":["operations"],"additionalProperties":false}"""),
+            ToolSideEffect.LOCAL_WRITE, "files",
+            approvalDescription = localizedText("编辑一个文档并保存为新文件。", "Edit a document and save it as a new file."),
+        ),
     )
 
     override suspend fun execute(call: RequestedToolCall, context: ToolExecutionContext): ToolResult = toolResult {
@@ -68,6 +82,8 @@ class FileToolProvider(
             "file_write" -> write(call.arguments(), context)
             "file_share" -> share(call.arguments(), context)
             "document_write" -> writeDocument(call.arguments(), context)
+            "document_inspect" -> inspectDocument(call.arguments(), context)
+            "document_edit" -> editDocument(call.arguments(), context)
             else -> error(localizedText("文件工具不支持 ${call.toolId}", "File tools do not support ${call.toolId}"))
         }
     }
@@ -81,6 +97,10 @@ class FileToolProvider(
                 ?.trim()?.take(120)?.let { localizedText("文件名：$it", "Filename: $it") } ?: localizedText("读取对话中的文件", "Read files in the conversation")
             "file_list" -> localizedText("查看当前对话中的文件", "View files in the current conversation")
             "file_share" -> localizedText("分享当前对话中的文件", "Share a file from the current conversation")
+            "document_write", "document_edit" -> args["name"]?.jsonPrimitive?.contentOrNull
+                ?.trim()?.take(80)?.let { localizedText("文档：$it", "Document: $it") }
+                ?: localizedText("处理一个文档文件", "Work on a document file")
+            "document_inspect" -> localizedText("查看文档结构", "Inspect document structure")
             else -> null
         }
     }.getOrNull()
@@ -110,24 +130,9 @@ class FileToolProvider(
     }
 
     private suspend fun read(args: JsonObject, context: ToolExecutionContext): ToolResult {
-        val artifactId = args["artifact_id"]?.jsonPrimitive?.contentOrNull?.trim()
-        val uriValue = args["uri"]?.jsonPrimitive?.contentOrNull?.trim()
-        val nameValue = args["name"]?.jsonPrimitive?.contentOrNull?.trim()
         val offset = (args["offset"]?.jsonPrimitive?.intOrNull ?: 0).coerceAtLeast(0)
         val maxChars = (args["max_chars"]?.jsonPrimitive?.intOrNull ?: 8_000).coerceIn(1, 8_000)
-        require(listOf(artifactId, uriValue, nameValue).count { !it.isNullOrBlank() } == 1) {
-            localizedText("artifact_id、uri 和 name 必须且只能提供一个", "Provide exactly one of artifact_id, uri, or name.")
-        }
-
-        val source = when {
-            !artifactId.isNullOrBlank() -> generatedSource(context.conversationId, artifactId)
-            !uriValue.isNullOrBlank() -> attachmentSource(context.conversationId, uriValue)
-            else -> {
-                val match = artifacts.artifacts(context.conversationId).lastOrNull { it.name == nameValue }
-                    ?: error(localizedText("生成文件不存在", "The generated file does not exist."))
-                generatedSource(context.conversationId, match.id)
-            }
-        }
+        val source = resolveSource(args, context)
         val documentFormat = DocumentCodec.detectFormat(source.name, source.mimeType)
         val chunk = withContext(Dispatchers.IO) {
             if (documentFormat != null) {
@@ -237,6 +242,111 @@ class FileToolProvider(
             put("name", name)
             put("mime_type", mimeType)
         }.toString(), localizedText("已打开 $name 的系统分享面板", "Opened the system share sheet for $name"))
+    }
+
+    /** artifact_id / uri / name 三选一解析为可重复打开的源（文本 Reader 或字节流）。 */
+    private suspend fun resolveSource(args: JsonObject, context: ToolExecutionContext): TextSource {
+        val artifactId = args["artifact_id"]?.jsonPrimitive?.contentOrNull?.trim()
+        val uriValue = args["uri"]?.jsonPrimitive?.contentOrNull?.trim()
+        val nameValue = args["name"]?.jsonPrimitive?.contentOrNull?.trim()
+        require(listOf(artifactId, uriValue, nameValue).count { !it.isNullOrBlank() } == 1) {
+            localizedText("artifact_id、uri 和 name 必须且只能提供一个", "Provide exactly one of artifact_id, uri, or name.")
+        }
+        return when {
+            !artifactId.isNullOrBlank() -> generatedSource(context.conversationId, artifactId)
+            !uriValue.isNullOrBlank() -> attachmentSource(context.conversationId, uriValue)
+            else -> {
+                val match = artifacts.artifacts(context.conversationId).lastOrNull { it.name == nameValue }
+                    ?: error(localizedText("生成文件不存在", "The generated file does not exist."))
+                generatedSource(context.conversationId, match.id)
+            }
+        }
+    }
+
+    private suspend fun inspectDocument(args: JsonObject, context: ToolExecutionContext): ToolResult {
+        val source = resolveSource(args, context)
+        val format = DocumentCodec.detectFormat(source.name, source.mimeType)
+            ?: error(localizedText("只支持 docx / xlsx / pdf 的结构查看", "Inspection supports docx, xlsx, and pdf only."))
+        val previewRows = (args["preview_rows"]?.jsonPrimitive?.intOrNull ?: 15).coerceIn(1, 50)
+        val bytes = withContext(Dispatchers.IO) { source.openBytes().use { it.readBytes() } }
+        val content = when (format) {
+            DocumentCodec.Format.DOCX -> {
+                val info = OoxmlEditor.inspectDocx(bytes)
+                buildJsonObject {
+                    put("format", "docx")
+                    put("total_paragraphs", info.totalParagraphs)
+                    put("listed", info.paragraphs.size)
+                    putJsonArray("paragraphs") {
+                        info.paragraphs.forEach { p ->
+                            add(buildJsonObject { put("index", p.index); put("preview", p.preview) })
+                        }
+                    }
+                }
+            }
+            DocumentCodec.Format.XLSX -> {
+                val info = OoxmlEditor.inspectXlsx(bytes, previewRows)
+                buildJsonObject {
+                    put("format", "xlsx")
+                    putJsonArray("sheets") {
+                        info.sheets.forEach { s ->
+                            add(buildJsonObject {
+                                put("name", s.name); put("rows", s.rowCount); put("cols", s.colCount)
+                                putJsonArray("preview") { s.previewRows.forEach { add(it) } }
+                            })
+                        }
+                    }
+                }
+            }
+            DocumentCodec.Format.PDF -> {
+                val text = withContext(Dispatchers.IO) { DocumentCodec.extractText(format, bytes, appContext) }
+                buildJsonObject {
+                    put("format", "pdf")
+                    put("editable", false)
+                    put("preview", text.take(2_000))
+                }
+            }
+        }.toString()
+        return ToolResult(content, localizedText("已解析 ${source.name} 的结构", "Inspected ${source.name}"))
+    }
+
+    private suspend fun editDocument(args: JsonObject, context: ToolExecutionContext): ToolResult {
+        val source = resolveSource(args, context)
+        val format = DocumentCodec.detectFormat(source.name, source.mimeType)
+        require(format == DocumentCodec.Format.DOCX || format == DocumentCodec.Format.XLSX) {
+            localizedText("document_edit 只支持 docx 和 xlsx；PDF 与老 .doc/.xls 不可编辑", "document_edit supports docx and xlsx only; PDF and legacy .doc/.xls are not editable.")
+        }
+        val ops = args["operations"]?.jsonArray?.map { it.jsonObject }
+            ?: error(localizedText("缺少 operations 数组", "Missing operations array."))
+        require(ops.size <= 50) { localizedText("一次最多 50 个编辑操作", "At most 50 operations per call.") }
+        val outcome = withContext(Dispatchers.IO) {
+            val bytes = source.openBytes().use { it.readBytes() }
+            when (format) {
+                DocumentCodec.Format.DOCX -> OoxmlEditor.editDocx(bytes, ops)
+                else -> OoxmlEditor.editXlsx(bytes, ops)
+            }
+        }
+        require(outcome.applied > 0) {
+            localizedText("没有任何编辑被应用：${outcome.warnings.joinToString("；").ifBlank { "请检查操作参数" }}",
+                "No edits were applied: ${outcome.warnings.joinToString("; ").ifBlank { "check operation parameters" }}")
+        }
+        val artifact = artifactPublisher.publish(
+            context = context,
+            requestedName = source.name,
+            mimeType = DocumentCodec.mimeType(format),
+        ) { output -> output.write(outcome.bytes) }
+        return ToolResult(
+            buildJsonObject {
+                put("artifact_id", artifact.id)
+                put("name", artifact.name)
+                put("mime_type", artifact.mimeType)
+                put("size", artifact.sizeBytes)
+                put("uri", artifact.contentUri)
+                put("applied_operations", outcome.applied)
+                putJsonArray("warnings") { outcome.warnings.forEach { add(it) } }
+                put("source_unchanged", true)
+            }.toString(),
+            localizedText("已编辑并生成 ${artifact.name}（应用 ${outcome.applied} 处修改）", "Edited ${artifact.name} (${outcome.applied} changes applied)"),
+        )
     }
 
     private suspend fun generatedSource(conversationId: String, artifactId: String): TextSource {
