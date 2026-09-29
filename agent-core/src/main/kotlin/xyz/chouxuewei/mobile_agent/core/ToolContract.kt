@@ -1,6 +1,7 @@
 package xyz.chouxuewei.mobile_agent.core
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.json.JsonObject
 
 /** 用户按能力组选择授权方式；默认启用，并在每次实际调用前请求批准。 */
 enum class ToolPermissionMode { REQUEST_APPROVAL, FULL_ACCESS }
@@ -108,6 +109,11 @@ data class ToolResult(
     val isError: Boolean = false,
     /** 仅随当前模型请求传递，不写入工具记录，避免截图以 Base64 形式长期落库。 */
     val images: List<ChatImage> = emptyList(),
+    /**
+     * 瞬态结构化载荷：仅供运行时在当次处理中消费（如导航快路径的有界观察契约），
+     * 不发送给模型、不落库；截图等敏感数据不得放入此字段。
+     */
+    val ephemeral: JsonObject? = null,
 )
 
 interface ToolProvider {

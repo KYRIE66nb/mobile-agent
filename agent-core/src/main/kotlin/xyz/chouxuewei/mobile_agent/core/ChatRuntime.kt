@@ -7,6 +7,10 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 data class ChatConnection(
     val gateway: ChatModelGateway,
@@ -70,7 +74,9 @@ class ChatRuntime(
     private val personalizedInstructions: suspend () -> String = { "" },
     private val maxStepsPerRun: suspend () -> Int = { DEFAULT_SINGLE_RUN_MAX_STEPS },
     /** 每轮解析出模型连接后调用；返回 null 表示安全闸关闭。 */
-    private val safetyGate: suspend (connection: ChatConnection) -> DecisionGate? = { null },
+    private val safetyGate: suspend (connection: ChatConnection, runPolicy: RunPolicy?, runId: String?) -> DecisionGate? = { _, _, _ -> null },
+    /** 低风险导航快路径能力；null 或未开启加速时不启用。 */
+    private val fastPath: FastPathSupport? = null,
 ) {
     private val gate = Mutex()
     private val jobs = mutableMapOf<String, Job>()
@@ -178,7 +184,7 @@ class ChatRuntime(
                 val definitions = enabledDefinitions().let { defs ->
                     runPolicy?.let { p -> defs.filter { it.id in p.allowedToolIds } } ?: defs
                 }
-                val activeGate = runPolicy?.gate ?: safetyGate(c)
+                val activeGate = runPolicy?.gate ?: safetyGate(c, runPolicy, activeRun.id)
                 // 每轮开始时只读取一次，避免用户在执行中修改设置导致当前任务的上限突然变化。
                 val maxSteps = requireValidSingleRunMaxSteps(maxStepsPerRun())
                 AgentLog.i("Runtime") {
@@ -370,6 +376,80 @@ class ChatRuntime(
                             images = toolImages.toList(),
                         )
                     }
+                    // 低风险导航快路径：device_observe 声明 navigation_goal 且用户开启加速后，
+                    // 由专用决策模型在本地构造的候选中连续选择；所有调用仍走 executeToolCall
+                    // 统一通道（权限/审批/观察校验/工具记录/历史完全一致），无人值守运行不适用。
+                    val navEngagement = requestedRecords.mapIndexedNotNull { index, (requested, _) ->
+                        if (requested.toolId != "device_observe") return@mapIndexedNotNull null
+                        val args = runCatching {
+                            Json.parseToJsonElement(requested.argumentsJson).jsonObject
+                        }.getOrNull() ?: return@mapIndexedNotNull null
+                        val goal = args["navigation_goal"]?.jsonPrimitive?.contentOrNull
+                            ?.takeIf { it.isNotBlank() }?.take(DecisionLimits.MAX_GOAL_CHARS)
+                            ?: return@mapIndexedNotNull null
+                        val sessionId = args["session_id"]?.jsonPrimitive?.contentOrNull
+                            ?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
+                        val result = results[index]
+                        if (result.isError || result.ephemeral == null) return@mapIndexedNotNull null
+                        Triple(goal, sessionId, result.ephemeral)
+                    }.lastOrNull()
+                    if (navEngagement != null && runPolicy == null && fastPath != null) {
+                        val fpSettings = fastPath.settings()
+                        if (fpSettings.backend != DecisionBackend.NONE &&
+                            fpSettings.navigationAcceleration && fpSettings.outboundConsent
+                        ) {
+                            val controller = FastPathController(
+                                providerResolver = { fastPath.resolveProvider(fpSettings.backend) },
+                                backend = fpSettings.backend,
+                                mode = fpSettings.mode,
+                                keyGeneration = fpSettings.profileFor(fpSettings.backend).keyGeneration,
+                                audit = fastPath.audit,
+                            )
+                            var fpSeq = 0
+                            val fpResult = controller.run(
+                                goal = navEngagement.first,
+                                sessionId = navEngagement.second,
+                                userRequest = trigger.text,
+                                initialObservation = navEngagement.third,
+                                runId = activeRun.id,
+                            ) { toolId, args ->
+                                val seq = ++fpSeq
+                                val call = RequestedToolCall(
+                                    id = "fastpath:${activeRun.id}:$seq",
+                                    toolId = toolId,
+                                    argumentsJson = args.toString(),
+                                )
+                                val recordId = "${activeRun.id}:fp:$seq"
+                                step.toolCallIds += recordId
+                                workingTurns += ChatTurn("assistant", "", listOf(call))
+                                val r = executeToolCall(
+                                    activeRun, trigger.text, call, definitions, recordId,
+                                    activeGate, runPolicy,
+                                )
+                                workingTurns += ChatTurn(
+                                    role = "tool",
+                                    content = r.content,
+                                    toolCallId = call.id,
+                                    sourceToolCallId = recordId,
+                                )
+                                if (definitions.firstOrNull { it.id == toolId }?.resultLifetime ==
+                                    ToolResultLifetime.SINGLE_MODEL_STEP
+                                ) {
+                                    pendingSingleStepResults += recordId
+                                }
+                                store.updateReply(activeRun, output.toString(), stepsSnapshot())
+                                r
+                            }
+                            when (fpResult) {
+                                FastPathController.Result.Completed -> notice(
+                                    id, localizedText("导航目标已达成", "Navigation goal reached"),
+                                )
+                                is FastPathController.Result.Fallback -> AgentLog.d("Runtime") {
+                                    "fast path fell back to planner: ${fpResult.reason}"
+                                }
+                            }
+                        }
+                    }
                 }
                 check(output.isNotBlank()) { localizedText("模型没有返回正文，请检查回复预留和模型设置", "The model returned no response text. Check the output reserve and model settings.") }
                 store.finishRun(
@@ -486,6 +566,8 @@ class ChatRuntime(
                     toolTitle = definition.title,
                     argumentsSummary = tools?.approvalSummary(requested)
                         ?: requested.argumentsJson.take(500),
+                    runId = run.id,
+                    toolCallId = recordId,
                 )
             )) {
                 is GateVerdict.Block -> {

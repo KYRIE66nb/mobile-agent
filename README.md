@@ -45,6 +45,8 @@ Every tool call with **external side effects** (sending messages, changing setti
 
 Timeouts or verdict failures degrade to manual confirmation — **never silently allowed**. Toggleable in settings; read-only tools never enter the gate.
 
+**Optional dedicated decision backend (Laya/Jev)**: Settings → Dedicated decision backend can point at an independent small-model service (the managed TypeSafe Jev API or a self-hosted Laya — see `deploy/laya/`). It supplies verdicts for the safety gate and, optionally, picks among locally built candidates for low-risk navigation. Default is **off** — behavior is identical to before until you opt in; it applies to interactive tasks only, not triggers/unattended runs in this version. Outbound traffic needs explicit consent and carries only the minimal decision context (never full chat history or screenshots); local validation stays authoritative — the service picks candidates, it cannot invent actions. SHADOW mode only records, ENFORCE applies verdicts. Verdict metadata is kept in `decision_records` for 30 days and is viewable in settings.
+
 ### Two device-control engines
 
 - **Accessibility service** (no root): node-tree reads, taps, text input, swipes, foreground-app tracking;

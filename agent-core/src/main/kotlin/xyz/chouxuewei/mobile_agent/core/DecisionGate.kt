@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.core
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withTimeout
 
@@ -17,6 +18,9 @@ data class GateRequest(
     val toolId: String,
     val toolTitle: String,
     val argumentsSummary: String,
+    /** 审计关联字段；不改变裁决语义。 */
+    val runId: String? = null,
+    val toolCallId: String? = null,
 )
 
 /**
@@ -43,6 +47,8 @@ class LlmDecisionGate(
     override suspend fun gate(request: GateRequest): GateVerdict = runCatching {
         withTimeout(timeoutMs) { decide(request) }
     }.getOrElse {
+        // 取消是协程生命周期信号，必须向上传播而不是降级成 Confirm。
+        if (it is CancellationException) throw it
         AgentLog.w("DecisionGate") { "gate check fell back to confirm: ${it.message}" }
         GateVerdict.Confirm(localizedText("安全检查未完成，需要你确认", "The safety check did not finish. Your confirmation is required."))
     }

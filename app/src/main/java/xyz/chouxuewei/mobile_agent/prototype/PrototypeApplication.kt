@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.json.jsonObject
 import xyz.chouxuewei.mobile_agent.core.ChatConnection
 import xyz.chouxuewei.mobile_agent.core.ChatRuntime
 import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
@@ -120,13 +121,102 @@ class PrototypeApplication : Application() {
             usageRecorder = modelUsage::record,
             personalizedInstructions = personalization::currentInstructions,
             maxStepsPerRun = agentExecutionSettings::currentMaxSteps,
-            safetyGate = { connection ->
-                if (agentExecutionSettings.currentSafetyGateEnabled()) {
-                    LlmDecisionGate(connection.gateway)
-                } else null
+            safetyGate = { connection, runPolicy, runId ->
+                decisionGateFactory.safetyGate(connection, runPolicy, runId)
             },
+            fastPath = xyz.chouxuewei.mobile_agent.core.FastPathSupport(
+                settings = { decisionSettings.current() },
+                resolveProvider = { backend -> resolveDecisionProvider(backend) },
+                audit = { decisionAudit.record(it) },
+            ),
         )
     }
+    val decisionSettings by lazy { xyz.chouxuewei.mobile_agent.data.DecisionSettingsRepository(this) }
+
+    /** 专用决策后端闸工厂；审计事件落 Room（decision_records，只存裁决元数据）。 */
+    private val decisionGateFactory by lazy {
+        xyz.chouxuewei.mobile_agent.core.DecisionGateFactory(
+            settings = { decisionSettings.current() },
+            resolveProvider = { backend -> resolveDecisionProvider(backend) },
+            legacyGateEnabled = { agentExecutionSettings.currentSafetyGateEnabled() },
+            legacyGate = { connection -> LlmDecisionGate(connection.gateway) },
+            audit = { decisionAudit.record(it) },
+        )
+    }
+
+    /** 决策审计持久化：只落裁决元数据与请求哈希，不存请求原文/密钥。 */
+    val decisionAudit by lazy { xyz.chouxuewei.mobile_agent.data.DecisionAuditStore(this) }
+
+    /**
+     * 测试当前所选后端的连通性：发送一道最小的 choice 判定（不含任何用户数据），
+     * 返回可读摘要或抛出带原因的错误。不改变任何运行状态。
+     */
+    suspend fun testDecisionConnection(): String {
+        val snapshot = decisionSettings.current()
+        val backend = snapshot.backend
+        require(backend != xyz.chouxuewei.mobile_agent.core.DecisionBackend.NONE) {
+            localizedText("尚未选择专用后端", "No dedicated backend is selected")
+        }
+        val provider = resolveDecisionProvider(backend) ?: error(
+            localizedText(
+                "配置不完整：请检查地址、密钥与出站同意",
+                "Configuration incomplete: check the endpoint, key, and outbound consent",
+            )
+        )
+        val request = xyz.chouxuewei.mobile_agent.core.DecisionChoiceRequest(
+            purpose = xyz.chouxuewei.mobile_agent.core.DecisionPurpose.SAFETY_GATE,
+            requestId = "probe-${System.currentTimeMillis()}",
+            state = kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"probe":"connection_test"}"""
+            ).jsonObject,
+            instructions = "Connection test. Choose 'allow'.",
+            options = mapOf("allow" to "connectivity ok", "block" to "refuse"),
+        )
+        return when (val outcome = provider.choose(request)) {
+            is xyz.chouxuewei.mobile_agent.core.DecisionOutcome.Accepted -> localizedText(
+                "已连通（${outcome.choice.modelEcho ?: backend.wireName}，${outcome.choice.latencyMillis}ms，选择 ${outcome.choice.choice}）",
+                "Connected (${outcome.choice.modelEcho ?: backend.wireName}, ${outcome.choice.latencyMillis}ms, chose ${outcome.choice.choice})",
+            )
+            is xyz.chouxuewei.mobile_agent.core.DecisionOutcome.Failed -> error(
+                localizedText(
+                    "连接失败：${outcome.kind.wireName}${outcome.httpStatus?.let { "（HTTP $it）" } ?: ""}",
+                    "Connection failed: ${outcome.kind.wireName}${outcome.httpStatus?.let { " (HTTP $it)" } ?: ""}",
+                )
+            )
+        }
+    }
+
+    /** 按后端解析 provider：读取当前配置快照，未同意出站/配置不完整/密钥缺失时返回 null。 */
+    private suspend fun resolveDecisionProvider(
+        backend: xyz.chouxuewei.mobile_agent.core.DecisionBackend,
+    ): xyz.chouxuewei.mobile_agent.core.DecisionProvider? {
+        val snapshot = decisionSettings.current()
+        if (!snapshot.outboundConsent || snapshot.backend != backend) return null
+        val profile = snapshot.profileFor(backend)
+        if (!profile.hasValidBaseUrl) return null
+        // Release 构建的决策端点只接受 https；明文 http 仅限 debug 构建的本机/局域网联调。
+        if (!BuildConfig.DEBUG && profile.baseUrl.startsWith("http://")) return null
+        val apiKey = decisionSettings.resolveApiKey(backend)
+        return when (backend) {
+            xyz.chouxuewei.mobile_agent.core.DecisionBackend.LAYA ->
+                xyz.chouxuewei.mobile_agent.model.layaDecisionProvider(
+                    baseUrl = profile.baseUrl,
+                    model = profile.model.ifBlank { "typed-decisions" },
+                    apiKey = apiKey,
+                )
+            xyz.chouxuewei.mobile_agent.core.DecisionBackend.JEV -> {
+                // Jev 为托管 API，密钥缺失直接不可用（服务端会返回 401，提前本地失败更省往返）。
+                if (apiKey == null) return null
+                xyz.chouxuewei.mobile_agent.model.jevDecisionProvider(
+                    apiKey = apiKey,
+                    baseUrl = profile.baseUrl,
+                    model = profile.model.ifBlank { "jev-latest" },
+                )
+            }
+            xyz.chouxuewei.mobile_agent.core.DecisionBackend.NONE -> null
+        }
+    }
+
     private val debugModelConfig by lazy {
         ModelConfig(
             baseUrl = BuildConfig.MODEL_BASE_URL,
@@ -210,6 +300,8 @@ class PrototypeApplication : Application() {
             // 启动时没有正在写入的工具任务，适合安全回收上次异常中断留下的孤立文件。
             artifacts.cleanup()
             attachments.cleanup()
+            // 决策审计只保留最近 30 天，记录本身不含敏感原文。
+            decisionAudit.prune(System.currentTimeMillis() - 30L * 86_400_000L)
         }
         // 广告守卫：持久化配置单向灌入引擎；引擎里的修改经 persister 回写，applyPersisted 自身不触发回写。
         AdGuardEngine.persister = { snapshot ->
