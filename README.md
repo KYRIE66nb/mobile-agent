@@ -114,10 +114,11 @@ Hand "every morning" / "when a notification arrives" automations to triggers —
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
-- **Call resilience**: transient failures (408/429/5xx, connection drops, timeouts) retry with exponential backoff; when the primary profile fails outright before any output, the request can fail over to another saved profile (Settings → General → "Model failover", on by default). Content already produced is never replayed, so output cannot duplicate;
+- **Call resilience**: transient failures (408/429/5xx, connection drops, timeouts) retry with exponential backoff; when the primary profile fails outright before any output, the request can fail over to a chosen backup profile (Settings → General → "Model failover", on by default, with a dropdown to pick the backup model). Content already produced is never replayed, so output cannot duplicate;
 - **50+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, document tools (PDF/Word/Excel extract; docx/xlsx generate and surgical edit), webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing / **restricted shell** over Root or Shizuku), ad-guard rule management, recipe execution/saving, scheduled-task management, contacts/calendar queries (runtime-permission gated);
 - **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable; read-only tool calls in one round **run in parallel** (writes stay sequential), and screen observations are compactly serialized with precomputed node centers to cut per-round token cost;
-- **Capability overview**: Settings → Capabilities shows every system authorization (accessibility, notification access, usage access, overlay, notifications, microphone), advanced channels (Root/Shizuku), service configuration (model/speech), and each capability group's availability — with one-tap jumps to the matching grant screen.
+- **Capability overview**: Settings → Capabilities shows every system authorization (accessibility, notification access, usage access, overlay, notifications, microphone), advanced channels (Root/Shizuku), service configuration (model/speech), and each capability group's availability — with one-tap jumps to the matching grant screen;
+- **Data management**: Settings → Data offers conversation export/import (a JSON backup covering conversations, messages, runs, tool calls, and context snapshots; imports merge idempotently without clobbering existing records) plus 30-day artifact pruning.
 
 ## Architecture
 
@@ -169,7 +170,7 @@ Settings → Models → New profile:
 - [x] Trigger system: scheduled / notification-matched / interval tasks (scoped tools, unattended-safe)
 - [x] Non-root degraded control via Shizuku shell channel (allow-listed commands, user-granted)
 - [x] PDF / Word / Excel reading and generation (fully local, no network)
-- [x] Surgical editing of existing documents (docx paragraph-level / xlsx cell-level; images and styles preserved)
+- [x] Surgical editing of existing documents (docx paragraph-level / xlsx cell-level; images and styles preserved; XML located by a tolerant segment scanner — quoted attributes, comments, CDATA, and nested same-name elements no longer misparse)
 - [x] Notification RemoteInput quick replies (reply without opening the app; sensitive notifications excluded)
 - [x] Capability/authorization overview page (system grants + advanced channels + capability groups + one-tap setup)
 - [ ] Pluggable standalone decision-model backend (Jev-like)

@@ -42,6 +42,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
@@ -233,6 +234,7 @@ fun ChatSettings(
     var rootAccess by remember { mutableStateOf<RootAccessState?>(null) }
     var rootChanging by remember { mutableStateOf(false) }
     var cleaning by remember { mutableStateOf(false) }
+    var backupBusy by remember { mutableStateOf(false) }
     var personalizationSaving by remember { mutableStateOf(false) }
     var speechSaving by remember { mutableStateOf(false) }
     var speechTesting by remember { mutableStateOf(false) }
@@ -627,6 +629,45 @@ fun ChatSettings(
                             }
                         }
                     },
+                    backupBusy = backupBusy,
+                    onExportBackup = { uri ->
+                        scope.launch {
+                            backupBusy = true
+                            feedback = null
+                            try {
+                                app.exportBackup(uri)
+                                feedback = SettingsNotice(localizedText("备份已导出", "Backup exported"), true)
+                            } catch (failure: Exception) {
+                                feedback = SettingsNotice(
+                                    userFacingMessage(failure, localizedText("备份导出失败，请重试", "Backup export failed. Please try again.")),
+                                    false,
+                                )
+                            } finally {
+                                backupBusy = false
+                            }
+                        }
+                    },
+                    onImportBackup = { uri ->
+                        scope.launch {
+                            backupBusy = true
+                            feedback = null
+                            try {
+                                val report = app.importBackup(uri)
+                                feedback = SettingsNotice(
+                                    localizedText(
+                                        "已导入 ${report.conversations} 个对话、${report.messages} 条消息（跳过 ${report.skipped} 条已存在记录）",
+                                        "Imported ${report.conversations} conversations and ${report.messages} messages (skipped ${report.skipped} existing records)",
+                                    ), true)
+                            } catch (failure: Exception) {
+                                feedback = SettingsNotice(
+                                    userFacingMessage(failure, localizedText("备份导入失败，请检查文件", "Backup import failed. Check the file.")),
+                                    false,
+                                )
+                            } finally {
+                                backupBusy = false
+                            }
+                        }
+                    },
                 )
 
                 "capabilities" -> CapabilitiesPage(
@@ -749,6 +790,17 @@ fun ChatSettings(
                     },
                     autoFailover = autoFailover,
                     announceTasks = announceTasks,
+                    models = settings.models,
+                    selectedModelId = settings.selectedModel?.id,
+                    backupModelId = settings.backupModelId,
+                    onBackupModel = { id ->
+                        scope.launch {
+                            runCatching { app.modelSettings.setBackupModel(id) }
+                                .onFailure {
+                                    feedback = SettingsNotice(localizedText("备用模型设置未保存，请重试", "Backup model setting was not saved. Please try again."), false)
+                                }
+                        }
+                    },
                     onAutoFailover = { enabled ->
                         scope.launch {
                             runCatching { app.agentExecutionSettings.setAutoModelFailover(enabled) }
@@ -1288,8 +1340,12 @@ private fun GeneralSettings(
     onSafetyGate: (Boolean) -> Unit,
     autoFailover: Boolean,
     announceTasks: Boolean,
+    models: List<ModelProfile>,
+    selectedModelId: String?,
+    backupModelId: String?,
     onAutoFailover: (Boolean) -> Unit,
     onAnnounceTasks: (Boolean) -> Unit,
+    onBackupModel: (String?) -> Unit,
     onDeviceMode: (DeviceModePreference) -> Unit,
     onAdGuardEnabled: (Boolean) -> Unit,
     onRootEnabled: (Boolean) -> Unit,
@@ -1354,6 +1410,13 @@ private fun GeneralSettings(
             checked = autoFailover,
             onCheckedChange = onAutoFailover,
         )
+        if (autoFailover && models.size > 1) {
+            BackupModelRow(
+                models = models.filter { it.id != selectedModelId },
+                backupModelId = backupModelId,
+                onBackup = onBackupModel,
+            )
+        }
         ToggleSettingRow(
             title = localizedText("任务完成语音播报", "Speak task results"),
             caption = localizedText("定时任务执行完成后用系统语音朗读结果摘要", "Read the result summary aloud with system TTS when a scheduled task finishes"),
@@ -1600,6 +1663,76 @@ private fun ToggleSettingRow(title: String, caption: String, checked: Boolean, o
             )
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun BackupModelRow(models: List<ModelProfile>, backupModelId: String?, onBackup: (String?) -> Unit) {
+    val colors = LocalChatColors.current
+    var expanded by remember { mutableStateOf(false) }
+    val label = models.firstOrNull { it.id == backupModelId }?.name
+        ?: localizedText("自动选择", "Automatic")
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { expanded = true }
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp)
+            ) {
+                Text(localizedText("备用模型配置", "Backup model"), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    localizedText("主模型彻底失败时优先切换到此配置；自动表示任选其它可用配置", "The profile tried first when the primary fails outright; Automatic picks any other configured profile"),
+                    Modifier.padding(top = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.secondary,
+                )
+            }
+            Surface(shape = RoundedCornerShape(22.dp), color = colors.surfaceRaised) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(label.take(20), color = colors.secondary, style = MaterialTheme.typography.bodyMedium)
+                    ChatIcon(R.drawable.lucide_chevron_down, null, Modifier.padding(start = 6.dp).size(15.dp), colors.secondary)
+                }
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.align(Alignment.BottomEnd),
+        ) {
+            DropdownMenuItem(
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(localizedText("自动选择", "Automatic"), Modifier.weight(1f))
+                        if (backupModelId == null) {
+                            ChatIcon(R.drawable.lucide_circle_check, null, Modifier.padding(start = 16.dp).size(18.dp), colors.accent)
+                        }
+                    }
+                },
+                onClick = { expanded = false; onBackup(null) },
+            )
+            models.forEach { profile ->
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(profile.name.take(24), Modifier.weight(1f))
+                            if (profile.id == backupModelId) {
+                                ChatIcon(R.drawable.lucide_circle_check, null, Modifier.padding(start = 16.dp).size(18.dp), colors.accent)
+                            }
+                        }
+                    },
+                    onClick = { expanded = false; onBackup(profile.id) },
+                )
+            }
+        }
     }
 }
 
@@ -2443,7 +2576,16 @@ private fun DataSettings(
     canClean: Boolean,
     onClean: () -> Unit,
     onPrune: () -> Unit,
+    backupBusy: Boolean,
+    onExportBackup: (android.net.Uri) -> Unit,
+    onImportBackup: (android.net.Uri) -> Unit,
 ) {
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> uri?.let(onExportBackup) }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> uri?.let(onImportBackup) }
     val colors = LocalChatColors.current
     val configuredIds = models.mapTo(mutableSetOf(), ModelProfile::id)
     val usageByProfile = usage.associateBy(ModelUsageSummary::modelProfileId)
@@ -2522,6 +2664,40 @@ private fun DataSettings(
                 shape = RoundedCornerShape(15.dp),
             ) {
                 Text(localizedText("清理 30 天前产物", "Remove artifacts older than 30 days"))
+            }
+        }
+
+        Text(localizedText("备份与恢复", "Backup & restore"), style = MaterialTheme.typography.titleSmall)
+        SettingsCard {
+            Text(
+                localizedText(
+                    "导出全部对话（含执行明细）为 JSON 文件；导入时按记录主键合并，已存在的对话不会重复。附件文件本身不随备份携带。",
+                    "Export all conversations (with run/tool-call detail) to a JSON file; importing merges by record id — existing conversations are never duplicated. Attachment files are not embedded in the backup.",
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US)
+                            .format(java.util.Date())
+                        exportLauncher.launch("mobile-agent-backup-$stamp.json")
+                    },
+                    enabled = !backupBusy,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(15.dp),
+                ) {
+                    Text(if (backupBusy) localizedText("处理中…", "Working…") else localizedText("导出备份", "Export backup"))
+                }
+                OutlinedButton(
+                    onClick = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                    enabled = !backupBusy,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(15.dp),
+                ) {
+                    Text(localizedText("导入备份", "Import backup"))
+                }
             }
         }
 

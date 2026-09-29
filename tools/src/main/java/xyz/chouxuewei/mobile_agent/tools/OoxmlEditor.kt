@@ -18,7 +18,114 @@ import kotlinx.serialization.json.jsonPrimitive
  * 保真策略：只重写目标 XML 片段（docx 按 <w:p> 段落，xlsx 按 <c> 单元格），
  * 其余 zip 条目（图片、样式、主题）原样透传，最大限度保留原文件格式。
  * 段落修改保留 pPr 与首 run 的 rPr；xlsx 新值一律写 inlineStr，不动 sharedStrings。
+ *
+ * XML 定位经 [XmlSegments]：引号包裹的属性值、注释/CDATA/处理指令、
+ * 同名元素嵌套（文本框内的 w:p）都按真实语法扫描，不再用正则近似。
  */
+internal object XmlSegments {
+
+    /** 原始标签切片：[start, endExclusive) 覆盖 `<name ...>` / `</name>` / `<name/>`。 */
+    class Tag(
+        val name: String,
+        val end: Boolean,
+        val selfClosing: Boolean,
+        val start: Int,
+        val endExclusive: Int,
+    )
+
+    /** 元素区间：start..end 覆盖完整元素；openEnd..closeStart 是内部内容（自闭合时为空）。 */
+    class Element(val start: Int, val openEnd: Int, val closeStart: Int, val end: Int)
+
+    /** 产出原始标签流；注释、CDATA、PI、DOCTYPE 直接跳过，裸 '<' 视为文本。 */
+    fun tags(xml: String): Sequence<Tag> = sequence {
+        var i = 0
+        val n = xml.length
+        while (i < n) {
+            val open = xml.indexOf('<', i)
+            if (open < 0) break
+            val skipped = when {
+                xml.startsWith("<!--", open) -> "-->"
+                xml.startsWith("<![CDATA[", open) -> "]]>"
+                xml.startsWith("<?", open) -> "?>"
+                xml.startsWith("<!", open) -> ">"
+                else -> null
+            }
+            if (skipped != null) {
+                val close = xml.indexOf(skipped, open + 4)
+                i = if (close < 0) n else close + skipped.length
+                continue
+            }
+            var j = open + 1
+            var isEnd = false
+            if (j < n && xml[j] == '/') { isEnd = true; j++ }
+            val nameStart = j
+            while (j < n && !xml[j].isWhitespace() && xml[j] != '>' && xml[j] != '/') j++
+            val name = xml.substring(nameStart, j)
+            if (name.isEmpty()) { i = open + 1; continue }
+            var quote: Char? = null
+            while (j < n) {
+                val c = xml[j]
+                when {
+                    quote != null -> if (c == quote) quote = null
+                    c == '"' || c == '\'' -> quote = c
+                    c == '>' -> break
+                }
+                j++
+            }
+            if (j >= n) break
+            val selfClosing = !isEnd && xml.getOrNull(j - 1) == '/'
+            yield(Tag(name, isEnd, selfClosing, open, j + 1))
+            i = j + 1
+        }
+    }
+
+    /** 最外层同名元素区间（含嵌套同名时的外层整体），按文档顺序返回。 */
+    fun elements(xml: String, name: String): List<Element> {
+        val out = ArrayList<Element>()
+        val open = ArrayDeque<Pair<Int, Int>>()
+        for (tag in tags(xml)) {
+            if (tag.name != name) continue
+            when {
+                tag.end -> if (open.isNotEmpty()) {
+                    val (start, openEnd) = open.removeLast()
+                    if (open.isEmpty()) out += Element(start, openEnd, tag.start, tag.endExclusive)
+                }
+                tag.selfClosing -> out += Element(tag.start, tag.endExclusive, tag.endExclusive, tag.endExclusive)
+                else -> open.addLast(tag.start to tag.endExclusive)
+            }
+        }
+        return out
+    }
+
+    /** 标签原始文本内的属性表：顺序无关，属性值原样保留（需要反转义时由调用方处理）。 */
+    fun attributes(tagText: String): Map<String, String> {
+        val attrs = LinkedHashMap<String, String>()
+        var i = tagText.indexOfFirst { it.isWhitespace() || it == '/' || it == '>' }
+        if (i < 0) return attrs
+        while (i < tagText.length) {
+            while (i < tagText.length && (tagText[i].isWhitespace() || tagText[i] == '/')) i++
+            if (i >= tagText.length || tagText[i] == '>') break
+            val nameStart = i
+            while (i < tagText.length && tagText[i] != '=' && !tagText[i].isWhitespace() &&
+                tagText[i] != '>' && tagText[i] != '/') i++
+            val name = tagText.substring(nameStart, i)
+            while (i < tagText.length && tagText[i].isWhitespace()) i++
+            if (i < tagText.length && tagText[i] == '=') {
+                i++
+                while (i < tagText.length && tagText[i].isWhitespace()) i++
+                if (i < tagText.length && (tagText[i] == '"' || tagText[i] == '\'')) {
+                    val q = tagText[i++]
+                    val vStart = i
+                    while (i < tagText.length && tagText[i] != q) i++
+                    if (name.isNotEmpty()) attrs[name] = tagText.substring(vStart, i)
+                    i++
+                }
+            } else if (name.isNotEmpty()) attrs[name] = ""
+        }
+        return attrs
+    }
+}
+
 object OoxmlEditor {
 
     // ---------- zip ----------
@@ -62,15 +169,14 @@ object OoxmlEditor {
 
     // ==================== DOCX ====================
 
-    private val docxParagraph = Regex("<w:p\\b[^>]*/>|<w:p\\b[^>]*>.*?</w:p>", RegexOption.DOT_MATCHES_ALL)
-
-    fun docxParagraphs(xml: String): List<MatchResult> = docxParagraph.findAll(xml).toList()
+    fun docxParagraphs(xml: String): List<String> =
+        XmlSegments.elements(xml, "w:p").map { xml.substring(it.start, it.end) }
 
     fun docxParagraphText(paragraphXml: String): String = unescapeXml(
         paragraphXml
             .replace(Regex("<w:tab\\s*/>"), "\t")
             .replace(Regex("<w:br\\s*/>|<w:cr\\s*/>"), "\n")
-            .replace(Regex("<[^>]+>"), ""),
+            .stripXmlMarkup(),
     )
 
     fun extractDocxText(bytes: ByteArray): String {
@@ -79,8 +185,29 @@ object OoxmlEditor {
         xml = xml.replace(Regex("<w:tab\\s*/>"), "\t")
             .replace(Regex("<w:br\\s*/>|<w:cr\\s*/>"), "\n")
             .replace(Regex("</w:p>"), "\n")
-        return unescapeXml(xml.replace(Regex("<[^>]+>"), ""))
+        return unescapeXml(xml.stripXmlMarkup())
             .replace(Regex("\\n{3,}"), "\n\n").trim()
+    }
+
+    /** 剔除真实标签保留文本节点；扫描器跳过的注释整段丢弃，CDATA 解包保留内容。 */
+    private fun String.stripXmlMarkup(): String {
+        val sb = StringBuilder(length)
+        var cursor = 0
+        XmlSegments.tags(this).forEach { tag ->
+            sb.append(this, cursor, tag.start)
+            cursor = tag.endExclusive
+        }
+        sb.append(this, cursor, length)
+        return sb.toString()
+            .replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
+            .replace("<![CDATA[", "")
+            .replace("]]>", "")
+    }
+
+    /** 在首个 `</name>` 闭合标签前插入片段；标签缺失时原样返回。 */
+    private fun String.insertBeforeClose(name: String, snippet: String): String {
+        val tag = XmlSegments.tags(this).firstOrNull { it.name == name && it.end } ?: return this
+        return substring(0, tag.start) + snippet + substring(tag.start)
     }
 
     data class DocxInspection(val totalParagraphs: Int, val paragraphs: List<ParagraphInfo>)
@@ -90,8 +217,8 @@ object OoxmlEditor {
         val doc = zipEntries(bytes)["word/document.xml"] ?: error("DOCX 缺少 word/document.xml")
         val xml = String(doc, Charsets.UTF_8)
         val all = docxParagraphs(xml)
-        val listed = all.mapIndexedNotNull { index, m ->
-            val text = docxParagraphText(m.value).trim()
+        val listed = all.mapIndexedNotNull { index, paragraphXml ->
+            val text = docxParagraphText(paragraphXml).trim()
             if (text.isEmpty()) null else ParagraphInfo(index, text.take(80))
         }.take(maxListed)
         return DocxInspection(all.size, listed)
@@ -99,25 +226,25 @@ object OoxmlEditor {
 
     /** 保留 pPr 和首 run 的 rPr，重写段落正文为单 run 纯文本。 */
     private fun rewriteParagraph(paragraphXml: String, text: String): String {
-        val openEnd = paragraphXml.indexOf('>')
-        if (openEnd < 0) return paragraphXml
-        val openTag = paragraphXml.substring(0, openEnd + 1)
-        val runBody = "<w:r>${extractOrEmpty(paragraphXml, "<w:rPr>")}<w:t xml:space=\"preserve\">${escapeXml(text)}</w:t></w:r>"
-        if (openTag.endsWith("/>")) {
-            return openTag.removeSuffix("/") + ">" + runBody + "</w:p>"
+        val openTag = XmlSegments.tags(paragraphXml).firstOrNull { !it.end } ?: return paragraphXml
+        val openTagText = paragraphXml.substring(openTag.start, openTag.endExclusive)
+        val runBody = "<w:r>${extractOrEmpty(paragraphXml, "w:rPr")}<w:t xml:space=\"preserve\">${escapeXml(text)}</w:t></w:r>"
+        if (openTag.selfClosing) {
+            return openTagText.dropLast(2) + ">" + runBody + "</w:p>"
         }
-        val inner = paragraphXml.substring(openEnd + 1, paragraphXml.lastIndexOf("</w:p>").takeIf { it >= 0 } ?: paragraphXml.length)
-        val pPr = extractOrEmpty(inner, "<w:pPr>")
-        return "$openTag$pPr$runBody</w:p>"
+        val closeStart = XmlSegments.tags(paragraphXml)
+            .lastOrNull { it.end && it.name == "w:p" }?.start ?: paragraphXml.length
+        val inner = paragraphXml.substring(openTag.endExclusive, closeStart)
+        val pPr = extractOrEmpty(inner, "w:pPr")
+        return "$openTagText$pPr$runBody</w:p>"
     }
 
-    private fun extractOrEmpty(xml: String, tag: String): String =
-        Regex("${Regex.escape(tag)}.*?</${tag.drop(1).dropLast(1)}>", RegexOption.DOT_MATCHES_ALL)
-            .find(xml)?.value.orEmpty()
+    private fun extractOrEmpty(xml: String, name: String): String =
+        XmlSegments.elements(xml, name).firstOrNull()?.let { xml.substring(it.start, it.end) }.orEmpty()
 
     private fun newParagraph(text: String, templateXml: String?): String {
-        val pPr = templateXml?.let { extractOrEmpty(it, "<w:pPr>") }.orEmpty()
-        val rPr = templateXml?.let { extractOrEmpty(it, "<w:rPr>") }.orEmpty()
+        val pPr = templateXml?.let { extractOrEmpty(it, "w:pPr") }.orEmpty()
+        val rPr = templateXml?.let { extractOrEmpty(it, "w:rPr") }.orEmpty()
         return "<w:p>$pPr<w:r>$rPr<w:t xml:space=\"preserve\">${escapeXml(text)}</w:t></w:r></w:p>"
     }
 
@@ -125,12 +252,13 @@ object OoxmlEditor {
     private fun transformDocxParagraphs(xml: String, transform: (index: Int, paragraphXml: String, text: String) -> String?): String {
         val sb = StringBuilder(xml.length + 256)
         var cursor = 0
-        docxParagraph.findAll(xml).forEachIndexed { index, m ->
-            val replacement = transform(index, m.value, docxParagraphText(m.value))
+        XmlSegments.elements(xml, "w:p").forEachIndexed { index, element ->
+            val paragraphXml = xml.substring(element.start, element.end)
+            val replacement = transform(index, paragraphXml, docxParagraphText(paragraphXml))
             if (replacement != null) {
-                sb.append(xml, cursor, m.range.first)
+                sb.append(xml, cursor, element.start)
                 sb.append(replacement)
-                cursor = m.range.last + 1
+                cursor = element.end
             }
         }
         sb.append(xml, cursor, xml.length)
@@ -168,21 +296,19 @@ object OoxmlEditor {
                     val text = requiredString(op, "text")
                     xml = transformDocxParagraphs(xml) { i, px, _ -> if (i == after) px + newParagraph(text, px) else null }
                     if (after == -1) {
-                        Regex("<w:body\\b[^>]*>").find(xml)?.let { m ->
-                            xml = xml.substring(0, m.range.last + 1) + newParagraph(text, null) + xml.substring(m.range.last + 1)
+                        XmlSegments.tags(xml).firstOrNull { it.name == "w:body" && !it.end }?.let { tag ->
+                            xml = xml.substring(0, tag.endExclusive) + newParagraph(text, null) + xml.substring(tag.endExclusive)
                         }
                     }
                     applied++
                 }
                 "append" -> {
                     val text = requiredString(op, "text")
-                    val lastPara = docxParagraphs(xml).lastOrNull()?.value
+                    val lastPara = docxParagraphs(xml).lastOrNull()
                     val para = newParagraph(text, lastPara)
-                    xml = if (xml.contains("<w:sectPr")) {
-                        xml.replaceFirst(Regex("<w:sectPr\\b"), para + "<w:sectPr")
-                    } else {
-                        xml.replace("</w:body>", para + "</w:body>")
-                    }
+                    xml = XmlSegments.tags(xml).firstOrNull { it.name == "w:sectPr" && !it.end }?.let { sect ->
+                        xml.substring(0, sect.start) + para + xml.substring(sect.start)
+                    } ?: xml.insertBeforeClose("w:body", para)
                     applied++
                 }
                 "replace" -> {
@@ -211,7 +337,7 @@ object OoxmlEditor {
     // ==================== XLSX ====================
 
     private fun String.extractXmlTag(tag: String): String? =
-        Regex("<$tag[^>]*>(.*?)</$tag>", RegexOption.DOT_MATCHES_ALL).find(this)?.groupValues?.get(1)
+        XmlSegments.elements(this, tag).firstOrNull()?.let { substring(it.openEnd, it.closeStart) }
 
     private fun String.columnIndex(): Int {
         var value = 0
@@ -235,24 +361,32 @@ object OoxmlEditor {
     private fun sharedStrings(entries: Map<String, ByteArray>): List<String> =
         entries["xl/sharedStrings.xml"]?.let { raw ->
             val xml = String(raw, Charsets.UTF_8)
-            Regex("<si>(.*?)</si>", RegexOption.DOT_MATCHES_ALL).findAll(xml).map { si ->
-                unescapeXml(Regex("<t[^>]*>(.*?)</t>", RegexOption.DOT_MATCHES_ALL)
-                    .findAll(si.groupValues[1]).joinToString("") { it.groupValues[1] })
-            }.toList()
+            XmlSegments.elements(xml, "si").map { si ->
+                val inner = xml.substring(si.openEnd, si.closeStart)
+                unescapeXml(XmlSegments.elements(inner, "t")
+                    .joinToString("") { inner.substring(it.openEnd, it.closeStart) })
+            }
         } ?: emptyList()
 
-    /** sheet 名 → 文件路径：workbook.xml 的 r:id 经 workbook.xml.rels 解析。 */
+    /** sheet 名 → 文件路径：workbook.xml 的 r:id 经 workbook.xml.rels 解析；属性顺序无关。 */
     data class SheetRef(val name: String, val file: String, val rId: String)
 
     fun sheetMap(entries: Map<String, ByteArray>): List<SheetRef> {
         val workbook = entries["xl/workbook.xml"]?.let { String(it, Charsets.UTF_8) } ?: return emptyList()
         val rels = entries["xl/_rels/workbook.xml.rels"]?.let { String(it, Charsets.UTF_8) }.orEmpty()
-        val relMap = Regex("<Relationship[^>]*Id=\"([^\"]+)\"[^>]*Target=\"([^\"]+)\"")
-            .findAll(rels).associate { it.groupValues[1] to it.groupValues[2] }
-        val declared = Regex("<sheet[^>]*name=\"([^\"]+)\"[^>]*r:id=\"([^\"]+)\"")
-            .findAll(workbook).map { m ->
-                val target = relMap[m.groupValues[2]] ?: "worksheets/sheet${m.groupValues[2].removePrefix("rId")}.xml"
-                SheetRef(unescapeXml(m.groupValues[1]), "xl/" + target.removePrefix("/"), m.groupValues[2])
+        val relMap = XmlSegments.tags(rels)
+            .filter { it.name == "Relationship" }
+            .associate { tag ->
+                val attrs = XmlSegments.attributes(rels.substring(tag.start, tag.endExclusive))
+                (attrs["Id"].orEmpty()) to (attrs["Target"].orEmpty())
+            }
+        val declared = XmlSegments.tags(workbook)
+            .filter { it.name == "sheet" }
+            .map { tag ->
+                val attrs = XmlSegments.attributes(workbook.substring(tag.start, tag.endExclusive))
+                val rId = attrs["r:id"].orEmpty()
+                val target = relMap[rId] ?: "worksheets/sheet${rId.removePrefix("rId")}.xml"
+                SheetRef(unescapeXml(attrs["name"].orEmpty()), "xl/" + target.removePrefix("/"), rId)
             }.toList()
         if (declared.isNotEmpty()) return declared
         // 兜底：没有 workbook 声明时按文件名排序猜
@@ -264,25 +398,24 @@ object OoxmlEditor {
     /** 把一个 sheet xml 解析成行列表（每行 col 数对齐）。 */
     fun parseSheetRows(sheetXml: String, shared: List<String>): List<List<String>> {
         val rows = mutableListOf<List<String>>()
-        Regex("<row[^>]*>(.*?)</row>", RegexOption.DOT_MATCHES_ALL).findAll(sheetXml).forEach { row ->
+        XmlSegments.elements(sheetXml, "row").forEach { row ->
+            val rowInner = sheetXml.substring(row.openEnd, row.closeStart)
             val cells = mutableListOf<Pair<Int, String>>()
             var sequentialCol = 0
-            Regex("<c\\b([^>]*?)(?:/>|>(.*?)</c>)", RegexOption.DOT_MATCHES_ALL)
-                .findAll(row.groupValues[1]).forEach { c ->
-                    val attrs = c.groupValues[1]
-                    val body = c.groupValues[2]
-                    val ref = Regex("r=\"([A-Z]+)\\d+\"").find(attrs)?.groupValues?.get(1)
-                    val col = ref?.columnIndex() ?: sequentialCol
-                    sequentialCol = col + 1
-                    if (body.isEmpty()) return@forEach
-                    val type = Regex("t=\"([^\"]+)\"").find(attrs)?.groupValues?.get(1)
-                    val value = when (type) {
-                        "s" -> body.extractXmlTag("v")?.toIntOrNull()?.let { shared.getOrNull(it) } ?: ""
-                        "inlineStr" -> body.extractXmlTag("t") ?: body.extractXmlTag("is")?.extractXmlTag("t") ?: ""
-                        else -> body.extractXmlTag("v") ?: ""
-                    }
-                    cells += col to unescapeXml(value)
+            XmlSegments.elements(rowInner, "c").forEach { cell ->
+                val attrs = XmlSegments.attributes(rowInner.substring(cell.start, cell.openEnd))
+                val body = rowInner.substring(cell.openEnd, cell.closeStart)
+                val ref = attrs["r"]?.let { Regex("([A-Z]+)\\d+").find(it)?.groupValues?.get(1) }
+                val col = ref?.columnIndex() ?: sequentialCol
+                sequentialCol = col + 1
+                if (body.isEmpty()) return@forEach
+                val value = when (attrs["t"]) {
+                    "s" -> body.extractXmlTag("v")?.toIntOrNull()?.let { shared.getOrNull(it) } ?: ""
+                    "inlineStr" -> body.extractXmlTag("t") ?: body.extractXmlTag("is")?.extractXmlTag("t") ?: ""
+                    else -> body.extractXmlTag("v") ?: ""
                 }
+                cells += col to unescapeXml(value)
+            }
             if (cells.isNotEmpty()) {
                 val maxCol = cells.maxOf { it.first }
                 val rowValues = Array(maxCol + 1) { "" }
@@ -346,35 +479,43 @@ object OoxmlEditor {
         val newCell = """<c r="$ref" t="inlineStr"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>"""
         var warning: String? = null
         var xml = sheetXml
-        val rowRegex = Regex("(<row\\b[^>]*r=\"$rowNum\"[^>]*>)(.*?)(</row>)", RegexOption.DOT_MATCHES_ALL)
-        val rowMatch = rowRegex.find(xml)
-        if (rowMatch != null) {
-            var rowInner = rowMatch.groupValues[2]
-            val cellRegex = Regex("<c\\b[^>]*r=\"$ref\"[^>]*?(/>|>.*?</c>)", RegexOption.DOT_MATCHES_ALL)
-            val cellMatch = cellRegex.find(rowInner)
-            if (cellMatch != null) {
-                if (cellMatch.value.contains("<f>") || cellMatch.value.contains("<f ")) {
+        fun rowAttr(element: XmlSegments.Element, name: String): String? =
+            XmlSegments.attributes(xml.substring(element.start, element.openEnd))[name]
+        val rowElement = XmlSegments.elements(xml, "row")
+            .firstOrNull { rowAttr(it, "r")?.toIntOrNull() == rowNum }
+        if (rowElement != null) {
+            var rowInner = xml.substring(rowElement.openEnd, rowElement.closeStart)
+            fun cellRef(element: XmlSegments.Element): String? =
+                XmlSegments.attributes(rowInner.substring(element.start, element.openEnd))["r"]
+            val cellElement = XmlSegments.elements(rowInner, "c")
+                .firstOrNull { cellRef(it) == ref }
+            if (cellElement != null) {
+                val cellXml = rowInner.substring(cellElement.start, cellElement.end)
+                if (cellXml.contains("<f>") || cellXml.contains("<f ")) {
                     warning = "单元格 $ref 原有公式已被覆盖为静态值"
                 }
-                rowInner = rowInner.replaceRange(cellMatch.range, newCell)
+                rowInner = rowInner.substring(0, cellElement.start) + newCell + rowInner.substring(cellElement.end)
             } else {
                 // 按列序插入
-                val insertAt = Regex("<c\\b[^>]*r=\"([A-Z]+)\\d+\"").findAll(rowInner)
-                    .firstOrNull { it.groupValues[1].columnIndex() > col }?.range?.first ?: rowInner.length
+                val insertAt = XmlSegments.elements(rowInner, "c").firstOrNull { element ->
+                    cellRef(element)?.let { Regex("([A-Z]+)").find(it)?.value?.columnIndex()?.let { c -> c > col } } == true
+                }?.start ?: rowInner.length
                 rowInner = rowInner.substring(0, insertAt) + newCell + rowInner.substring(insertAt)
             }
-            xml = xml.replaceRange(rowMatch.range, rowMatch.groupValues[1] + rowInner + rowMatch.groupValues[3])
+            xml = xml.substring(0, rowElement.openEnd) + rowInner + xml.substring(rowElement.closeStart)
         } else {
             // 插入新行（按行号排序进 sheetData）
             val newRow = "<row r=\"$rowNum\">$newCell</row>"
-            val sheetData = Regex("(</?sheetData[^>]*>)", RegexOption.DOT_MATCHES_ALL)
-            if (xml.contains("<sheetData/>")) {
-                xml = xml.replace("<sheetData/>", "<sheetData>$newRow</sheetData>")
+            val selfClosed = XmlSegments.tags(xml).firstOrNull { it.name == "sheetData" && it.selfClosing }
+            xml = if (selfClosed != null) {
+                xml.substring(0, selfClosed.start) + "<sheetData>$newRow</sheetData>" + xml.substring(selfClosed.endExclusive)
             } else {
-                val insertPos = Regex("<row\\b[^>]*r=\"(\\d+)\"").findAll(xml)
-                    .firstOrNull { it.groupValues[1].toInt() > rowNum }?.range?.first
-                    ?: Regex("</sheetData>").find(xml)?.range?.first ?: error("sheet 缺少 sheetData")
-                xml = xml.substring(0, insertPos) + newRow + xml.substring(insertPos)
+                val insertPos = XmlSegments.elements(xml, "row").firstOrNull {
+                    (rowAttr(it, "r")?.toIntOrNull() ?: 0) > rowNum
+                }?.start
+                    ?: XmlSegments.tags(xml).firstOrNull { it.name == "sheetData" && it.end }?.start
+                    ?: error("sheet 缺少 sheetData")
+                xml.substring(0, insertPos) + newRow + xml.substring(insertPos)
             }
         }
         return xml to warning
@@ -400,16 +541,21 @@ object OoxmlEditor {
                         "append_row" -> {
                             val values = op["values"]?.jsonArray?.map { it.jsonPrimitive.contentOrNull ?: "" }
                                 ?: error("append_row 缺少 values 数组")
-                            val rows = Regex("<row\\b[^>]*r=\"(\\d+)\"").findAll(xml)
-                                .mapNotNull { it.groupValues[1].toIntOrNull() }.toList()
-                            val next = (rows.maxOrNull() ?: 0) + 1
+                            val next = XmlSegments.elements(xml, "row")
+                                .mapNotNull {
+                                    XmlSegments.attributes(xml.substring(it.start, it.openEnd))["r"]?.toIntOrNull()
+                                }.maxOrNull()?.plus(1) ?: 1
                             val cellsXml = values.mapIndexed { ci, v ->
                                 """<c r="${columnName(ci)}$next" t="inlineStr"><is><t xml:space="preserve">${escapeXml(v)}</t></is></c>"""
                             }.joinToString("")
-                            xml = if (xml.contains("<sheetData/>")) {
-                                xml.replace("<sheetData/>", "<sheetData><row r=\"$next\">$cellsXml</row></sheetData>")
+                            val newRow = "<row r=\"$next\">$cellsXml</row>"
+                            val selfClosed = XmlSegments.tags(xml).firstOrNull { it.name == "sheetData" && it.selfClosing }
+                            xml = if (selfClosed != null) {
+                                xml.substring(0, selfClosed.start) + "<sheetData>$newRow</sheetData>" + xml.substring(selfClosed.endExclusive)
                             } else {
-                                xml.replace("</sheetData>", "<row r=\"$next\">$cellsXml</row></sheetData>")
+                                XmlSegments.tags(xml).firstOrNull { it.name == "sheetData" && it.end }?.let { end ->
+                                    xml.substring(0, end.start) + newRow + xml.substring(end.start)
+                                } ?: error("sheet 缺少 sheetData")
                             }
                         }
                         "clear_range" -> {
@@ -418,13 +564,16 @@ object OoxmlEditor {
                             val (c1, r1) = cellRefParts(parts[0]); val (c2, r2) = cellRefParts(parts[1])
                             val (loC, hiC) = minOf(c1, c2) to maxOf(c1, c2)
                             val (loR, hiR) = minOf(r1, r2) to maxOf(r1, r2)
-                            var cleared = 0
-                            xml = Regex("<c\\b[^>]*r=\"([A-Z]+)(\\d+)\"[^>]*?(/>|>.*?</c>)", RegexOption.DOT_MATCHES_ALL)
-                                .replace(xml) { m ->
-                                    val col = m.groupValues[1].columnIndex(); val row = m.groupValues[2].toInt() - 1
-                                    if (col in loC..hiC && row in loR..hiR) { cleared++; "" } else m.value
-                                }
-                            warnings += "[${sheet.name}] 已清空 ${parts[0]}:${parts[1]} 共 $cleared 个单元格"
+                            val spans = XmlSegments.elements(xml, "c").filter { element ->
+                                val ref = XmlSegments.attributes(xml.substring(element.start, element.openEnd))["r"]
+                                ref?.let { Regex("([A-Z]+)(\\d+)").find(it) }?.let { m ->
+                                    m.groupValues[1].columnIndex() in loC..hiC &&
+                                        m.groupValues[2].toInt() - 1 in loR..hiR
+                                } == true
+                            }
+                            xml = spans.sortedByDescending { it.start }
+                                .fold(xml) { acc, el -> acc.removeRange(el.start, el.end) }
+                            warnings += "[${sheet.name}] 已清空 ${parts[0]}:${parts[1]} 共 ${spans.size} 个单元格"
                         }
                     }
                     entries[sheet.file] = xml.toByteArray(Charsets.UTF_8)
@@ -444,16 +593,16 @@ object OoxmlEditor {
                         """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>"""
                             .toByteArray(Charsets.UTF_8)
                     entries["xl/workbook.xml"] = String(entries.getValue("xl/workbook.xml"), Charsets.UTF_8)
-                        .replace("</sheets>", """<sheet name="${escapeXml(name)}" sheetId="${sheets.size + 1}" r:id="rId$nextRId"/></sheets>""")
+                        .insertBeforeClose("sheets", """<sheet name="${escapeXml(name)}" sheetId="${sheets.size + 1}" r:id="rId$nextRId"/>""")
                         .toByteArray(Charsets.UTF_8)
                     entries["xl/_rels/workbook.xml.rels"]?.let {
                         entries["xl/_rels/workbook.xml.rels"] = String(it, Charsets.UTF_8)
-                            .replace("</Relationships>", """<Relationship Id="rId$nextRId" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet$nextFileNum.xml"/></Relationships>""")
+                            .insertBeforeClose("Relationships", """<Relationship Id="rId$nextRId" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet$nextFileNum.xml"/>""")
                             .toByteArray(Charsets.UTF_8)
                     }
                     entries["[Content_Types].xml"]?.let {
                         entries["[Content_Types].xml"] = String(it, Charsets.UTF_8)
-                            .replace("</Types>", """<Override PartName="/xl/worksheets/sheet$nextFileNum.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>""")
+                            .insertBeforeClose("Types", """<Override PartName="/xl/worksheets/sheet$nextFileNum.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>""")
                             .toByteArray(Charsets.UTF_8)
                     }
                     applied++

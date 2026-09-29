@@ -106,4 +106,15 @@ internal interface ConversationDao {
     suspend fun interruptToolCalls(now: Long, error: String)
     @Query("UPDATE tool_calls SET result=:replacement, updatedAt=:now WHERE toolId IN (:toolIds) AND result IS NOT NULL AND result != :replacement")
     suspend fun expireToolResults(toolIds: List<String>, replacement: String, now: Long)
+
+    // ---- 备份导出/导入：全量快照 + 主键冲突忽略的幂等合并 ----
+    @Query("SELECT * FROM messages") suspend fun allMessages(): List<MessageEntity>
+    @Query("SELECT * FROM runs") suspend fun allRuns(): List<RunEntity>
+    @Query("SELECT * FROM tool_calls") suspend fun allToolCalls(): List<ToolCallEntity>
+    @Query("SELECT * FROM context_snapshots") suspend fun allSnapshots(): List<SnapshotEntity>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun importConversations(rows: List<ConversationEntity>): List<Long>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun importMessages(rows: List<MessageEntity>): List<Long>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun importRuns(rows: List<RunEntity>): List<Long>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun importToolCalls(rows: List<ToolCallEntity>): List<Long>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun importSnapshots(rows: List<SnapshotEntity>): List<Long>
 }

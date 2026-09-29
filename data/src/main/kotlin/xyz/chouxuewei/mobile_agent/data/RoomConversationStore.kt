@@ -143,6 +143,49 @@ class RoomConversationStore internal constructor(private val database: AgentData
     override suspend fun expireToolResults(toolIds: Set<String>, replacement: String) {
         if (toolIds.isNotEmpty()) dao.expireToolResults(toolIds.toList(), replacement, System.currentTimeMillis())
     }
+
+    // ---- 备份：实体行原样序列化，导入按主键冲突忽略幂等合并 ----
+
+    data class BackupReport(
+        val conversations: Int,
+        val messages: Int,
+        val runs: Int,
+        val toolCalls: Int,
+        val skipped: Int,
+    )
+
+    suspend fun exportBackupJson(): String = ConversationBackup.encode(
+        ConversationBackup.Bundle(
+            conversations = dao.conversations(),
+            messages = dao.allMessages(),
+            runs = dao.allRuns(),
+            toolCalls = dao.allToolCalls(),
+            snapshots = dao.allSnapshots(),
+        )
+    )
+
+    /** 导入备份 JSON；已存在的行（同主键）跳过，孤儿明细不挂到同名 id 的旧会话下。返回实际插入条数。 */
+    suspend fun importBackupJson(raw: String): BackupReport = database.withTransaction {
+        val bundle = ConversationBackup.decode(raw)
+        val insertedConvs = dao.importConversations(bundle.conversations).count { it >= 0 }
+        val validConvIds = bundle.conversations.map { it.id }.toSet()
+            .intersect(dao.conversations().map { it.id }.toSet())
+        val messages = bundle.messages.filter { it.conversationId in validConvIds }
+        val runs = bundle.runs.filter { it.conversationId in validConvIds }
+        val toolCalls = bundle.toolCalls.filter { it.conversationId in validConvIds }
+        val snapshots = bundle.snapshots.filter { it.conversationId in validConvIds }
+        BackupReport(
+            conversations = insertedConvs,
+            messages = dao.importMessages(messages).count { it >= 0 },
+            runs = dao.importRuns(runs).count { it >= 0 },
+            toolCalls = dao.importToolCalls(toolCalls).count { it >= 0 },
+            skipped = (bundle.conversations.size - insertedConvs) +
+                (bundle.messages.size - messages.size) +
+                (bundle.runs.size - runs.size) +
+                (bundle.toolCalls.size - toolCalls.size) +
+                (bundle.snapshots.size - snapshots.size),
+        )
+    }
 }
 
 internal fun encodeAttachments(values: List<AttachmentRef>): String = buildJsonArray { values.forEach {
