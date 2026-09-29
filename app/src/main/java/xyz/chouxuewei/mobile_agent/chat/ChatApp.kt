@@ -124,6 +124,7 @@ import xyz.chouxuewei.mobile_agent.core.Artifact
 import xyz.chouxuewei.mobile_agent.core.ContextSnapshot
 import xyz.chouxuewei.mobile_agent.core.ContextUsage
 import xyz.chouxuewei.mobile_agent.core.Conversation
+import xyz.chouxuewei.mobile_agent.core.isTriggerConversation
 import xyz.chouxuewei.mobile_agent.core.Message
 import xyz.chouxuewei.mobile_agent.core.MessageRole
 import xyz.chouxuewei.mobile_agent.core.MessageStatus
@@ -160,6 +161,7 @@ fun ChatApp(app: PrototypeApplication) {
     val workspace = app.chatWorkspace
     val current by workspace.current.collectAsState()
     val all by app.conversations.observeConversations().collectAsState(emptyList())
+    val visibleConversations = all.filterNot(Conversation::isTriggerConversation)
     val drafts by workspace.drafts.collectAsState()
     val active by app.chatRuntime.active.collectAsState()
     val notices by app.chatRuntime.notices.collectAsState()
@@ -363,7 +365,7 @@ fun ChatApp(app: PrototypeApplication) {
                     drawerContainerColor = colors.surface,
                 ) {
                     HistoryDrawer(
-                        conversations = all,
+                        conversations = visibleConversations,
                         current = current,
                         active = active,
                         search = search,
@@ -519,7 +521,7 @@ fun ChatApp(app: PrototypeApplication) {
         if (pendingApproval == null && pendingQuestion == null) incomingShare?.let { share ->
             IncomingShareSheet(
                 share = share,
-                conversations = all,
+                conversations = visibleConversations,
                 currentConversationId = current,
                 onNewConversation = { workspace.acceptShare(null, share) },
                 onConversation = { id -> workspace.acceptShare(id, share) },

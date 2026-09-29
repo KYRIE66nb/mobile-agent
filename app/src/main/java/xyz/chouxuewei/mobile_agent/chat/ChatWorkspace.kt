@@ -32,7 +32,10 @@ class ChatWorkspace(private val app: PrototypeApplication) {
             app.chatRuntime.ready()
             app.modelSettings.seedDebugDefaults()
             val remembered = app.appearance.currentConversation.first()?.let { app.conversations.conversation(it) }
-            val conversation = remembered ?: app.conversations.observeConversations().first().firstOrNull() ?: app.conversations.createConversation()
+            val conversation = remembered
+                ?: app.conversations.observeConversations().first()
+                    .firstOrNull { !it.isTriggerConversation() }
+                ?: app.conversations.createConversation()
             app.modelSettings.migrateLegacyReasoningEffort(conversation.reasoningEffort)
             activate(conversation)
         }

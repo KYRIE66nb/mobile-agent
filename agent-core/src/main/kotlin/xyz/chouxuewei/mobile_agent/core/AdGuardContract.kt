@@ -8,7 +8,8 @@ enum class AdGuardAction { CLICK_TEXT, AUTO_BACK }
 /**
  * 广告守卫规则；由用户或 Agent 配置，运行时在无障碍事件流上确定性匹配。
  * CLICK_TEXT 点击界面中文字或描述命中 matchTexts 的可点击节点，contextTexts 全部出现时才触发；
- * AUTO_BACK 在前台从 packageScope 跳到其它应用时按返回，classPattern 可进一步限定目标 Activity。
+ * AUTO_BACK 在前台从 packageScope 跳到其它应用时按返回；同应用内 Activity 跳变（包名不变的包内
+ * WebView/广告落地页）在 classPattern 命中特征类名时同样按返回——不写 classPattern 的规则不干预同包导航。
  */
 data class AdGuardRule(
     val id: String,
@@ -57,6 +58,16 @@ data class AdGuardRule(
         const val MAX_RULES = 50
         const val DEFAULT_COOLDOWN_MS = 2_000L
         val PACKAGE_PATTERN = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
+    }
+
+    /**
+     * 同应用内页面跳变是否命中本规则：包名不变、Activity 类名匹配 classPattern。
+     * 未写 classPattern 的 AUTO_BACK 规则返回 false——同包导航一律放行。
+     */
+    fun matchesInAppJump(packageName: String, className: String): Boolean {
+        val pattern = classPattern?.takeIf(String::isNotBlank) ?: return false
+        return enabled && action == AdGuardAction.AUTO_BACK && packageScope == packageName &&
+            runCatching { Regex(pattern).containsMatchIn(className) }.getOrDefault(false)
     }
 }
 

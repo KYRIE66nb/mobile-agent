@@ -14,6 +14,8 @@ import xyz.chouxuewei.mobile_agent.core.AgentLog
 import xyz.chouxuewei.mobile_agent.core.ChatRuntime
 import xyz.chouxuewei.mobile_agent.core.ConversationStore
 import xyz.chouxuewei.mobile_agent.core.MessageRole
+import xyz.chouxuewei.mobile_agent.core.TRIGGER_TITLE_PREFIX_EN
+import xyz.chouxuewei.mobile_agent.core.TRIGGER_TITLE_PREFIX_ZH
 import xyz.chouxuewei.mobile_agent.core.RunPolicy
 import xyz.chouxuewei.mobile_agent.core.ScopeGate
 import xyz.chouxuewei.mobile_agent.core.TriggerController
@@ -160,7 +162,10 @@ class TriggerManager(
         val convId = spec.conversationId?.takeIf { conversations.conversation(it) != null }
         if (convId != null) return convId
         val conversation = conversations.createConversation()
-        conversations.rename(conversation.id, localizedText("触发器·", "Trigger·") + spec.name)
+        conversations.rename(
+            conversation.id,
+            localizedText(TRIGGER_TITLE_PREFIX_ZH, TRIGGER_TITLE_PREFIX_EN) + spec.name,
+        )
         return conversation.id
     }
 

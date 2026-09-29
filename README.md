@@ -76,7 +76,7 @@ Popups and shake ads flash for only a few seconds — far too fast for a model l
 
 - **Skip splash ads** — auto-taps "Skip"-style nodes;
 - **Close ad popups** — taps "× / Close" when the screen carries an ad marker;
-- **Cancel shake-ad jumps** — `auto_back` rules press Back the moment the foreground is thrown from a guarded app to a browser/shop landing page;
+- **Cancel shake-ad jumps** — `auto_back` rules press Back the moment the foreground is thrown from a guarded app to a browser/shop landing page; in-app ad pages (same-package WebView/landing activities) are undone too when `class_pattern` matches their feature class names — rules without a pattern never touch normal same-app navigation;
 - **Agent-programmable** — tell it "this app keeps popping lottery ads" or "one shake throws me into a store", and it writes a rule on the spot via `adguard_add_rule` so the next ad is killed instantly.
 
 Per-rule cooldowns plus a global circuit breaker stop misconfigured loops; every block surfaces a toast, and `adguard_status` replays recent blocks. Requires the accessibility service; toggled in settings, off by default.
@@ -105,8 +105,8 @@ Hand "every morning" / "when a notification arrives" automations to triggers —
 - **Three kinds**: schedule (one-shot / daily / weekdays / weekly), notification matching (package + title + text regexes, AND), and interval polling (≥15 min); `AlarmManager` RTC_WAKEUP scheduling with automatic rescheduling after boot;
 - **Scope is a hard boundary**: every task carries a `tool_scope` allowlist — the model inside a triggered run **only sees authorized tools** and out-of-scope calls are denied outright; the default scope is read-only (files, notification reads, calendar/contacts queries); external side effects (messaging, cleanup, device control) require explicit authorization at creation time;
 - **Unattended ≠ unconstrained**: in-scope tools run without approval dialogs (nobody would see them anyway); per-trigger cooldown, daily run caps (persisted — a process restart cannot reset them), and a 3-strike circuit breaker auto-disable runaway tasks; the app's own notifications, ongoing notifications, and OTP/account-security notifications **never trigger**; notification bodies are injected as low-trust data, never as instructions;
-- **Isolated history**: each task runs in a dedicated `Trigger·name` conversation, separate from day-to-day chats and fully replayable;
-- **Quick replies**: `notifications_reply` sends text straight back to the source app through the notification's own RemoteInput (reply to chat messages without opening the app); it is an external side-effect tool — notification tasks need it explicitly in scope;
+- **Isolated history**: each task runs in a dedicated `Trigger·name` conversation (hidden from the main chat list and share targets), separate from day-to-day chats and fully replayable;
+- **Quick replies**: `notifications_reply` sends text straight back to the source app through the notification's own RemoteInput (reply to chat messages without opening the app); it is an external side-effect tool — notification tasks need it explicitly in scope; `notifications_list` output is marked low-trust — notification bodies are third-party-controlled text, reference only, never instructions;
 - **Usage**: tell the agent "read my schedule at 8 every morning" or "alert me when the boss messages me on WeChat" and it assembles the trigger via `trigger_save`; manage them under Settings → General → Scheduled tasks (enable, inspect scope, delete);
 - **Platform limits**: battery savers and OEM background policies may delay firing (no exact-alarm permission is requested); notification matching needs Notification Access granted;
 - **Spoken results**: enable "Speak task results" under Settings → General to have finished tasks read their summary aloud through the system TTS (offline, opt-in).
