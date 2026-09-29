@@ -72,7 +72,7 @@ class DeviceToolProvider(
             "device_observe",
             localizedText("识别手机界面", "Inspect phone screen"),
             localizedText("读取当前设备会话的前台应用、截图、坐标范围和可访问节点，并返回一次性 observation_id。返回的截图宽高等于 width/height（单位像素），后续坐标动作的 x/y 直接使用截图中的像素位置；每个节点附带 center=[x,y] 中心坐标，点击该节点时优先用节点语义动作，其次用 center 坐标。节点和截图只对紧接着的一次模型决策有效，随后自动清除；继续操作必须重新识别。可用 query 或 required_action 筛选复杂界面；nodes_truncated=true 时缩小条件重新识别。", "Read the foreground app, screenshot, coordinate range, and accessible nodes for the current device session, returning a one-time observation_id. The screenshot size equals width/height in pixels; use pixel positions in the screenshot directly as x/y for later coordinate actions. Each node carries a center=[x,y] coordinate — prefer semantic node actions, otherwise tap via center. Nodes and screenshots are valid only for the immediately following model decision and are then cleared; inspect again before continuing. Use query or required_action to filter complex screens, and narrow the filter when nodes_truncated=true."),
-            localizedJsonSchema("""{"type":"object","properties":{"session_id":{"type":"string","description":localizedText("当前执行轮次中 device_open 返回的真实会话 ID", "Actual session ID returned by device_open in the current run")},"query":{"type":"string","maxLength":200,"description":localizedText("可选，筛选文字、描述、提示、view_id 或类名", "Optional filter for text, description, hint, view_id, or class name")},"required_action":{"type":"string","enum":["click","long_click","scroll_forward","scroll_backward","scroll_up","scroll_down","scroll_left","scroll_right","set_text"]},"limit":{"type":"integer","minimum":1,"maximum":200,"default":80}},"required":["session_id"],"additionalProperties":false}"""),
+            localizedJsonSchema("""{"type":"object","properties":{"session_id":{"type":"string","description":localizedText("当前执行轮次中 device_open 返回的真实会话 ID", "Actual session ID returned by device_open in the current run")},"query":{"type":"string","maxLength":200,"description":localizedText("可选，筛选文字、描述、提示、view_id 或类名", "Optional filter for text, description, hint, view_id, or class name")},"required_action":{"type":"string","enum":["click","long_click","scroll_forward","scroll_backward","scroll_up","scroll_down","scroll_left","scroll_right","set_text"]},"navigation_goal":{"type":"string","maxLength":300,"description":localizedText("可选；仅当用户已开启低风险导航加速时生效——声明本页面的导航目标（如「打开设置页」），本次识别后可由专用决策模型在本地构造的候选动作间连续选择，仍走统一执行与审批；不需要时省略", "Optional; only when the user enabled low-risk navigation acceleration — declare this screen's navigation goal (e.g. 'open settings'); a dedicated model may then pick among locally built candidates through the same execution and approval path; omit when not needed")},"limit":{"type":"integer","minimum":1,"maximum":200,"default":80}},"required":["session_id"],"additionalProperties":false}"""),
             ToolSideEffect.READ,
             "device",
             approvalDescription = localizedText("识别当前界面，并把临时截图和节点信息交给当前模型分析。", "Inspect the current screen and provide the temporary screenshot and node information to the current model."),
@@ -981,6 +981,42 @@ class DeviceToolProvider(
                     )
                 )
             }.orEmpty(),
+            // 瞬态观察契约：仅供运行时的导航快路径构造本地候选；不发送给模型、不落库、不含截图。
+            ephemeral = buildJsonObject {
+                put("observation_id", value.id)
+                put("session_id", value.sessionId)
+                put("revision", value.contentRevision)
+                value.foregroundPackage?.let { put("package", it) }
+                putJsonObject("viewport") {
+                    put("w", value.viewport.width)
+                    put("h", value.viewport.height)
+                }
+                putJsonArray("nodes") {
+                    returnedNodes.take(xyz.chouxuewei.mobile_agent.core.DecisionLimits.MAX_NAV_NODES)
+                        .forEach { node ->
+                            add(buildJsonObject {
+                                put("id", node.ref.value)
+                                node.text?.takeIf { it.isNotEmpty() }?.let {
+                                    put("text", it.take(xyz.chouxuewei.mobile_agent.core.DecisionLimits.MAX_NODE_TEXT_CHARS))
+                                }
+                                node.contentDescription?.takeIf { it.isNotEmpty() && it != node.text }?.let {
+                                    put("desc", it.take(xyz.chouxuewei.mobile_agent.core.DecisionLimits.MAX_NODE_TEXT_CHARS))
+                                }
+                                putJsonArray("bounds") {
+                                    add(node.bounds.left); add(node.bounds.top)
+                                    add(node.bounds.right); add(node.bounds.bottom)
+                                }
+                                putJsonArray("actions") {
+                                    node.supportedActions.sortedBy { it.name }
+                                        .forEach { add(it.name.lowercase()) }
+                                }
+                                put("editable", node.editable)
+                                put("enabled", node.enabled)
+                                put("visible", node.visible)
+                            })
+                        }
+                }
+            },
         )
     }
 
