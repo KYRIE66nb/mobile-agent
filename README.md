@@ -121,6 +121,7 @@ Hand "every morning" / "when a notification arrives" automations to triggers —
 - **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable; read-only tool calls in one round **run in parallel** (writes stay sequential), and screen observations are compactly serialized with precomputed node centers to cut per-round token cost;
 - **Context-overflow self-healing**: in-run compaction degrades gracefully — older tool results fold into references, finished steps collapse, then oversized results truncate to excerpts (full content stays retrievable via `history_read`); when the service explicitly reports a context overflow (context_length_exceeded, HTTP 413, ...) before any output, the runtime compresses and retries the same round once instead of killing the task; the profile's context window / max output fields drive the local budget — set them to the real endpoint limits to trigger fallbacks less often;
 - **Capability overview**: Settings → Capabilities shows every system authorization (accessibility, notification access, usage access, overlay, notifications, microphone), advanced channels (Root/Shizuku), service configuration (model/speech), and each capability group's availability — with one-tap jumps to the matching grant screen;
+- **Optional dedicated decision backend (Laya/Jev)**: safety-gate verdicts and low-risk navigation can be delegated to an independent small-model service (self-hosted Laya or managed TypeSafe Jev over the shared `/v1/systemone` protocol — see `deploy/laya/`); off by default, the two backends are mutually exclusive, outbound data needs explicit consent and carries only the minimal decision context (never full chat history or screenshots), local policy stays authoritative (the service picks candidates, it cannot invent actions), SHADOW only records while ENFORCE applies; keys are Keystore-encrypted and revocable, and verdict metadata is persisted for review;
 - **Data management**: Settings → Data offers conversation export/import (a JSON backup covering conversations, messages, runs, tool calls, and context snapshots; imports merge idempotently without clobbering existing records) plus 30-day artifact pruning.
 
 ## Architecture
@@ -176,7 +177,7 @@ Settings → Models → New profile:
 - [x] Surgical editing of existing documents (docx paragraph-level / xlsx cell-level; images and styles preserved; XML located by a tolerant segment scanner — quoted attributes, comments, CDATA, and nested same-name elements no longer misparse)
 - [x] Notification RemoteInput quick replies (reply without opening the app; sensitive notifications excluded)
 - [x] Capability/authorization overview page (system grants + advanced channels + capability groups + one-tap setup)
-- [ ] Pluggable standalone decision-model backend (Jev-like)
+- [x] Pluggable standalone decision-model backend (Laya / Jev over `/v1/systemone`; off by default, interactive tasks only, SHADOW/ENFORCE modes)
 
 ## Permissions and data boundaries
 
