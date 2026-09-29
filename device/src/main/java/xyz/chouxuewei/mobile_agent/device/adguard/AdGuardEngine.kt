@@ -38,6 +38,7 @@ object AdGuardEngine : AdGuardController {
 
     private var lastEvalAt = 0L
     private var lastForegroundPackage: String? = null
+    private var lastClassName: String? = null
     private var foregroundSince = 0L
     private var launcherPackages = emptySet<String>()
     private val ruleLastFireAt = mutableMapOf<String, Long>()
@@ -105,6 +106,20 @@ object AdGuardEngine : AdGuardController {
 
     private fun handleWindowChange(service: AgentAccessibilityService, snapshot: AdGuardSnapshot, pkg: String?, className: String?) {
         val now = SystemClock.uptimeMillis()
+        if (pkg != null && pkg == lastForegroundPackage && className != null && className != lastClassName) {
+            // 同应用内的页面跳变：摇一摇/贴片广告常在被守护应用自己的 WebView 或落地页
+            // Activity 中打开（包名不变），只有 classPattern 命中广告特征类名才按返回，
+            // 规则没写模式时同包导航一律放行，不干预正常界面跳转。
+            val rules = snapshot.rules.filter {
+                it.action == AdGuardAction.AUTO_BACK && it.matchesInAppJump(pkg, className)
+            }
+            for (rule in rules) {
+                if (!cooldownReady(rule, now) || breakerOpen(now)) continue
+                scheduleBack(service, rule, "$pkg/$className")
+                break
+            }
+        }
+        if (pkg != null && className != null) lastClassName = className
         if (pkg != null && pkg != lastForegroundPackage) {
             val previous = lastForegroundPackage
             val dwell = now - foregroundSince

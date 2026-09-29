@@ -42,6 +42,13 @@ data class Conversation(
     val pinned: Boolean = false,
 )
 
+/** 触发器自动执行使用的独立会话；标题前缀随创建时的系统语言写入记录本身，识别不依赖运行时状态。 */
+fun Conversation.isTriggerConversation(): Boolean =
+    title.startsWith(TRIGGER_TITLE_PREFIX_ZH) || title.startsWith(TRIGGER_TITLE_PREFIX_EN)
+
+const val TRIGGER_TITLE_PREFIX_ZH = "触发器·"
+const val TRIGGER_TITLE_PREFIX_EN = "Trigger·"
+
 /** 一次模型请求形成一个展示单元，保留思考、该轮工具调用和该轮正文的真实先后关系。 */
 data class AssistantStep(
     val reasoning: String = "",
