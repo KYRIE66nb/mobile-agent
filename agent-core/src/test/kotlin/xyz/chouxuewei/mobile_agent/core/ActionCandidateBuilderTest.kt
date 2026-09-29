@@ -88,7 +88,7 @@ class ActionCandidateBuilderTest {
             ephemeral("""[${node("n1", "\"click\"", "设置")}]""")
         )!!
         val candidates = ActionCandidateBuilder.build(obs)
-        val req = navigationDecisionRequest("打开设置页", obs, candidates, "r1", 7)
+        val req = navigationDecisionRequest("打开设置页", obs, candidates, emptyList(), "r1", 7)
         assertEquals(DecisionPurpose.NAVIGATION, req.purpose)
         assertEquals("打开设置页", req.state["goal"]!!.jsonPrimitive.content)
         assertEquals("com.demo", req.state["foreground_package"]!!.jsonPrimitive.content)
@@ -105,7 +105,7 @@ class ActionCandidateBuilderTest {
     @Test
     fun `goal truncation keeps state bounded`() {
         val obs = ObservationLiteCodec.parse(ephemeral("[]"))!!
-        val req = navigationDecisionRequest("g".repeat(1000), obs, emptyList(), "r", 0)
+        val req = navigationDecisionRequest("g".repeat(1000), obs, emptyList(), emptyList(), "r", 0)
         assertEquals(DecisionLimits.MAX_GOAL_CHARS, req.state["goal"]!!.jsonPrimitive.content.length)
     }
 }

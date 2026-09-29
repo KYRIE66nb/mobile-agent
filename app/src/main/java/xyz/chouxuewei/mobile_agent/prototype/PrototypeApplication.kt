@@ -124,6 +124,11 @@ class PrototypeApplication : Application() {
             safetyGate = { connection, runPolicy ->
                 decisionGateFactory.safetyGate(connection, runPolicy)
             },
+            fastPath = xyz.chouxuewei.mobile_agent.core.FastPathSupport(
+                settings = { decisionSettings.current() },
+                resolveProvider = { backend -> resolveDecisionProvider(backend) },
+                audit = { decisionAudit.record(it) },
+            ),
         )
     }
     val decisionSettings by lazy { xyz.chouxuewei.mobile_agent.data.DecisionSettingsRepository(this) }

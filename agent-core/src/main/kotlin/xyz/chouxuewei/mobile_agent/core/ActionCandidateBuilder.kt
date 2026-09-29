@@ -144,11 +144,34 @@ object ActionCandidateBuilder {
     )
 }
 
-/** 导航选择请求构建器：目标 + 有界观察摘要 + 候选集 + 两个保留选项。 */
+/**
+ * 从用户原始请求中提取硬性约束短语（"不要发送""先别修改""只打开""取消"等）。
+ * 约束随请求传给决策服务并在本地下限再次校验：候选动作与禁止类约束冲突时不得采纳。
+ */
+fun userConstraints(text: String): List<String> {
+    val normalized = text.lowercase()
+    val constraints = mutableListOf<String>()
+    CONSTRAINT_PATTERNS.forEach { (pattern, label) ->
+        if (pattern.containsMatchIn(normalized) || pattern.containsMatchIn(text)) constraints += label
+    }
+    return constraints.take(8)
+}
+
+private val CONSTRAINT_PATTERNS: List<Pair<Regex, String>> = listOf(
+    Regex("不要?发送|别发送|don'?t send|do not send") to "forbid_send",
+    Regex("不要?修改|先别修改|别改|don'?t (modify|change|edit)|do not (modify|change|edit)") to "forbid_modify",
+    Regex("只(打开|看看|查看)|仅(打开|查看)|just open|only open|view only") to "view_only",
+    Regex("取消|不要执行|先停下|abort|cancel") to "cancel_like",
+    Regex("不要?点击|don'?t (click|tap)|do not (click|tap)") to "forbid_click",
+    Regex("不要?删除|别删|don'?t delete|do not delete") to "forbid_delete",
+)
+
+/** 导航选择请求构建器：目标 + 有界观察摘要 + 用户约束 + 候选集 + 两个保留选项。 */
 fun navigationDecisionRequest(
     goal: String,
     observation: ObservationLite,
     candidates: List<ActionCandidate>,
+    constraints: List<String>,
     requestId: String,
     keyGeneration: Int,
 ): DecisionChoiceRequest {
@@ -158,6 +181,11 @@ fun navigationDecisionRequest(
         putJsonObject("viewport") {
             put("w", observation.viewportW)
             put("h", observation.viewportH)
+        }
+        if (constraints.isNotEmpty()) {
+            putJsonArray("user_constraints") {
+                constraints.forEach { add(it) }
+            }
         }
         putJsonArray("nodes") {
             observation.nodes.forEach { node ->
@@ -179,10 +207,18 @@ fun navigationDecisionRequest(
         requestId = requestId,
         state = state,
         instructions = localizedText(
-            "用户界面导航目标见 state.goal。从候选中选择一个最能推进目标的动作；若目标已达成选 goal_met，若无合适候选选 none。候选之外的动作不可选择。",
-            "The UI navigation goal is state.goal. Pick the candidate that best advances it; choose goal_met if it is already satisfied, or none if no candidate applies. Do not invent actions outside the candidates.",
+            "用户界面导航目标见 state.goal。从候选中选择一个最能推进目标的动作；若目标已达成选 goal_met，若无合适候选选 none。候选之外的动作不可选择。state.user_constraints 列出用户的硬性约束，任何违反约束的选择一律选 none。",
+            "The UI navigation goal is state.goal. Pick the candidate that best advances it; choose goal_met if it is already satisfied, or none if no candidate applies. Do not invent actions outside the candidates. state.user_constraints lists the user's hard constraints; any choice that would violate them must be none.",
         ),
         options = options,
         keyGeneration = keyGeneration,
     )
 }
+
+/**
+ * 本地约束下限：候选天然只是导航类节点动作（无输入文本、无发送、无删除），
+ * 因此"不要发送/先别修改/只打开"由动作空间本身保证不可违反；
+ * 只有与快路径动作面直接冲突的约束（取消类、禁点类）在本地直接判不可采纳。
+ */
+fun constraintsPermitAutoAction(constraints: List<String>): Boolean =
+    constraints.none { it == "cancel_like" || it == "forbid_click" }
