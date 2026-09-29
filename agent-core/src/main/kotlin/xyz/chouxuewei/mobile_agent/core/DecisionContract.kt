@@ -50,11 +50,10 @@ data class DecisionProfile(
     /** 密钥代数；每次写入/撤销密钥时递增，请求与审计携带以便关联与失效判定。 */
     val keyGeneration: Int = 0,
 ) {
-    /** 配置可用性的静态判定：地址合法且持有密钥引用。不验证密钥本身（数据层职责）。 */
-    val configured: Boolean
+    /** baseUrl 形态合法的静态判定；密钥是否必需由后端语义决定（Jev 必需，Laya 可省略）。 */
+    val hasValidBaseUrl: Boolean
         get() = baseUrl.isNotBlank() &&
-            (baseUrl.startsWith("https://") || baseUrl.startsWith("http://")) &&
-            !keyReference.isNullOrBlank()
+            (baseUrl.startsWith("https://") || baseUrl.startsWith("http://"))
 }
 
 /**

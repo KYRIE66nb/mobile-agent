@@ -120,13 +120,56 @@ class PrototypeApplication : Application() {
             usageRecorder = modelUsage::record,
             personalizedInstructions = personalization::currentInstructions,
             maxStepsPerRun = agentExecutionSettings::currentMaxSteps,
-            safetyGate = { connection ->
-                if (agentExecutionSettings.currentSafetyGateEnabled()) {
-                    LlmDecisionGate(connection.gateway)
-                } else null
+            safetyGate = { connection, runPolicy ->
+                decisionGateFactory.safetyGate(connection, runPolicy)
             },
         )
     }
+    val decisionSettings by lazy { xyz.chouxuewei.mobile_agent.data.DecisionSettingsRepository(this) }
+
+    /** 专用决策后端闸工厂；审计落库在 task 7 接入，先以内存回调占位。 */
+    private val decisionGateFactory by lazy {
+        xyz.chouxuewei.mobile_agent.core.DecisionGateFactory(
+            settings = { decisionSettings.current() },
+            resolveProvider = { backend -> resolveDecisionProvider(backend) },
+            legacyGateEnabled = { agentExecutionSettings.currentSafetyGateEnabled() },
+            legacyGate = { connection -> LlmDecisionGate(connection.gateway) },
+            audit = { decisionAudit.record(it) },
+        )
+    }
+
+    /** Task 7 替换为 Room 持久化；现在保持可注入的空实现，保证调用链形状稳定。 */
+    val decisionAudit by lazy { DecisionAuditRecorder() }
+
+    /** 按后端解析 provider：读取当前配置快照，未同意出站/配置不完整/密钥缺失时返回 null。 */
+    private suspend fun resolveDecisionProvider(
+        backend: xyz.chouxuewei.mobile_agent.core.DecisionBackend,
+    ): xyz.chouxuewei.mobile_agent.core.DecisionProvider? {
+        val snapshot = decisionSettings.current()
+        if (!snapshot.outboundConsent || snapshot.backend != backend) return null
+        val profile = snapshot.profileFor(backend)
+        if (!profile.hasValidBaseUrl) return null
+        val apiKey = decisionSettings.resolveApiKey(backend)
+        return when (backend) {
+            xyz.chouxuewei.mobile_agent.core.DecisionBackend.LAYA ->
+                xyz.chouxuewei.mobile_agent.model.layaDecisionProvider(
+                    baseUrl = profile.baseUrl,
+                    model = profile.model.ifBlank { "typed-decisions" },
+                    apiKey = apiKey,
+                )
+            xyz.chouxuewei.mobile_agent.core.DecisionBackend.JEV -> {
+                // Jev 为托管 API，密钥缺失直接不可用（服务端会返回 401，提前本地失败更省往返）。
+                if (apiKey == null) return null
+                xyz.chouxuewei.mobile_agent.model.jevDecisionProvider(
+                    apiKey = apiKey,
+                    baseUrl = profile.baseUrl,
+                    model = profile.model.ifBlank { "jev-latest" },
+                )
+            }
+            xyz.chouxuewei.mobile_agent.core.DecisionBackend.NONE -> null
+        }
+    }
+
     private val debugModelConfig by lazy {
         ModelConfig(
             baseUrl = BuildConfig.MODEL_BASE_URL,

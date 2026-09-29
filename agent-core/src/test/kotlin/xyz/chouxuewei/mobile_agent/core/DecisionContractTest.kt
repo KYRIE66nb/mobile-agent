@@ -18,8 +18,8 @@ class DecisionContractTest {
         assertEquals(DecisionMode.SHADOW, s.mode)
         assertFalse(s.outboundConsent)
         assertFalse(s.navigationAcceleration)
-        assertFalse(s.laya.configured)   // 无密钥引用
-        assertFalse(s.jev.configured)
+        assertFalse(s.laya.hasValidBaseUrl)   // 无 baseUrl
+        assertTrue(s.jev.hasValidBaseUrl)     // Jev 默认官方端点
     }
 
     @Test
@@ -34,12 +34,11 @@ class DecisionContractTest {
     }
 
     @Test
-    fun `profile configured requires url and key reference`() {
-        assertFalse(DecisionProfile().configured)
-        assertFalse(DecisionProfile(baseUrl = "https://x").configured)                 // 无密钥引用
-        assertFalse(DecisionProfile(baseUrl = "ftp://x", keyReference = "k").configured)
-        assertTrue(DecisionProfile(baseUrl = "https://api.x", keyReference = "k").configured)
-        assertTrue(DecisionProfile(baseUrl = "http://localhost:8000", keyReference = "k").configured)
+    fun `profile base url validation`() {
+        assertFalse(DecisionProfile().hasValidBaseUrl)
+        assertFalse(DecisionProfile(baseUrl = "ftp://x", keyReference = "k").hasValidBaseUrl)
+        assertTrue(DecisionProfile(baseUrl = "https://api.x", keyReference = "k").hasValidBaseUrl)
+        assertTrue(DecisionProfile(baseUrl = "http://localhost:8000").hasValidBaseUrl) // 本地 Laya 可免密钥
     }
 
     @Test
