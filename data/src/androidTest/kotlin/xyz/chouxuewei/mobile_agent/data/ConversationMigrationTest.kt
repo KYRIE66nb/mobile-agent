@@ -33,6 +33,7 @@ class ConversationMigrationTest {
                 TOOL_CALL_MIGRATION,
                 ARTIFACT_MIGRATION,
                 CONVERSATION_PIN_MIGRATION,
+                DECISION_AUDIT_MIGRATION,
             ).build()
         var db=open()
         try {
@@ -75,10 +76,23 @@ class ConversationMigrationTest {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val name="decision-audit-${UUID.randomUUID()}.db"
         val path=context.getDatabasePath(name); path.parentFile!!.mkdirs()
-        SQLiteDatabase.openOrCreateDatabase(path,null).use { db -> db.version=7 }
+        // 从 v1 最小库走全量迁移链，保证终点满足 Room 对全部实体的 schema 校验。
+        SQLiteDatabase.openOrCreateDatabase(path,null).use { db ->
+            db.execSQL("CREATE TABLE tasks (id TEXT NOT NULL PRIMARY KEY, instruction TEXT NOT NULL, status TEXT NOT NULL, updatedAtEpochMillis INTEGER NOT NULL, error TEXT)")
+            db.execSQL("CREATE TABLE steps (taskId TEXT NOT NULL, stepIndex INTEGER NOT NULL, observationId TEXT NOT NULL, actionJson TEXT, resultJson TEXT, createdAtEpochMillis INTEGER NOT NULL, PRIMARY KEY(taskId,stepIndex), FOREIGN KEY(taskId) REFERENCES tasks(id) ON DELETE CASCADE)")
+            db.execSQL("CREATE INDEX index_steps_taskId ON steps(taskId)")
+            db.version=1
+        }
         val db=Room.databaseBuilder(context,AgentDatabase::class.java,name)
-            .addMigrations(DECISION_AUDIT_MIGRATION)
-            .build()
+            .addMigrations(
+                CHAT_MIGRATION,
+                REASONING_MIGRATION,
+                COMPOSER_REASONING_MIGRATION,
+                TOOL_CALL_MIGRATION,
+                ARTIFACT_MIGRATION,
+                CONVERSATION_PIN_MIGRATION,
+                DECISION_AUDIT_MIGRATION,
+            ).build()
         try {
             val store=DecisionAuditStore(db.decisionAudits())
             val event=xyz.chouxuewei.mobile_agent.core.DecisionAuditEvent(
