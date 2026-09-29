@@ -48,6 +48,8 @@ data class ModelProfile(
 data class ModelSettings(
     val models: List<ModelProfile> = emptyList(),
     val selectedModelId: String? = null,
+    /** 故障切换时优先使用的备用配置；null 表示自动挑选其它可用配置。 */
+    val backupModelId: String? = null,
 ) {
     val selectedModel: ModelProfile?
         get() = models.firstOrNull { it.id == selectedModelId } ?: models.firstOrNull()
@@ -204,6 +206,20 @@ class ModelSettingsRepository(
         }
     }
 
+    /** 指定故障切换的备用配置；传 null 恢复自动挑选。与主配置同 id 或已删除时不生效。 */
+    suspend fun setBackupModel(id: String?) {
+        dataStore.edit { values ->
+            if (id == null) {
+                values.remove(Keys.BACKUP_PROFILE_ID)
+            } else {
+                require(storedProfiles(values).any { it.id == id }) {
+                    localizedText("备用模型已不存在", "The backup model no longer exists.")
+                }
+                values[Keys.BACKUP_PROFILE_ID] = id
+            }
+        }
+    }
+
     /** 思考强度随模型配置保存，切换回来时恢复该模型上次使用的等级。 */
     suspend fun setSelectedReasoningEffort(value: String?) {
         val normalized = value?.trim()?.takeIf(String::isNotEmpty)?.let {
@@ -297,21 +313,26 @@ class ModelSettingsRepository(
         )
     }
 
-    /** 故障切换的备用配置：凭据完整的其它 profile 中任选其一；没有可解析的备用时返回 null。 */
+    /** 故障切换的备用配置：优先用户在设置里指定的备用 profile，未指定时取凭据完整的其它第一个。 */
     suspend fun backupConfiguration(excludeProfileId: String?): ResolvedModelConfiguration? {
         val values = dataStore.data.first()
-        val backup = storedProfiles(values).firstOrNull {
-            it.id != excludeProfileId &&
-                !it.apiKeyCiphertext.isNullOrBlank() && !it.apiKeyIv.isNullOrBlank() &&
-                it.baseUrl.isNotBlank() && it.model.isNotBlank()
-        } ?: return null
+        val profiles = storedProfiles(values)
+        fun StoredModelProfile.configured() =
+            !apiKeyCiphertext.isNullOrBlank() && !apiKeyIv.isNullOrBlank() &&
+                baseUrl.isNotBlank() && model.isNotBlank()
+        val explicit = values[Keys.BACKUP_PROFILE_ID]
+            ?.let { id -> profiles.firstOrNull { it.id == id && it.id != excludeProfileId && it.configured() } }
+        val backup = explicit
+            ?: profiles.firstOrNull { it.id != excludeProfileId && it.configured() }
+            ?: return null
         return runCatching { resolveChatConfiguration(backup.id) }.getOrNull()
     }
 
     private fun settingsFrom(values: Preferences): ModelSettings {
         val stored = storedProfiles(values)
         val selectedId = selectedProfileId(values, stored)
-        return ModelSettings(stored.map(StoredModelProfile::asPublic), selectedId)
+        val backupId = values[Keys.BACKUP_PROFILE_ID]?.takeIf { id -> stored.any { it.id == id } }
+        return ModelSettings(stored.map(StoredModelProfile::asPublic), selectedId, backupId)
     }
 
     private fun selectedProfile(values: Preferences): StoredModelProfile {
@@ -382,6 +403,7 @@ class ModelSettingsRepository(
     private object Keys {
         val MODEL_PROFILES = stringPreferencesKey("model_profiles_v2")
         val SELECTED_MODEL_ID = stringPreferencesKey("selected_model_id")
+        val BACKUP_PROFILE_ID = stringPreferencesKey("backup_model_id")
 
         val LEGACY_CONTEXT_WINDOW = intPreferencesKey("context_window")
         val LEGACY_OUTPUT_RESERVE = intPreferencesKey("output_reserve")

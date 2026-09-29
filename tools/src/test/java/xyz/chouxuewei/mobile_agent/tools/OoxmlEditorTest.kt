@@ -177,4 +177,152 @@ class OoxmlEditorTest {
         assertEquals(2, info.sheets.size)
         assertTrue(info.sheets[0].name == "甲")
     }
+
+    // ---------- XmlSegments 硬化回归 ----------
+
+    private fun docxXml(body: String): ByteArray {
+        val xml = """<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>$body</w:body></w:document>"""
+        val out = ByteArrayOutputStream()
+        OoxmlEditor.zipBytes(out, mapOf("word/document.xml" to xml.toByteArray(Charsets.UTF_8)))
+        return out.toByteArray()
+    }
+
+    private fun xlsxXml(sheetXml: String, workbookXml: String? = null): ByteArray {
+        val out = ByteArrayOutputStream()
+        OoxmlEditor.zipBytes(out, mapOf(
+            "xl/workbook.xml" to (workbookXml ?: """<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="S1" sheetId="1" r:id="rId1"/></sheets></workbook>""").toByteArray(),
+            "xl/_rels/workbook.xml.rels" to """<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>""".toByteArray(),
+            "xl/worksheets/sheet1.xml" to sheetXml.toByteArray(),
+        ))
+        return out.toByteArray()
+    }
+
+    @Test
+    fun `quoted greater-than inside attributes does not break scanning`() {
+        // 属性值里的 '>' 曾让 [^>]* 正则提前截断标签
+        val xml = """<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1" x14ac:dyDescent="0.25&gt;"><c r="A1" note="a&gt;b"><v>7</v></c></row></sheetData></worksheet>"""
+        val rows = OoxmlEditor.parseSheetRows(xml, emptyList())
+        assertEquals(1, rows.size)
+        assertEquals("7", rows[0][0])
+        // 进一步验证编辑路径：set_cell 仍命中该 cell
+        val edited = OoxmlEditor.editXlsx(xlsxXml(xml), ops("""[{"op":"set_cell","cell":"A1","value":"改"}]"""))
+        assertTrue(OoxmlEditor.extractXlsxText(edited.bytes).contains("改"))
+    }
+
+    @Test
+    fun `comments and cdata do not corrupt structure`() {
+        val xml = """<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><!-- 注释<row> --> <row r="1"><c r="A1" t="inlineStr"><is><t><![CDATA[带>符号的文本]]></t></is></c></row></sheetData></worksheet>"""
+        val rows = OoxmlEditor.parseSheetRows(xml, emptyList())
+        assertEquals(1, rows.size)
+        assertTrue(rows[0][0].contains("带>符号的文本"))
+    }
+
+    @Test
+    fun `nested same-name paragraphs count outermost only`() {
+        // w:txbxContent 里的嵌套 w:p 曾让非贪婪正则在外层 </w:p> 之前截断
+        val bytes = docxXml("""<w:p><w:r><w:t>外层</w:t></w:r><w:txbxContent><w:p><w:r><w:t>内层</w:t></w:r></w:p></w:txbxContent></w:p><w:p><w:r><w:t>第二段</w:t></w:r></w:p>""")
+        val xml = String(OoxmlEditor.zipEntries(bytes)["word/document.xml"]!!, Charsets.UTF_8)
+        assertEquals(2, OoxmlEditor.docxParagraphs(xml).size)
+        // set_paragraph 后结构仍良构：第二段不动
+        val edited = OoxmlEditor.editDocx(bytes, ops("""[{"op":"set_paragraph","index":1,"text":"改第二段"}]"""))
+        val text = OoxmlEditor.extractDocxText(edited.bytes)
+        assertTrue(text.contains("外层"))
+        assertTrue(text.contains("内层"))
+        assertTrue(text.contains("改第二段"))
+    }
+
+    @Test
+    fun `docx paragraph with gt in attribute edits correctly`() {
+        val bytes = docxXml("""<w:p w:rsidR="abc&gt;def"><w:r><w:t>属性带符号</w:t></w:r></w:p>""")
+        val edited = OoxmlEditor.editDocx(bytes, ops("""[{"op":"set_paragraph","index":0,"text":"重写"}]"""))
+        assertEquals(1, edited.applied)
+        val outXml = String(OoxmlEditor.zipEntries(edited.bytes)["word/document.xml"]!!, Charsets.UTF_8)
+        // 原 open tag（含 > 的属性）被保留
+        assertTrue(outXml.contains("w:rsidR=\"abc&gt;def\""))
+        assertTrue(OoxmlEditor.extractDocxText(edited.bytes).contains("重写"))
+    }
+
+    @Test
+    fun `workbook sheet attributes are order independent`() {
+        // r:id 在 name 之前——旧正则要求固定顺序，会漏掉这种声明
+        val bytes = xlsxXml(
+            """<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>42</v></c></row></sheetData></worksheet>""",
+            """<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet r:id="rId1" sheetId="1" name="乱序"/></sheets></workbook>""",
+        )
+        val info = OoxmlEditor.inspectXlsx(bytes)
+        assertEquals(1, info.sheets.size)
+        assertEquals("乱序", info.sheets[0].name)
+    }
+
+    @Test
+    fun `append_row into self closing sheetData with space`() {
+        // "<sheetData />" 带空格——旧 contains("<sheetData/>") 判定漏掉
+        val bytes = xlsxXml("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData /></worksheet>""")
+        val edited = OoxmlEditor.editXlsx(bytes, ops("""[{"op":"append_row","values":["a","b"]}]"""))
+        val text = OoxmlEditor.extractXlsxText(edited.bytes)
+        assertTrue(text.contains("a"))
+        assertTrue(text.contains("b"))
+    }
+
+    @Test
+    fun `set_cell into empty self closing sheetData`() {
+        val bytes = xlsxXml("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>""")
+        val edited = OoxmlEditor.editXlsx(bytes, ops("""[{"op":"set_cell","cell":"B2","value":"hi"}]"""))
+        assertTrue(OoxmlEditor.extractXlsxText(edited.bytes).contains("hi"))
+    }
+
+    @Test
+    fun `formula overwrite still warns`() {
+        val bytes = xlsxXml("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><f>SUM(B1:B2)</f><v>3</v></c></row></sheetData></worksheet>""")
+        val outcome = OoxmlEditor.editXlsx(bytes, ops("""[{"op":"set_cell","cell":"A1","value":"静态"}]"""))
+        assertTrue(outcome.warnings.any { it.contains("公式") && it.contains("覆盖") })
+    }
+
+    @Test
+    fun `docx extraction preserves cdata and drops comments`() {
+        val bytes = docxXml("""<w:p><w:r><w:t><![CDATA[CDATA内容]]></w:t></w:r></w:p><!-- 段落间注释 --><w:p><w:r><w:t>正常</w:t></w:r></w:p>""")
+        val text = OoxmlEditor.extractDocxText(bytes)
+        assertTrue(text.contains("CDATA内容"))
+        assertTrue(text.contains("正常"))
+        assertFalse(text.contains("注释"))
+    }
+
+    @Test
+    fun `insert_sheet into workbook without sheets close tag fails safely`() {
+        // 畸形 workbook 没有 </sheets>：不应崩成截断文件，原条目保持可导出
+        val bytes = xlsxXml(
+            """<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData></worksheet>""",
+            """<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets/></workbook>""",
+        )
+        val outcome = OoxmlEditor.editXlsx(bytes, ops("""[{"op":"insert_sheet","name":"新表"}]"""))
+        // insertBeforeClose 找不到 </sheets> 时原样返回——新表文件已写但声明缺失，至少 xml 未被破坏
+        val workbook = String(OoxmlEditor.zipEntries(outcome.bytes)["xl/workbook.xml"]!!, Charsets.UTF_8)
+        assertTrue(workbook.contains("<sheets/>"))
+    }
+
+    @Test
+    fun `cell refs with lowercase or missing r fall back to sequence`() {
+        // 缺 r 属性的 cell 按顺序占位
+        val xml = """<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c><v>1</v></c><c><v>2</v></c></row></sheetData></worksheet>"""
+        val rows = OoxmlEditor.parseSheetRows(xml, emptyList())
+        assertEquals(listOf("1", "2"), rows[0])
+    }
+
+    @Test
+    fun `set_paragraph on self closing paragraph produces well formed output`() {
+        // 旧代码对 <w:p/> 产出 "<w:p/>>" 畸形标签
+        val bytes = docxXml("""<w:p/><w:p><w:r><w:t>第二段</w:t></w:r></w:p>""")
+        val edited = OoxmlEditor.editDocx(bytes, ops("""[{"op":"set_paragraph","index":0,"text":"填空段"}]"""))
+        val outXml = String(OoxmlEditor.zipEntries(edited.bytes)["word/document.xml"]!!, Charsets.UTF_8)
+        assertFalse(outXml.contains("/>>"))
+        assertTrue(OoxmlEditor.extractDocxText(edited.bytes).contains("填空段"))
+    }
+
+    @Test
+    fun `processing instruction and doctype skipped`() {
+        val xml = """<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><!DOCTYPE worksheet><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>9</v></c></row></sheetData></worksheet>"""
+        val rows = OoxmlEditor.parseSheetRows(xml, emptyList())
+        assertEquals(1, rows.size)
+        assertEquals("9", rows[0][0])
+    }
 }

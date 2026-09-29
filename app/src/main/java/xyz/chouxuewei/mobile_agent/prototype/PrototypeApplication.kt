@@ -170,6 +170,18 @@ class PrototypeApplication : Application() {
         return artifacts.cleanup() + attachments.cleanup()
     }
 
+    suspend fun exportBackup(uri: android.net.Uri) {
+        val json = conversations.exportBackupJson()
+        contentResolver.openOutputStream(uri)?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+            ?: error(localizedText("无法写入所选位置", "Could not write to the selected location."))
+    }
+
+    suspend fun importBackup(uri: android.net.Uri): RoomConversationStore.BackupReport {
+        val raw = contentResolver.openInputStream(uri)?.use { String(it.readBytes(), Charsets.UTF_8) }
+            ?: error(localizedText("无法读取所选文件", "Could not read the selected file."))
+        return conversations.importBackupJson(raw)
+    }
+
     /** 保留策略入口：删除早于指定天数的登记产物（文件与索引一起移除），聊天里的产物卡片随后显示为已失效。 */
     suspend fun pruneGeneratedArtifacts(olderThanDays: Int = 30): StorageCleanupResult {
         require(chatRuntime.active.value.isEmpty()) {
