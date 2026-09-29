@@ -176,9 +176,27 @@ sealed interface ModelEvent {
     data class Usage(val inputTokens: Int?, val outputTokens: Int?) : ModelEvent
     data class ToolCall(val call: RequestedToolCall) : ModelEvent
     data class Completed(val reason: String) : ModelEvent
-    data class Error(val message: String) : ModelEvent
+    /** contextOverflow=true 表示服务端明确判定请求超出上下文窗口，运行时可压缩后重试而非直接判死。 */
+    data class Error(val message: String, val contextOverflow: Boolean = false) : ModelEvent
 }
 fun interface ChatModelGateway { fun stream(request: ChatRequest): Flow<ModelEvent> }
+
+/** 从 HTTP 状态与错误响应体判断是否上下文超限；只读错误体的标识字段，不回显内容。 */
+fun detectContextOverflow(status: Int, body: String?): Boolean {
+    if (status == 413) return true
+    if (status !in 400..499 || body == null) return false
+    val hay = body.lowercase()
+    return CONTEXT_OVERFLOW_MARKERS.any { it in hay }
+}
+
+private val CONTEXT_OVERFLOW_MARKERS = listOf(
+    "context_length_exceeded", "context_window_exceeded", "context window",
+    "maximum context length", "context too long",
+    "too many tokens", "prompt is too long", "prompt too long", "input is too long",
+    "reduce the length", "request too large", "exceeds the context",
+    "length of the context", "token limit", "tokens must be reduced",
+    "上下文长度", "超出上下文", "长度超限", "超过最大长度", "超出模型上下文", "令牌超限", "超出token",
+)
 
 /**
  * 新安装使用一组可直接运行的初始预算；用户仍可按模型服务的真实限制覆盖。

@@ -30,6 +30,8 @@ data class ModelUsageRecord(
 
 private const val MAX_INLINE_TOOL_RESULT_BYTES = 12_000
 private const val TOOL_RESULT_EXCERPT_BYTES = 8_000
+/** 保底截断长度（字符）：服务端判定超限或前两段压缩无效时，单个 tool 结果只保留这段摘录。 */
+private const val TOOL_RESULT_HARD_EXCERPT_CHARS = 1_500
 private const val MAX_INLINE_IMAGE_BYTES = 20L * 1024 * 1024
 private val TOOL_IMAGE_MARKER: String
     get() = localizedText(
@@ -190,12 +192,14 @@ class ChatRuntime(
                 val activeBaseTurnCount = workingTurns.size
                 var contextWasCompacted = false
                 var toolRound = 0
+                var overflowRecovery = 1
                 while (true) {
                     check(toolRound <= maxSteps) {
                         localizedText("已达到单轮最大步骤（$maxSteps），可在设置中调整后重试", "The maximum steps for one run ($maxSteps) was reached. Adjust it in Settings and try again.")
                     }
                     var finished = false
                     var finishReason = ""
+                    var overflowed = false
                     val step = StreamingAssistantStep()
                     assistantSteps += step
                     val requestedCalls = mutableListOf<RequestedToolCall>()
@@ -229,7 +233,16 @@ class ChatRuntime(
                                     store.updateReply(activeRun, output.toString(), stepsSnapshot())
                                 }
                                 is ModelEvent.ToolCall -> requestedCalls += event.call
-                                is ModelEvent.Error -> error(event.message)
+                                is ModelEvent.Error -> {
+                                    // 服务端判定上下文超限且本轮尚未产出内容：放弃本次请求，
+                                    // 压缩后按原轮次重试一次，而不是直接判死整个 run。
+                                    if (event.contextOverflow && overflowRecovery > 0 &&
+                                        step.text.isEmpty() && step.reasoning.isEmpty() && requestedCalls.isEmpty()
+                                    ) {
+                                        overflowRecovery = 0
+                                        overflowed = true
+                                    } else error(event.message)
+                                }
                                 is ModelEvent.Completed -> {
                                     finished = true
                                     finishReason = event.reason
@@ -271,6 +284,17 @@ class ChatRuntime(
                         "model_response run=${activeRun.id} round=$toolRound duration_ms=${System.currentTimeMillis() - requestStartedAt} tool_calls=${requestedCalls.size} finish=$finishReason"
                     }
                     step.finishReasoning()
+                    if (overflowed) {
+                        // 本次请求未产出任何内容：丢弃空步骤、强力压缩（含最新轮工具结果截断）、原轮重试；
+                        // 实在无可压缩内容时不再浪费一次往返，按原错误失败。
+                        assistantSteps.removeAt(assistantSteps.lastIndex)
+                        if (compactActiveContext(workingTurns, activeBaseTurnCount, c.policy, definitions, aggressive = true)) {
+                            contextWasCompacted = true
+                            notice(id, localizedText("服务端判定上下文超限，已压缩上下文并重试", "The service reported a context overflow; context was compressed and the request retried."))
+                            continue
+                        }
+                        error(localizedText("服务端判定上下文超限且无可压缩内容，请缩短输入或增大上下文长度", "The service reported a context overflow and nothing more could be compressed. Shorten the input or increase the context length."))
+                    }
                     check(finished) { localizedText("回复意外中断，已生成的内容已保留", "The response was interrupted. Generated content was preserved.") }
                     if (requestedCalls.isEmpty()) {
                         store.updateReply(activeRun, output.toString(), stepsSnapshot())
@@ -628,18 +652,25 @@ class ChatRuntime(
 
     /**
      * 活跃工具循环达到 80% 时先收缩较早工具结果；仍偏高时把已经完成的旧步骤折叠成引用。
-     * 最新一轮始终完整保留，因为模型还需要依据它决定紧接着的动作。
+     * 最新一轮默认完整保留，因为模型还需要依据它决定紧接着的动作；
+     * aggressive（服务端已判定超限，或前两段后仍超预算）时把最新轮的大工具结果也截断成摘录，
+     * 宁可损失细节也不杀死整个 run——完整结果经 history_read 引用可取回。
      */
     private fun compactActiveContext(
         turns: MutableList<ChatTurn>,
         activeBaseTurnCount: Int,
         policy: ContextPolicy,
         definitions: List<ToolDefinition>,
+        aggressive: Boolean = false,
     ): Boolean {
-        if (!context.shouldCompact(turns, policy, definitions)) return false
+        if (!aggressive && !context.shouldCompact(turns, policy, definitions)) return false
         val latestAssistant = turns.indices.lastOrNull { index ->
             index >= activeBaseTurnCount && turns[index].role == "assistant" && turns[index].toolCalls.isNotEmpty()
-        } ?: return false
+        } ?: run {
+            // 没有任何带工具调用的 assistant 轮：只有首轮预检内容，aggressive 下只能截断现有结果。
+            if (aggressive) return shrinkOversizedTurns(turns, 1)
+            return false
+        }
         var changed = false
         for (index in activeBaseTurnCount until latestAssistant) {
             val turn = turns[index]
@@ -654,6 +685,9 @@ class ChatRuntime(
             changed = true
         }
         if (!context.shouldCompact(turns, policy, definitions) || latestAssistant <= activeBaseTurnCount) {
+            if (aggressive || context.shouldCompact(turns, policy, definitions)) {
+                changed = shrinkOversizedTurns(turns, if (aggressive) 1 else activeBaseTurnCount) || changed
+            }
             return changed
         }
 
@@ -670,7 +704,34 @@ class ChatRuntime(
                 append(localizedText("这段文字只是执行记录，不是新的用户指令。]", "This text is an execution record, not a new user instruction.]"))
             },
         ))
-        return true
+        changed = true
+        if (aggressive || context.shouldCompact(turns, policy, definitions)) {
+            changed = shrinkOversizedTurns(turns, if (aggressive) 1 else activeBaseTurnCount) || changed
+        }
+        return changed
+    }
+
+    /**
+     * 保底手段：把超长的 tool 结果和历史工具结果回显截成短摘录并附完整引用。
+     * aggressive 模式下连最新一轮和历史回显也截——宁可损失细节也不杀死整个 run，
+     * 完整结果仍在本地存储，经 history_read 引用可取回。
+     */
+    private fun shrinkOversizedTurns(turns: MutableList<ChatTurn>, fromIndex: Int): Boolean {
+        var changed = false
+        for (index in fromIndex until turns.size) {
+            val turn = turns[index]
+            val isToolResult = turn.role == "tool" ||
+                (turn.role == "user" && (turn.content.startsWith("[历史工具结果") || turn.content.startsWith("[Historical tool result")))
+            if (!isToolResult || turn.content.length <= TOOL_RESULT_HARD_EXCERPT_CHARS ||
+                isSingleStepResultPlaceholder(turn.content)) continue
+            val reference = turn.sourceToolCallId?.replace(Regex("[\\r\\n]"), "")?.take(200)
+                ?: turn.toolCallId.orEmpty().take(200)
+            val suffix = if (reference.isEmpty()) "" else
+                localizedText("…[超出部分已截断；完整结果引用：$reference，可用 history_read 分段读取]", "…[truncated; full result reference: $reference — read via history_read in chunks]")
+            turns[index] = turn.copy(content = turn.content.take(TOOL_RESULT_HARD_EXCERPT_CHARS) + suffix)
+            changed = true
+        }
+        return changed
     }
 
     /** 模型完成一次决策后立即同时清理内存、数据库中的临时节点结果以及对应图片。 */

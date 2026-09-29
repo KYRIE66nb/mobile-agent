@@ -206,8 +206,11 @@ class OpenAiChatGateway(
                                             "The model service rejected this request. Check Model settings and try again."
                                         )
                                     }
-                                    // 保留 HTTP 状态码便于用户排查，同时不回显可能包含密钥或隐私的服务端响应正文。
-                                    send(ModelEvent.Error("$message (HTTP ${it.code})")); return@use
+                                    // 只扫描错误体里的溢出标识字段做分类，正文内容不回显（可能含密钥或隐私）。
+                                    val overflow = runCatching {
+                                        detectContextOverflow(it.code, it.body?.string()?.take(16_384))
+                                    }.getOrDefault(it.code == 413)
+                                    send(ModelEvent.Error("$message (HTTP ${it.code})", contextOverflow = overflow)); return@use
                                 }
                                 val source = it.body?.source() ?: throw IOException("empty body")
                                 val data = StringBuilder()
