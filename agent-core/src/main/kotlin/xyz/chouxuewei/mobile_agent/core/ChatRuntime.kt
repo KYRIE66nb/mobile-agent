@@ -70,7 +70,7 @@ class ChatRuntime(
     private val personalizedInstructions: suspend () -> String = { "" },
     private val maxStepsPerRun: suspend () -> Int = { DEFAULT_SINGLE_RUN_MAX_STEPS },
     /** 每轮解析出模型连接后调用；返回 null 表示安全闸关闭。 */
-    private val safetyGate: suspend (connection: ChatConnection) -> DecisionGate? = { null },
+    private val safetyGate: suspend (connection: ChatConnection, runPolicy: RunPolicy?) -> DecisionGate? = { _, _ -> null },
 ) {
     private val gate = Mutex()
     private val jobs = mutableMapOf<String, Job>()
@@ -178,7 +178,7 @@ class ChatRuntime(
                 val definitions = enabledDefinitions().let { defs ->
                     runPolicy?.let { p -> defs.filter { it.id in p.allowedToolIds } } ?: defs
                 }
-                val activeGate = runPolicy?.gate ?: safetyGate(c)
+                val activeGate = runPolicy?.gate ?: safetyGate(c, runPolicy)
                 // 每轮开始时只读取一次，避免用户在执行中修改设置导致当前任务的上限突然变化。
                 val maxSteps = requireValidSingleRunMaxSteps(maxStepsPerRun())
                 AgentLog.i("Runtime") {
