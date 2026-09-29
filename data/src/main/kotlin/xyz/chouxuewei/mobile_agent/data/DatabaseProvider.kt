@@ -16,6 +16,7 @@ internal object DatabaseProvider {
                 TOOL_CALL_MIGRATION,
                 ARTIFACT_MIGRATION,
                 CONVERSATION_PIN_MIGRATION,
+                DECISION_AUDIT_MIGRATION,
             )
             .build().also { instance = it }
     }
@@ -73,5 +74,13 @@ val ARTIFACT_MIGRATION = object : Migration(5, 6) {
 val CONVERSATION_PIN_MIGRATION = object : Migration(6, 7) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+/** 专用决策后端的审计表：只存裁决元数据与请求哈希，不落请求原文/密钥。 */
+val DECISION_AUDIT_MIGRATION = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS decision_records (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, backend TEXT NOT NULL, mode TEXT NOT NULL, purpose TEXT NOT NULL, requestHash TEXT NOT NULL, observationId TEXT, candidateId TEXT, confidence REAL, verdict TEXT NOT NULL, fallbackReason TEXT, latencyMillis INTEGER NOT NULL, keyGeneration INTEGER NOT NULL, createdAtEpochMillis INTEGER NOT NULL)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS index_decision_records_createdAtEpochMillis ON decision_records(createdAtEpochMillis)")
     }
 }

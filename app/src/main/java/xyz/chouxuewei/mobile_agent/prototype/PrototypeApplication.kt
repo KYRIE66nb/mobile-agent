@@ -133,7 +133,7 @@ class PrototypeApplication : Application() {
     }
     val decisionSettings by lazy { xyz.chouxuewei.mobile_agent.data.DecisionSettingsRepository(this) }
 
-    /** 专用决策后端闸工厂；审计落库在 task 7 接入，先以内存回调占位。 */
+    /** 专用决策后端闸工厂；审计事件落 Room（decision_records，只存裁决元数据）。 */
     private val decisionGateFactory by lazy {
         xyz.chouxuewei.mobile_agent.core.DecisionGateFactory(
             settings = { decisionSettings.current() },
@@ -144,8 +144,8 @@ class PrototypeApplication : Application() {
         )
     }
 
-    /** Task 7 替换为 Room 持久化；现在保持可注入的空实现，保证调用链形状稳定。 */
-    val decisionAudit by lazy { DecisionAuditRecorder() }
+    /** 决策审计持久化：只落裁决元数据与请求哈希，不存请求原文/密钥。 */
+    val decisionAudit by lazy { xyz.chouxuewei.mobile_agent.data.DecisionAuditStore(this) }
 
     /**
      * 测试当前所选后端的连通性：发送一道最小的 choice 判定（不含任何用户数据），
@@ -298,6 +298,8 @@ class PrototypeApplication : Application() {
             // 启动时没有正在写入的工具任务，适合安全回收上次异常中断留下的孤立文件。
             artifacts.cleanup()
             attachments.cleanup()
+            // 决策审计只保留最近 30 天，记录本身不含敏感原文。
+            decisionAudit.prune(System.currentTimeMillis() - 30L * 86_400_000L)
         }
         // 广告守卫：持久化配置单向灌入引擎；引擎里的修改经 persister 回写，applyPersisted 自身不触发回写。
         AdGuardEngine.persister = { snapshot ->

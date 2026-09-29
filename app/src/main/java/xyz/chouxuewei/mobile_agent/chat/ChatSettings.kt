@@ -290,6 +290,7 @@ fun ChatSettings(
     )
     var decisionTesting by remember { mutableStateOf(false) }
     var decisionTestResult by remember { mutableStateOf<String?>(null) }
+    val decisionAudits by app.decisionAudit.observeRecent().collectAsState(initial = emptyList())
     var accessibilityConnected by remember { mutableStateOf(AgentAccessibilityService.connected != null) }
     var notifListenerConnected by remember { mutableStateOf(AgentNotificationListenerService.connected != null) }
     var usageAccessGranted by remember { mutableStateOf(false) }
@@ -797,6 +798,7 @@ fun ChatSettings(
                         snapshot = decisionSnapshot,
                         testing = decisionTesting,
                         testResult = decisionTestResult,
+                        audit = decisionAudits,
                         onBackend = { backend ->
                             scope.launch {
                                 runCatching { app.decisionSettings.setBackend(backend) }
@@ -3290,6 +3292,7 @@ data class DecisionSectionState(
     val snapshot: xyz.chouxuewei.mobile_agent.core.DecisionSettingsSnapshot,
     val testing: Boolean,
     val testResult: String?,
+    val audit: List<xyz.chouxuewei.mobile_agent.core.DecisionAuditEvent>,
     val onBackend: (xyz.chouxuewei.mobile_agent.core.DecisionBackend) -> Unit,
     val onMode: (xyz.chouxuewei.mobile_agent.core.DecisionMode) -> Unit,
     val onConsent: (Boolean) -> Unit,
@@ -3386,6 +3389,52 @@ private fun DecisionBackendSection(state: DecisionSectionState) {
                     )
                 }
             }
+            if (state.audit.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    localizedText("最近决策记录", "Recent decision records"),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    localizedText(
+                        "只含裁决元数据，不含请求原文或密钥",
+                        "Verdict metadata only; no request payloads or keys",
+                    ),
+                    Modifier.padding(top = 2.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.secondary,
+                )
+                state.audit.take(10).forEach { event -> DecisionAuditRow(event) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DecisionAuditRow(event: xyz.chouxuewei.mobile_agent.core.DecisionAuditEvent) {
+    val colors = LocalChatColors.current
+    val time = remember(event.createdAtEpochMillis) {
+        java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date(event.createdAtEpochMillis))
+    }
+    val headline = buildString {
+        append(event.backend.wireName).append(' ')
+        append(event.purpose.wireName).append(" → ").append(event.verdict)
+        event.candidateId?.let { append(" · ").append(it) }
+        event.confidence?.let { append(" · ").append(String.format(java.util.Locale.US, "%.2f", it)) }
+        append(" · ").append(event.latencyMillis).append("ms")
+    }
+    Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+        Text(
+            "$time  $headline",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        event.fallbackReason?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
         }
     }
 }
