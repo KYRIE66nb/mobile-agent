@@ -18,6 +18,9 @@ data class GateRequest(
     val toolId: String,
     val toolTitle: String,
     val argumentsSummary: String,
+    /** 审计关联字段；不改变裁决语义。 */
+    val runId: String? = null,
+    val toolCallId: String? = null,
 )
 
 /**

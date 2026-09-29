@@ -23,7 +23,7 @@ class DecisionGateFactory(
     private val audit: suspend (DecisionAuditEvent) -> Unit = {},
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    suspend fun safetyGate(connection: ChatConnection, runPolicy: RunPolicy?): DecisionGate? {
+    suspend fun safetyGate(connection: ChatConnection, runPolicy: RunPolicy?, runId: String? = null): DecisionGate? {
         val snapshot = settings()
         val legacy = if (legacyGateEnabled()) legacyGate(connection) else null
         if (snapshot.backend == DecisionBackend.NONE) return legacy
@@ -35,6 +35,7 @@ class DecisionGateFactory(
                     mode = snapshot.mode,
                     purpose = DecisionPurpose.SAFETY_GATE,
                     requestHash = "",
+                    runId = runId,
                     verdict = "skipped",
                     fallbackReason = "unattended_run",
                     keyGeneration = snapshot.profileFor(snapshot.backend).keyGeneration,

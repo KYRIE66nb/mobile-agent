@@ -3424,10 +3424,30 @@ private fun DecisionAuditRow(event: xyz.chouxuewei.mobile_agent.core.DecisionAud
         event.confidence?.let { append(" · ").append(String.format(java.util.Locale.US, "%.2f", it)) }
         append(" · ").append(event.latencyMillis).append("ms")
     }
+    val meta = buildString {
+        append(event.mode.wireName)
+        event.requestedModel?.let { req ->
+            append(" · ").append(req)
+            if (event.returnedModel != null && event.returnedModel != req) {
+                append("→").append(event.returnedModel)
+            }
+        } ?: event.returnedModel?.let { append(" · ").append(it) }
+        append(" · ")
+        if (event.usageInputTokens != null || event.usageOutputTokens != null) {
+            append("${event.usageInputTokens ?: "?"}in/${event.usageOutputTokens ?: "?"}out")
+        } else {
+            append(localizedText("用量不可用", "usage unavailable"))
+        }
+    }
     Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
         Text(
             "$time  $headline",
             style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            meta,
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.secondary,
         )
         event.fallbackReason?.let {
             Text(

@@ -3,6 +3,10 @@ package xyz.chouxuewei.mobile_agent.data
 import android.content.Context
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import xyz.chouxuewei.mobile_agent.core.AgentLog
 import xyz.chouxuewei.mobile_agent.core.DecisionAuditEvent
 
@@ -27,13 +31,28 @@ class DecisionAuditStore internal constructor(private val dao: DecisionAuditDao)
                     mode = event.mode.name,
                     purpose = event.purpose.name,
                     requestHash = event.requestHash,
+                    requestId = event.requestId,
+                    runId = event.runId,
+                    toolCallId = event.toolCallId,
                     observationId = event.observationId,
                     candidateId = event.candidateId,
                     confidence = event.confidence,
+                    probabilities = probabilitiesJson.encodeToString(
+                        kotlinx.serialization.json.JsonObject.serializer(),
+                        JsonObject(event.probabilities.mapValues { (_, v) ->
+                            kotlinx.serialization.json.JsonPrimitive(v)
+                        }),
+                    ),
+                    requestedModel = event.requestedModel,
+                    returnedModel = event.returnedModel,
+                    usageInputTokens = event.usageInputTokens,
+                    usageOutputTokens = event.usageOutputTokens,
                     verdict = event.verdict,
                     fallbackReason = event.fallbackReason,
                     latencyMillis = event.latencyMillis,
                     keyGeneration = event.keyGeneration,
+                    schemaVersion = event.schemaVersion,
+                    policyVersion = event.policyVersion,
                     createdAtEpochMillis = event.createdAtEpochMillis,
                 ),
             )
@@ -57,17 +76,35 @@ class DecisionAuditStore internal constructor(private val dao: DecisionAuditDao)
             purpose = xyz.chouxuewei.mobile_agent.core.DecisionPurpose.entries
                 .firstOrNull { it.name == purpose } ?: xyz.chouxuewei.mobile_agent.core.DecisionPurpose.SAFETY_GATE,
             requestHash = requestHash,
+            requestId = requestId,
+            runId = runId,
+            toolCallId = toolCallId,
             observationId = observationId,
             candidateId = candidateId,
             confidence = confidence,
+            probabilities = decodeProbabilities(probabilities),
+            requestedModel = requestedModel,
+            returnedModel = returnedModel,
+            usageInputTokens = usageInputTokens,
+            usageOutputTokens = usageOutputTokens,
             verdict = verdict,
             fallbackReason = fallbackReason,
             latencyMillis = latencyMillis,
             keyGeneration = keyGeneration,
+            schemaVersion = schemaVersion,
+            policyVersion = policyVersion,
             createdAtEpochMillis = createdAtEpochMillis,
         )
 
+    private fun decodeProbabilities(raw: String): Map<String, Double> =
+        runCatching {
+            (Json.parseToJsonElement(raw) as? JsonObject)
+                ?.mapNotNull { (k, v) -> v.jsonPrimitive.doubleOrNull?.let { k to it } }
+                ?.toMap()
+        }.getOrNull() ?: emptyMap()
+
     companion object {
         const val RECENT_LIMIT = 50
+        private val probabilitiesJson = Json
     }
 }

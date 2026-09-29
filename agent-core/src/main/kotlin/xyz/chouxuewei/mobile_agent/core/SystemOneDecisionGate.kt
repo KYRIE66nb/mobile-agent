@@ -36,13 +36,22 @@ class SystemOneDecisionGate(
             DecisionOutcome.Failed(DecisionFailureKind.NETWORK, detail = error.message.orEmpty().take(120))
         }
         val evaluated = DecisionPolicy.evaluateGate(outcome)
+        val accepted = (outcome as? DecisionOutcome.Accepted)?.choice
         audit(
             DecisionAuditEvent(
                 backend = backend,
                 mode = mode,
                 purpose = purpose,
                 requestHash = decisionRequest.stableHash(),
+                requestId = decisionRequest.requestId,
+                runId = request.runId,
+                toolCallId = request.toolCallId,
                 confidence = evaluated.confidence,
+                probabilities = accepted?.probabilities ?: emptyMap(),
+                requestedModel = accepted?.requestModel,
+                returnedModel = accepted?.modelEcho,
+                usageInputTokens = accepted?.usageInputTokens,
+                usageOutputTokens = accepted?.usageOutputTokens,
                 verdict = evaluated.outcome,
                 fallbackReason = evaluated.fallbackReason,
                 latencyMillis = (clock() - startedAt).coerceAtLeast(0),

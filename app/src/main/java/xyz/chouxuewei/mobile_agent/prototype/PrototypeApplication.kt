@@ -121,8 +121,8 @@ class PrototypeApplication : Application() {
             usageRecorder = modelUsage::record,
             personalizedInstructions = personalization::currentInstructions,
             maxStepsPerRun = agentExecutionSettings::currentMaxSteps,
-            safetyGate = { connection, runPolicy ->
-                decisionGateFactory.safetyGate(connection, runPolicy)
+            safetyGate = { connection, runPolicy, runId ->
+                decisionGateFactory.safetyGate(connection, runPolicy, runId)
             },
             fastPath = xyz.chouxuewei.mobile_agent.core.FastPathSupport(
                 settings = { decisionSettings.current() },
@@ -194,6 +194,8 @@ class PrototypeApplication : Application() {
         if (!snapshot.outboundConsent || snapshot.backend != backend) return null
         val profile = snapshot.profileFor(backend)
         if (!profile.hasValidBaseUrl) return null
+        // Release 构建的决策端点只接受 https；明文 http 仅限 debug 构建的本机/局域网联调。
+        if (!BuildConfig.DEBUG && profile.baseUrl.startsWith("http://")) return null
         val apiKey = decisionSettings.resolveApiKey(backend)
         return when (backend) {
             xyz.chouxuewei.mobile_agent.core.DecisionBackend.LAYA ->

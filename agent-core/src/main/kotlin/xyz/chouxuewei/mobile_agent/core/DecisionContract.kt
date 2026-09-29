@@ -102,7 +102,13 @@ data class DecisionChoice(
     val confidence: Double?,
     val probabilities: Map<String, Double>,
     val latencyMillis: Long,
+    /** 服务端响应里回显的模型名；未回显为 null。 */
     val modelEcho: String? = null,
+    /** 本次请求发送的模型名（客户端侧记录）。 */
+    val requestModel: String? = null,
+    /** 服务真实 usage；未返回为 null。 */
+    val usageInputTokens: Int? = null,
+    val usageOutputTokens: Int? = null,
 )
 
 enum class DecisionFailureKind(val wireName: String) {
@@ -135,21 +141,39 @@ interface DecisionProvider {
     suspend fun choose(request: DecisionChoiceRequest): DecisionOutcome
 }
 
-/** 单次决策的审计事件；不落盘敏感原文与密钥。 */
+/** 审计契约版本：字段形状变化时递增，存储侧按版本兼容读取。 */
+const val DECISION_SCHEMA_VERSION = 1
+/** 本地裁决/回退策略版本：策略语义变化时递增。 */
+const val DECISION_POLICY_VERSION = 1
+
+/** 单次决策的审计事件；不落盘请求原文、完整界面文本与密钥。 */
 data class DecisionAuditEvent(
     val backend: DecisionBackend,
     val mode: DecisionMode,
     val purpose: DecisionPurpose,
     /** 请求内容哈希（sha256 前缀），不存原文。 */
     val requestHash: String,
+    val requestId: String = "",
+    val runId: String? = null,
+    val toolCallId: String? = null,
     val observationId: String? = null,
     val candidateId: String? = null,
     val confidence: Double? = null,
-    /** "allow"/"confirm"/"block"/"fallback"/"skipped" 等终态。 */
+    /** 服务端返回的有限概率分布（条数已被请求选项数封顶）。 */
+    val probabilities: Map<String, Double> = emptyMap(),
+    /** 请求发送的模型名与服务回显的模型名。 */
+    val requestedModel: String? = null,
+    val returnedModel: String? = null,
+    /** 服务真实 usage；未返回为 null，UI 显示 unavailable 而不是编造。 */
+    val usageInputTokens: Int? = null,
+    val usageOutputTokens: Int? = null,
+    /** "allow"/"confirm"/"block"/"adopt"/"goal_met"/"fallback"/"skipped" 等终态。 */
     val verdict: String,
     val fallbackReason: String? = null,
     val latencyMillis: Long = 0,
     val keyGeneration: Int = 0,
+    val schemaVersion: Int = DECISION_SCHEMA_VERSION,
+    val policyVersion: Int = DECISION_POLICY_VERSION,
     val createdAtEpochMillis: Long,
 )
 

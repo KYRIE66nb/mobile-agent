@@ -49,6 +49,7 @@ class FastPathController(
         sessionId: String,
         userRequest: String,
         initialObservation: JsonObject,
+        runId: String? = null,
         execute: suspend (toolId: String, args: JsonObject) -> ToolResult,
     ): Result {
         val constraints = userConstraints(userRequest)
@@ -77,15 +78,23 @@ class FastPathController(
                 DecisionOutcome.Failed(DecisionFailureKind.NETWORK, detail = error.message.orEmpty().take(120))
             }
             val evaluated = DecisionPolicy.evaluateNavigation(outcome, candidates.map { it.id }.toSet())
+            val accepted = (outcome as? DecisionOutcome.Accepted)?.choice
             audit(
                 DecisionAuditEvent(
                     backend = backend,
                     mode = mode,
                     purpose = DecisionPurpose.NAVIGATION,
                     requestHash = request.stableHash(),
+                    requestId = request.requestId,
+                    runId = runId,
                     observationId = observation.observationId,
                     candidateId = (evaluated as? DecisionPolicy.NavEvaluation.Adopt)?.candidateId,
-                    confidence = (outcome as? DecisionOutcome.Accepted)?.choice?.confidence,
+                    confidence = accepted?.confidence,
+                    probabilities = accepted?.probabilities ?: emptyMap(),
+                    requestedModel = accepted?.requestModel,
+                    returnedModel = accepted?.modelEcho,
+                    usageInputTokens = accepted?.usageInputTokens,
+                    usageOutputTokens = accepted?.usageOutputTokens,
                     verdict = when (evaluated) {
                         is DecisionPolicy.NavEvaluation.Adopt -> "adopt"
                         is DecisionPolicy.NavEvaluation.GoalMet -> "goal_met"

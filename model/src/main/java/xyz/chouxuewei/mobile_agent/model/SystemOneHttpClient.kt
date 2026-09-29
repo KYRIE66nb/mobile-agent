@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -56,6 +57,10 @@ class SystemOneHttpClient(
         .readTimeout(DecisionLimits.READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .writeTimeout(DecisionLimits.WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .callTimeout(DecisionLimits.CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        // 决策端点第一版拒绝一切重定向：不把 Authorization 带到其它 origin，
+        // 也不让静默改址绕过用户的出站同意边界。
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
 
     private val consecutiveFailures = AtomicInteger(0)
@@ -195,6 +200,7 @@ class SystemOneHttpClient(
                 ?.filterValues { it in 0.0..1.0 }
                 ?: emptyMap()
             val effectiveConfidence = confidence ?: probabilities[choice]
+            val usage = root["usage"]?.jsonObject
             DecisionOutcome.Accepted(
                 DecisionChoice(
                     choice = choice,
@@ -202,6 +208,9 @@ class SystemOneHttpClient(
                     probabilities = probabilities,
                     latencyMillis = latency,
                     modelEcho = root["model"]?.jsonPrimitive?.contentOrNull?.take(120),
+                    requestModel = model,
+                    usageInputTokens = usage?.get("input_tokens")?.jsonPrimitive?.intOrNull,
+                    usageOutputTokens = usage?.get("output_tokens")?.jsonPrimitive?.intOrNull,
                 )
             )
         } catch (e: Exception) {

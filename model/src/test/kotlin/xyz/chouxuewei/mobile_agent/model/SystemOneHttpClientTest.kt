@@ -188,6 +188,23 @@ class SystemOneHttpClientTest {
     }
 
     @Test
+    fun `redirect is refused and not retried`() = runBlocking {
+        // 默认客户端（生产路径）禁用重定向：不带 Authorization 跨 origin，也不静默改址。
+        server.enqueue(
+            MockResponse().setResponseCode(302).addHeader("Location", server.url("/elsewhere"))
+        )
+        val defaultClient = SystemOneHttpClient(
+            baseUrl = server.url("/").toString().removeSuffix("/"),
+            model = "test-model",
+            apiKey = "key-1",
+            retryDelayMs = 1,
+        )
+        val outcome = defaultClient.choose(request())
+        assertEquals(DecisionFailureKind.BAD_RESPONSE, (outcome as DecisionOutcome.Failed).kind)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
     fun `invalid json and missing fields are bad response`() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"answers":{}}"""))

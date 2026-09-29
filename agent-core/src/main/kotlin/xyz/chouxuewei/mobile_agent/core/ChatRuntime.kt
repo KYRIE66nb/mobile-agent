@@ -74,7 +74,7 @@ class ChatRuntime(
     private val personalizedInstructions: suspend () -> String = { "" },
     private val maxStepsPerRun: suspend () -> Int = { DEFAULT_SINGLE_RUN_MAX_STEPS },
     /** 每轮解析出模型连接后调用；返回 null 表示安全闸关闭。 */
-    private val safetyGate: suspend (connection: ChatConnection, runPolicy: RunPolicy?) -> DecisionGate? = { _, _ -> null },
+    private val safetyGate: suspend (connection: ChatConnection, runPolicy: RunPolicy?, runId: String?) -> DecisionGate? = { _, _, _ -> null },
     /** 低风险导航快路径能力；null 或未开启加速时不启用。 */
     private val fastPath: FastPathSupport? = null,
 ) {
@@ -184,7 +184,7 @@ class ChatRuntime(
                 val definitions = enabledDefinitions().let { defs ->
                     runPolicy?.let { p -> defs.filter { it.id in p.allowedToolIds } } ?: defs
                 }
-                val activeGate = runPolicy?.gate ?: safetyGate(c, runPolicy)
+                val activeGate = runPolicy?.gate ?: safetyGate(c, runPolicy, activeRun.id)
                 // 每轮开始时只读取一次，避免用户在执行中修改设置导致当前任务的上限突然变化。
                 val maxSteps = requireValidSingleRunMaxSteps(maxStepsPerRun())
                 AgentLog.i("Runtime") {
@@ -411,6 +411,7 @@ class ChatRuntime(
                                 sessionId = navEngagement.second,
                                 userRequest = trigger.text,
                                 initialObservation = navEngagement.third,
+                                runId = activeRun.id,
                             ) { toolId, args ->
                                 val seq = ++fpSeq
                                 val call = RequestedToolCall(
@@ -565,6 +566,8 @@ class ChatRuntime(
                     toolTitle = definition.title,
                     argumentsSummary = tools?.approvalSummary(requested)
                         ?: requested.argumentsJson.take(500),
+                    runId = run.id,
+                    toolCallId = recordId,
                 )
             )) {
                 is GateVerdict.Block -> {
