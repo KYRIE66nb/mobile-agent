@@ -285,6 +285,11 @@ fun ChatSettings(
     val personalizedInstructions by app.personalization.instructions.collectAsState(initial = "")
     val modelUsage by app.modelUsage.usage.collectAsState(initial = emptyList())
     val speechSettings by app.speechSettings.settings.collectAsState(initial = SpeechSettings())
+    val decisionSnapshot by app.decisionSettings.snapshot.collectAsState(
+        initial = xyz.chouxuewei.mobile_agent.core.DecisionSettingsSnapshot()
+    )
+    var decisionTesting by remember { mutableStateOf(false) }
+    var decisionTestResult by remember { mutableStateOf<String?>(null) }
     var accessibilityConnected by remember { mutableStateOf(AgentAccessibilityService.connected != null) }
     var notifListenerConnected by remember { mutableStateOf(AgentNotificationListenerService.connected != null) }
     var usageAccessGranted by remember { mutableStateOf(false) }
@@ -788,6 +793,70 @@ fun ChatSettings(
                                 }
                         }
                     },
+                    decision = DecisionSectionState(
+                        snapshot = decisionSnapshot,
+                        testing = decisionTesting,
+                        testResult = decisionTestResult,
+                        onBackend = { backend ->
+                            scope.launch {
+                                runCatching { app.decisionSettings.setBackend(backend) }
+                                    .onFailure { feedback = SettingsNotice(localizedText("后端设置未保存，请重试", "Backend setting was not saved. Please try again."), false) }
+                            }
+                        },
+                        onMode = { mode ->
+                            scope.launch {
+                                runCatching { app.decisionSettings.setMode(mode) }
+                                    .onFailure { feedback = SettingsNotice(localizedText("模式设置未保存，请重试", "Mode setting was not saved. Please try again."), false) }
+                            }
+                        },
+                        onConsent = { granted ->
+                            scope.launch {
+                                runCatching { app.decisionSettings.setOutboundConsent(granted) }
+                                    .onFailure { feedback = SettingsNotice(localizedText("同意状态未保存，请重试", "Consent was not saved. Please try again."), false) }
+                            }
+                        },
+                        onNavAccel = { enabled ->
+                            scope.launch {
+                                runCatching { app.decisionSettings.setNavigationAcceleration(enabled) }
+                                    .onFailure { feedback = SettingsNotice(localizedText("导航加速设置未保存，请重试", "Navigation acceleration was not saved. Please try again."), false) }
+                            }
+                        },
+                        onSaveProfile = { backend, url, model ->
+                            scope.launch {
+                                runCatching { app.decisionSettings.saveProfile(backend, url, model) }
+                                    .onSuccess { feedback = SettingsNotice(localizedText("后端配置已保存", "Backend profile saved"), true) }
+                                    .onFailure { feedback = SettingsNotice(localizedText("配置未保存，请重试", "Profile was not saved. Please try again."), false) }
+                            }
+                        },
+                        onSetKey = { backend, key ->
+                            scope.launch {
+                                runCatching { app.decisionSettings.setApiKey(backend, key) }
+                                    .onSuccess { feedback = SettingsNotice(localizedText("密钥已保存并轮换代数", "Key saved; generation rotated"), true) }
+                                    .onFailure { feedback = SettingsNotice(localizedText("密钥未保存，请重试", "Key was not saved. Please try again."), false) }
+                            }
+                        },
+                        onRevokeKey = { backend ->
+                            scope.launch {
+                                runCatching { app.decisionSettings.revokeApiKey(backend) }
+                                    .onSuccess { feedback = SettingsNotice(localizedText("密钥已撤销", "Key revoked"), true) }
+                                    .onFailure { feedback = SettingsNotice(localizedText("密钥未撤销，请重试", "Key was not revoked. Please try again."), false) }
+                            }
+                        },
+                        onTest = {
+                            scope.launch {
+                                decisionTesting = true
+                                decisionTestResult = null
+                                runCatching { app.testDecisionConnection() }
+                                    .onSuccess { decisionTestResult = it }
+                                    .onFailure {
+                                        decisionTestResult = userFacingMessage(
+                                            it, localizedText("连接测试未完成", "Connection test did not finish"),
+                                        )
+                                    }
+                                decisionTesting = false
+                            }
+                        },
+                    ),
                     autoFailover = autoFailover,
                     announceTasks = announceTasks,
                     models = settings.models,
@@ -1338,6 +1407,7 @@ private fun GeneralSettings(
     onDetailedLogging: (Boolean) -> Unit,
     onMaxSteps: (Int) -> Unit,
     onSafetyGate: (Boolean) -> Unit,
+    decision: DecisionSectionState,
     autoFailover: Boolean,
     announceTasks: Boolean,
     models: List<ModelProfile>,
@@ -1404,6 +1474,7 @@ private fun GeneralSettings(
             onFieldBoundsChanged = { maxStepsFieldBounds = it },
         )
         SafetyGateRow(safetyGate, onSafetyGate)
+        DecisionBackendSection(decision)
         ToggleSettingRow(
             title = localizedText("模型故障切换", "Model failover"),
             caption = localizedText("主模型彻底失败时自动尝试其它已保存的配置；运行记录中会显示实际使用的模型", "When the primary model fails outright, retry with another saved profile; the run record shows which model answered"),
@@ -3212,4 +3283,241 @@ private fun SettingsDivider() {
             .fillMaxWidth()
             .height(1.dp), color = LocalChatColors.current.divider
     ) {}
+}
+
+/** 决策后端设置区块的参数包：快照 + 测试态 + 全部回调。 */
+data class DecisionSectionState(
+    val snapshot: xyz.chouxuewei.mobile_agent.core.DecisionSettingsSnapshot,
+    val testing: Boolean,
+    val testResult: String?,
+    val onBackend: (xyz.chouxuewei.mobile_agent.core.DecisionBackend) -> Unit,
+    val onMode: (xyz.chouxuewei.mobile_agent.core.DecisionMode) -> Unit,
+    val onConsent: (Boolean) -> Unit,
+    val onNavAccel: (Boolean) -> Unit,
+    val onSaveProfile: (xyz.chouxuewei.mobile_agent.core.DecisionBackend, String, String) -> Unit,
+    val onSetKey: (xyz.chouxuewei.mobile_agent.core.DecisionBackend, String) -> Unit,
+    val onRevokeKey: (xyz.chouxuewei.mobile_agent.core.DecisionBackend) -> Unit,
+    val onTest: () -> Unit,
+)
+
+@Composable
+private fun DecisionBackendSection(state: DecisionSectionState) {
+    val colors = LocalChatColors.current
+    val snapshot = state.snapshot
+    Column(Modifier.fillMaxWidth()) {
+        Text(localizedText("专用决策后端", "Dedicated decision backend"), style = MaterialTheme.typography.bodyMedium)
+        Text(
+            localizedText(
+                "可选：由独立的小模型服务为安全闸/低风险导航提供裁决。不接入时行为与之前完全一致；触发器和无人值守任务本版本不适用专用后端。",
+                "Optional: an independent small-model service supplies verdicts for the safety gate and low-risk navigation. With no backend connected, behavior is identical to before; triggers and unattended tasks do not use a dedicated backend in this version.",
+            ),
+            Modifier.padding(top = 2.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.secondary,
+        )
+        Spacer(Modifier.height(6.dp))
+        DecisionOptionRow(
+            title = localizedText("后端", "Backend"),
+            value = decisionBackendLabel(snapshot.backend),
+            options = xyz.chouxuewei.mobile_agent.core.DecisionBackend.entries.map {
+                it to decisionBackendLabel(it)
+            },
+            onSelect = state.onBackend,
+        )
+        if (snapshot.backend != xyz.chouxuewei.mobile_agent.core.DecisionBackend.NONE) {
+            DecisionOptionRow(
+                title = localizedText("裁决模式", "Verdict mode"),
+                value = decisionModeLabel(snapshot.mode),
+                options = xyz.chouxuewei.mobile_agent.core.DecisionMode.entries.map {
+                    it to decisionModeLabel(it)
+                },
+                onSelect = state.onMode,
+            )
+            ToggleSettingRow(
+                title = localizedText("允许数据出站", "Allow outbound data"),
+                caption = localizedText(
+                    "同意后，判定所需的最小上下文（请求目标与候选描述）会发送到所选端点；不发送完整聊天记录与截图。",
+                    "With consent, the minimal decision context (goal and candidate descriptions) is sent to the chosen endpoint; full chat history and screenshots are never sent.",
+                ),
+                checked = snapshot.outboundConsent,
+                onCheckedChange = state.onConsent,
+            )
+            val profile = snapshot.profileFor(snapshot.backend)
+            DecisionProfileFields(
+                backend = snapshot.backend,
+                baseUrl = profile.baseUrl,
+                model = profile.model,
+                keyConfigured = profile.keyReference != null,
+                keyGeneration = profile.keyGeneration,
+                onSave = { url, model -> state.onSaveProfile(snapshot.backend, url, model) },
+                onSetKey = { state.onSetKey(snapshot.backend, it) },
+                onRevokeKey = { state.onRevokeKey(snapshot.backend) },
+            )
+            ToggleSettingRow(
+                title = localizedText("低风险导航加速", "Low-risk navigation acceleration"),
+                caption = localizedText(
+                    "识别界面后由专用模型在本地构造的候选中选择动作，仍走统一执行/审批/观察校验；ENFORCE 下生效，默认关闭",
+                    "After observing, the dedicated model picks among locally built candidates through the same execution/approval/observation checks; applies under ENFORCE, off by default",
+                ),
+                checked = snapshot.navigationAcceleration,
+                onCheckedChange = state.onNavAccel,
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(
+                    onClick = state.onTest,
+                    enabled = !state.testing,
+                ) {
+                    Text(
+                        if (state.testing) localizedText("测试中…", "Testing…")
+                        else localizedText("测试连接", "Test connection")
+                    )
+                }
+                state.testResult?.let {
+                    Text(
+                        it,
+                        Modifier.padding(start = 12.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.secondary,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun decisionBackendLabel(b: xyz.chouxuewei.mobile_agent.core.DecisionBackend) = when (b) {
+    xyz.chouxuewei.mobile_agent.core.DecisionBackend.NONE -> localizedText("不接入", "None")
+    xyz.chouxuewei.mobile_agent.core.DecisionBackend.LAYA -> "Laya"
+    xyz.chouxuewei.mobile_agent.core.DecisionBackend.JEV -> "Jev"
+}
+
+private fun decisionModeLabel(m: xyz.chouxuewei.mobile_agent.core.DecisionMode) = when (m) {
+    xyz.chouxuewei.mobile_agent.core.DecisionMode.SHADOW -> "SHADOW"
+    xyz.chouxuewei.mobile_agent.core.DecisionMode.ENFORCE -> "ENFORCE"
+}
+
+@Composable
+private fun <T> DecisionOptionRow(
+    title: String,
+    value: String,
+    options: List<Pair<T, String>>,
+    onSelect: (T) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { expanded = true }
+                .padding(vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Surface(shape = RoundedCornerShape(22.dp), color = colors.surfaceRaised) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(value, color = colors.secondary, style = MaterialTheme.typography.bodyMedium)
+                    ChatIcon(
+                        R.drawable.lucide_chevron_down, null,
+                        Modifier
+                            .padding(start = 6.dp)
+                            .size(15.dp),
+                        colors.secondary,
+                    )
+                }
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (option, label) ->
+                DropdownMenuItem(text = { Text(label) }, onClick = {
+                    expanded = false
+                    onSelect(option)
+                })
+            }
+        }
+    }
+}
+
+@Composable
+private fun DecisionProfileFields(
+    backend: xyz.chouxuewei.mobile_agent.core.DecisionBackend,
+    baseUrl: String,
+    model: String,
+    keyConfigured: Boolean,
+    keyGeneration: Int,
+    onSave: (String, String) -> Unit,
+    onSetKey: (String) -> Unit,
+    onRevokeKey: () -> Unit,
+) {
+    val colors = LocalChatColors.current
+    var url by remember(backend, baseUrl) { mutableStateOf(baseUrl) }
+    var modelName by remember(backend, model) { mutableStateOf(model) }
+    var keyInput by remember(backend, keyGeneration) { mutableStateOf("") }
+    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+        OutlinedTextField(
+            value = url,
+            onValueChange = { url = it },
+            label = { Text(localizedText("服务地址", "Endpoint URL")) },
+            placeholder = { Text(if (backend == xyz.chouxuewei.mobile_agent.core.DecisionBackend.JEV) "https://api.typesafe.ai" else "http://<主机>:8000") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = modelFieldColors(),
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = modelName,
+            onValueChange = { modelName = it },
+            label = { Text(localizedText("模型", "Model")) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = modelFieldColors(),
+        )
+        Row(Modifier.padding(top = 6.dp)) {
+            OutlinedButton(onClick = { onSave(url, modelName) }) {
+                Text(localizedText("保存配置", "Save profile"))
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            localizedText(
+                "API 密钥${if (keyConfigured) "（已保存，代数 $keyGeneration）" else "（未保存" + if (backend == xyz.chouxuewei.mobile_agent.core.DecisionBackend.LAYA) "，本地服务可留空" else "" + "）"}",
+                "API key ${if (keyConfigured) "(saved, generation $keyGeneration)" else "(not saved" + if (backend == xyz.chouxuewei.mobile_agent.core.DecisionBackend.LAYA) ", optional for local Laya" else "" + ")"}",
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.secondary,
+        )
+        OutlinedTextField(
+            value = keyInput,
+            onValueChange = { keyInput = it },
+            label = { Text(localizedText("输入新密钥（不回显）", "Enter new key (write-only)")) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = modelFieldColors(),
+        )
+        Row(Modifier.padding(top = 6.dp)) {
+            OutlinedButton(
+                onClick = {
+                    if (keyInput.isNotBlank()) onSetKey(keyInput)
+                    keyInput = ""
+                },
+                enabled = keyInput.isNotBlank(),
+            ) {
+                Text(localizedText("保存密钥", "Save key"))
+            }
+            if (keyConfigured) {
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(onClick = onRevokeKey) {
+                    Text(localizedText("撤销密钥", "Revoke key"))
+                }
+            }
+        }
+    }
 }

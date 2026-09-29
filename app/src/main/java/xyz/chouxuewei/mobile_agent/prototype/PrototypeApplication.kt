@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.json.jsonObject
 import xyz.chouxuewei.mobile_agent.core.ChatConnection
 import xyz.chouxuewei.mobile_agent.core.ChatRuntime
 import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
@@ -140,6 +141,45 @@ class PrototypeApplication : Application() {
 
     /** Task 7 替换为 Room 持久化；现在保持可注入的空实现，保证调用链形状稳定。 */
     val decisionAudit by lazy { DecisionAuditRecorder() }
+
+    /**
+     * 测试当前所选后端的连通性：发送一道最小的 choice 判定（不含任何用户数据），
+     * 返回可读摘要或抛出带原因的错误。不改变任何运行状态。
+     */
+    suspend fun testDecisionConnection(): String {
+        val snapshot = decisionSettings.current()
+        val backend = snapshot.backend
+        require(backend != xyz.chouxuewei.mobile_agent.core.DecisionBackend.NONE) {
+            localizedText("尚未选择专用后端", "No dedicated backend is selected")
+        }
+        val provider = resolveDecisionProvider(backend) ?: error(
+            localizedText(
+                "配置不完整：请检查地址、密钥与出站同意",
+                "Configuration incomplete: check the endpoint, key, and outbound consent",
+            )
+        )
+        val request = xyz.chouxuewei.mobile_agent.core.DecisionChoiceRequest(
+            purpose = xyz.chouxuewei.mobile_agent.core.DecisionPurpose.SAFETY_GATE,
+            requestId = "probe-${System.currentTimeMillis()}",
+            state = kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"probe":"connection_test"}"""
+            ).jsonObject,
+            instructions = "Connection test. Choose 'allow'.",
+            options = mapOf("allow" to "connectivity ok", "block" to "refuse"),
+        )
+        return when (val outcome = provider.choose(request)) {
+            is xyz.chouxuewei.mobile_agent.core.DecisionOutcome.Accepted -> localizedText(
+                "已连通（${outcome.choice.modelEcho ?: backend.wireName}，${outcome.choice.latencyMillis}ms，选择 ${outcome.choice.choice}）",
+                "Connected (${outcome.choice.modelEcho ?: backend.wireName}, ${outcome.choice.latencyMillis}ms, chose ${outcome.choice.choice})",
+            )
+            is xyz.chouxuewei.mobile_agent.core.DecisionOutcome.Failed -> error(
+                localizedText(
+                    "连接失败：${outcome.kind.wireName}${outcome.httpStatus?.let { "（HTTP $it）" } ?: ""}",
+                    "Connection failed: ${outcome.kind.wireName}${outcome.httpStatus?.let { " (HTTP $it)" } ?: ""}",
+                )
+            )
+        }
+    }
 
     /** 按后端解析 provider：读取当前配置快照，未同意出站/配置不完整/密钥缺失时返回 null。 */
     private suspend fun resolveDecisionProvider(
