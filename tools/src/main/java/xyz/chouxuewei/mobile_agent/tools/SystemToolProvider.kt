@@ -63,7 +63,7 @@ class SystemToolProvider(context: Context, private val device: DeviceGateway? = 
         ToolDefinition(
             "system_open_panel",
             localizedText("打开系统面板", "Open system panel"),
-            localizedText("打开指定系统设置页，实际开关和授权仍由用户或后续可见设备操作完成。app_details 可携带 package_name 打开指定应用详情页。", "Open a specified system settings page. The user or a later visible device action must still change settings or grant access. app_details accepts package_name to open a specific app's details page."),
+            localizedText("打开枚举中的系统设置/授权面板，实际开关和授权仍由用户或后续可见设备操作完成。app_details 可携带 package_name 打开指定应用详情页。本工具不能打开设置 App 本体或其它普通应用——打开应用应先用 device_list_apps 查真实包名，再用 device_open。", "Open one of the enumerated system settings/permission panels. The user or a later visible device action must still change settings or grant access. app_details accepts package_name to open a specific app's details page. This tool cannot open the Settings app itself or any regular app — to open an app, look up its real package name with device_list_apps, then use device_open."),
             """{"type":"object","properties":{"panel":{"type":"string","enum":["internet","wifi","bluetooth","location","notifications","notification_listener","accessibility","overlay","write_settings","app_details","date_time","battery_saver","usage_access"]},"package_name":{"type":"string","maxLength":255,"description":localizedText("仅用于 app_details：目标应用真实包名，缺省为本应用", "Only for app_details: real package name of the target app; defaults to this app")}},"required":["panel"],"additionalProperties":false}""",
             ToolSideEffect.EXTERNAL_WRITE,
             id,
@@ -297,7 +297,9 @@ class SystemToolProvider(context: Context, private val device: DeviceGateway? = 
             "usage_access" -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
             "date_time" -> Intent(Settings.ACTION_DATE_SETTINGS)
             "battery_saver" -> Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
-            else -> error(localizedText("不支持的系统面板", "Unsupported system panel"))
+            else -> error(localizedText(
+                "不支持的系统面板：$panel；支持 ${SUPPORTED_PANELS.joinToString("、")}。打开普通应用（含设置 App）请用 device_open",
+                "Unsupported system panel: $panel. Supported: ${SUPPORTED_PANELS.joinToString(", ")}. To open a regular app (including the Settings app) use device_open"))
         }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startResolved(intent)
         return ToolResult(buildJsonObject { put("opened", true); put("panel", panel) }.toString(), localizedText("已打开系统面板", "System panel opened"))
@@ -528,5 +530,10 @@ class SystemToolProvider(context: Context, private val device: DeviceGateway? = 
         )
         val BLOCKED_SCHEMES = setOf("file", "content", "data", "javascript", "intent")
         val PACKAGE_PATTERN = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
+        val SUPPORTED_PANELS = listOf(
+            "internet", "wifi", "bluetooth", "location", "notifications",
+            "notification_listener", "accessibility", "overlay", "write_settings",
+            "app_details", "date_time", "battery_saver", "usage_access",
+        )
     }
 }

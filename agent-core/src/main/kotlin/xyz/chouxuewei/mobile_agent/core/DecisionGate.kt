@@ -58,7 +58,9 @@ class LlmDecisionGate(
         val events = gateway.stream(
             ChatRequest(
                 messages = listOf(ChatTurn(role = "user", content = prompt)),
-                maxOutputTokens = 256,
+                // 推理类模型会先产出隐藏推理再输出正文，256 容易被吃光导致正文为空；
+                // 裁决只需要一行 JSON，768 给推理留余量又不失控。
+                maxOutputTokens = 768,
                 tools = emptyList(),
             ),
         ).toList()
@@ -72,6 +74,8 @@ class LlmDecisionGate(
 
     companion object {
         private val JSON_PATTERN = Regex("\\{[^{}]*\\}")
+        /** 非 JSON 输出兜底：`decision: allow`（可不带引号）或行首裸裁决词。 */
+        private val LOOSE_DECISION = Regex("(?i)(?:decision\\s*[:=]\\s*\"?|^\\s*)(allow|confirm|block)\\b")
 
         fun buildPrompt(request: GateRequest): String = localizedText(
             """你是手机操作安全裁决器。判断下面这个动作是否可以直接执行，只输出一行 JSON，不要输出任何其它内容：
@@ -97,19 +101,30 @@ Arguments summary: ${request.argumentsSummary.take(500)}""",
         )
 
         fun parse(text: String): GateVerdict {
-            val json = JSON_PATTERN.find(text)?.value ?: return GateVerdict.Confirm(
-                localizedText("安全裁决结果无法解析", "Could not parse the safety verdict.")
-            )
-            val reason = Regex("\"reason\"\\s*:\\s*\"([^\"]*)\"")
-                .find(json)?.groupValues?.get(1)?.take(120).orEmpty()
-            return when (Regex("\"decision\"\\s*:\\s*\"(\\w+)\"").find(json)?.groupValues?.get(1)?.lowercase()) {
+            JSON_PATTERN.find(text)?.value?.let { json ->
+                val reason = Regex("\"reason\"\\s*:\\s*\"([^\"]*)\"")
+                    .find(json)?.groupValues?.get(1)?.take(120).orEmpty()
+                return when (Regex("\"decision\"\\s*:\\s*\"(\\w+)\"").find(json)?.groupValues?.get(1)?.lowercase()) {
+                    "allow" -> GateVerdict.Allow
+                    "block" -> GateVerdict.Block(reason.ifBlank {
+                        localizedText("该操作被安全策略阻止", "The action was blocked by the safety policy.")
+                    })
+                    else -> GateVerdict.Confirm(reason.ifBlank {
+                        localizedText("该操作需要你确认", "This action needs your confirmation.")
+                    })
+                }
+            }
+            // 模型没按 JSON 输出时：接受开头裸裁决词或 decision: xxx 形式；拿不准仍降级 Confirm。
+            val loose = LOOSE_DECISION.find(text)?.groupValues?.get(1)?.lowercase()
+            AgentLog.w("DecisionGate") { "unparseable verdict raw=${text.take(160)}" }
+            return when (loose) {
                 "allow" -> GateVerdict.Allow
-                "block" -> GateVerdict.Block(reason.ifBlank {
+                "block" -> GateVerdict.Block(
                     localizedText("该操作被安全策略阻止", "The action was blocked by the safety policy.")
-                })
-                else -> GateVerdict.Confirm(reason.ifBlank {
-                    localizedText("该操作需要你确认", "This action needs your confirmation.")
-                })
+                )
+                else -> GateVerdict.Confirm(
+                    localizedText("安全裁决结果无法解析", "Could not parse the safety verdict.")
+                )
             }
         }
     }

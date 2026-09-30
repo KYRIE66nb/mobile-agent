@@ -199,6 +199,9 @@ class ChatRuntime(
                 var contextWasCompacted = false
                 var toolRound = 0
                 var overflowRecovery = 1
+                // 高思考强度下服务端可能只产出推理、正文为空：自动改用不指定强度重试一次。
+                var effectiveEffort = reasoningEffort
+                var effortFallback = 1
                 while (true) {
                     check(toolRound <= maxSteps) {
                         localizedText("已达到单轮最大步骤（$maxSteps），可在设置中调整后重试", "The maximum steps for one run ($maxSteps) was reached. Adjust it in Settings and try again.")
@@ -225,7 +228,7 @@ class ChatRuntime(
                     }
                     try {
                         c.gateway.stream(ChatRequest(
-                            workingTurns, c.policy.outputReserve, reasoningEffort, definitions,
+                            workingTurns, c.policy.outputReserve, effectiveEffort, definitions,
                         )).collect { event ->
                             when (event) {
                                 is ModelEvent.TextDelta -> {
@@ -304,6 +307,13 @@ class ChatRuntime(
                     check(finished) { localizedText("回复意外中断，已生成的内容已保留", "The response was interrupted. Generated content was preserved.") }
                     if (requestedCalls.isEmpty()) {
                         store.updateReply(activeRun, output.toString(), stepsSnapshot())
+                        if (output.isBlank() && effectiveEffort != null && effortFallback > 0) {
+                            effortFallback = 0
+                            effectiveEffort = null
+                            assistantSteps.removeAt(assistantSteps.lastIndex)
+                            notice(id, localizedText("模型在指定思考强度下未返回正文，已改用不指定强度重试", "The model returned no text at the selected reasoning effort; retrying with it unspecified."))
+                            continue
+                        }
                         if (finishReason == "length") notice(id, localizedText("本次回复已达到长度上限，你可以继续追问", "This response reached the length limit. You can ask a follow-up."))
                         break
                     }
@@ -451,7 +461,7 @@ class ChatRuntime(
                         }
                     }
                 }
-                check(output.isNotBlank()) { localizedText("模型没有返回正文，请检查回复预留和模型设置", "The model returned no response text. Check the output reserve and model settings.") }
+                check(output.isNotBlank()) { localizedText("模型没有返回正文：请把思考强度调低或选“不指定”，并检查回复预留和模型设置", "The model returned no response text. Lower the reasoning effort or leave it unspecified, and check the output reserve and model settings.") }
                 store.finishRun(
                     activeRun,
                     output.toString(),
