@@ -46,6 +46,21 @@ class ContextManagerTest {
         ContextPolicy().validate()
         assertThrows(IllegalArgumentException::class.java) { ContextPolicy(0, 2048).validate() }
     }
+    @Test fun compactionThresholdIsConfigurable() {
+        val manager=ContextManager(MemoryConversationStore())
+        val late=ContextPolicy(16000,1024,95); val early=ContextPolicy(16000,1024,30)
+        assertEquals((late.inputBudget*95)/100,late.compactionBudget)
+        assertEquals((early.inputBudget*30)/100,early.compactionBudget)
+        // 同一份估算落在两条阈值之间：对 95% 不触发，对 30% 触发。
+        val turns=listOf(ChatTurn("system","x"),ChatTurn("user","y".repeat(20000)))
+        val estimate=manager.estimateRequest(turns,emptyList())
+        assertTrue(estimate in early.compactionBudget..late.compactionBudget)
+        assertFalse(manager.shouldCompact(turns,late,emptyList()))
+        assertTrue(manager.shouldCompact(turns,early,emptyList()))
+        ContextPolicy(16000,1024,30).validate(); ContextPolicy(16000,1024,95).validate()
+        assertThrows(IllegalArgumentException::class.java) { ContextPolicy(16000,1024,29).validate() }
+        assertThrows(IllegalArgumentException::class.java) { ContextPolicy(16000,1024,96).validate() }
+    }
     @Test fun personalizationIsAddedToSystemPromptWithoutBecomingConversationHistory()=runBlocking {
         val store=MemoryConversationStore().apply { add(MessageRole.USER,"推荐一份午餐") }
         var reads=0

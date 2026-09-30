@@ -65,7 +65,7 @@ class ContextManager(
         policy: ContextPolicy,
         tools: List<ToolDefinition>
     ): Boolean =
-        estimateRequest(turns, tools) >= policy.inputBudget * .8
+        estimateRequest(turns, tools) >= policy.compactionBudget
 
     private fun estimateText(value: String): Int {
         if (value.isEmpty()) return 0
@@ -136,7 +136,7 @@ class ContextManager(
         AgentLog.d("Context") {
             "prepare conversation=$id messages=${history.size} tools=${toolHistory.size} estimated=$originalEstimate input_budget=${policy.inputBudget} manual=$manual snapshot=${previous != null}"
         }
-        if (!manual && originalEstimate < policy.inputBudget * .8) return requireFits(
+        if (!manual && originalEstimate < policy.compactionBudget) return requireFits(
             original,
             policy,
             tools

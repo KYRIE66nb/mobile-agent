@@ -221,15 +221,27 @@ data class ContextUsage(
 data class ContextPolicy(
     val windowTokens: Int = DEFAULT_CONTEXT_WINDOW_TOKENS,
     val outputReserve: Int = DEFAULT_MAX_OUTPUT_TOKENS,
+    /** 输入估算达到输入预算的该百分比时触发自动压缩；可调范围见 validate。 */
+    val compactTriggerPercent: Int = DEFAULT_COMPACT_TRIGGER_PERCENT,
 ) {
     // 文本和图片估算已经保留余量；这里只保留 1% 防止不同兼容服务的协议开销略有差异。
     val safetyTokens: Int get() = maxOf(512, windowTokens / 100)
     val inputBudget: Int get() = windowTokens - outputReserve - safetyTokens
+    /** 会话整理与活跃循环压缩共用的触发线。 */
+    val compactionBudget: Int get() =
+        (inputBudget.toLong() * compactTriggerPercent / 100).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     fun validate() {
         require(windowTokens in 2048..2_000_000) { localizedText("请填写模型支持的上下文长度，至少为 2048 Token", "Enter a context length supported by the model, at least 2048 tokens.") }
         require(outputReserve in 256 until windowTokens && inputBudget >= 1024) { localizedText("最大输出过大，请减小数值或增加上下文长度", "Maximum output is too large. Reduce it or increase the context length.") }
+        require(compactTriggerPercent in MIN_COMPACT_TRIGGER_PERCENT..MAX_COMPACT_TRIGGER_PERCENT) {
+            localizedText("自动压缩阈值需要在 $MIN_COMPACT_TRIGGER_PERCENT% 到 $MAX_COMPACT_TRIGGER_PERCENT% 之间", "The auto-compaction threshold must be between $MIN_COMPACT_TRIGGER_PERCENT% and $MAX_COMPACT_TRIGGER_PERCENT%.")
+        }
     }
 }
+
+const val DEFAULT_COMPACT_TRIGGER_PERCENT = 80
+const val MIN_COMPACT_TRIGGER_PERCENT = 30
+const val MAX_COMPACT_TRIGGER_PERCENT = 95
 
 // 展示层只消费这些轻量投影；真实执行状态以 ToolCallRecord 为准。
 data class ToolSummary(val title: String, val detail: String, val state: String)

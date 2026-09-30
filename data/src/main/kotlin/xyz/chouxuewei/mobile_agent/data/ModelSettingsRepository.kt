@@ -1,5 +1,8 @@
 package xyz.chouxuewei.mobile_agent.data
 
+import xyz.chouxuewei.mobile_agent.core.DEFAULT_COMPACT_TRIGGER_PERCENT
+import xyz.chouxuewei.mobile_agent.core.MAX_COMPACT_TRIGGER_PERCENT
+import xyz.chouxuewei.mobile_agent.core.MIN_COMPACT_TRIGGER_PERCENT
 import xyz.chouxuewei.mobile_agent.core.localizedText
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
@@ -43,6 +46,7 @@ data class ModelProfile(
     val selectedReasoningEffort: String? = REASONING_EFFORT_OFF,
     /** 开启后设备截图才会随识别结果发给该模型；纯文本模型保持关闭。 */
     val supportsImages: Boolean = false,
+    val compactTriggerPercent: Int = DEFAULT_COMPACT_TRIGGER_PERCENT,
 )
 
 data class ModelSettings(
@@ -176,6 +180,7 @@ class ModelSettingsRepository(
                 reasoningEfforts = normalizedEfforts,
                 selectedReasoningEffort = selectedEffort,
                 supportsImages = supportsImages,
+                compactTriggerPercent = contextPolicy.compactTriggerPercent,
             )
             if (index >= 0) profiles[index] = updated else profiles += updated
             values[Keys.MODEL_PROFILES] = encodeProfiles(profiles)
@@ -434,6 +439,7 @@ private data class StoredModelProfile(
     val reasoningEfforts: List<String>,
     val selectedReasoningEffort: String?,
     val supportsImages: Boolean = false,
+    val compactTriggerPercent: Int = DEFAULT_COMPACT_TRIGGER_PERCENT,
 ) {
     fun asPublic() = ModelProfile(
         id = id,
@@ -447,9 +453,10 @@ private data class StoredModelProfile(
         reasoningEfforts = reasoningEfforts,
         selectedReasoningEffort = selectedReasoningEffort,
         supportsImages = supportsImages,
+        compactTriggerPercent = compactTriggerPercent,
     )
 
-    fun policy() = ContextPolicy(contextWindow, outputReserve)
+    fun policy() = ContextPolicy(contextWindow, outputReserve, compactTriggerPercent)
 }
 
 private fun encodeProfiles(profiles: List<StoredModelProfile>): String = buildJsonArray {
@@ -473,6 +480,7 @@ private fun encodeProfiles(profiles: List<StoredModelProfile>): String = buildJs
                 profile.selectedReasoningEffort?.let(::JsonPrimitive) ?: JsonNull,
             )
             put("supportsImages", profile.supportsImages)
+            put("compactTriggerPercent", profile.compactTriggerPercent)
         })
     }
 }.toString()
@@ -500,6 +508,9 @@ private fun decodeProfiles(value: String): List<StoredModelProfile> = runCatchin
                 else -> selected.jsonPrimitive.contentOrNull
             },
             supportsImages = item["supportsImages"]?.jsonPrimitive?.contentOrNull == "true",
+            compactTriggerPercent = item["compactTriggerPercent"]?.jsonPrimitive?.intOrNull
+                ?.takeIf { it in MIN_COMPACT_TRIGGER_PERCENT..MAX_COMPACT_TRIGGER_PERCENT }
+                ?: DEFAULT_COMPACT_TRIGGER_PERCENT,
         )
     }
 }.getOrDefault(emptyList())

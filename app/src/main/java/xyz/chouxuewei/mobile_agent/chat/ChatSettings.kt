@@ -90,9 +90,12 @@ import kotlinx.coroutines.launch
 import xyz.chouxuewei.mobile_agent.BuildConfig
 import xyz.chouxuewei.mobile_agent.R
 import xyz.chouxuewei.mobile_agent.core.ContextPolicy
+import xyz.chouxuewei.mobile_agent.core.DEFAULT_COMPACT_TRIGGER_PERCENT
 import xyz.chouxuewei.mobile_agent.core.DEFAULT_SINGLE_RUN_MAX_STEPS
 import xyz.chouxuewei.mobile_agent.core.DeviceModePreference
+import xyz.chouxuewei.mobile_agent.core.MAX_COMPACT_TRIGGER_PERCENT
 import xyz.chouxuewei.mobile_agent.core.MAX_SINGLE_RUN_MAX_STEPS
+import xyz.chouxuewei.mobile_agent.core.MIN_COMPACT_TRIGGER_PERCENT
 import xyz.chouxuewei.mobile_agent.core.MIN_SINGLE_RUN_MAX_STEPS
 import xyz.chouxuewei.mobile_agent.core.ThemePreference
 import xyz.chouxuewei.mobile_agent.core.TriggerEngine
@@ -406,14 +409,15 @@ fun ChatSettings(
                     settings = settings,
                     saving = saving,
                     canDelete = activeRuns.isEmpty(),
-                    onSave = { profileId, name, url, model, key, window, output, reasoningField, reasoningEfforts, vision, saved ->
+                    onSave = { profileId, name, url, model, key, window, output, compactPercent, reasoningField, reasoningEfforts, vision, saved ->
                         scope.launch {
                             saving = true
                             feedback = null
                             try {
                                 val policy = ContextPolicy(
                                     window.toIntOrNull() ?: 0,
-                                    output.toIntOrNull() ?: 0
+                                    output.toIntOrNull() ?: 0,
+                                    compactPercent.toIntOrNull() ?: 0,
                                 )
                                 policy.validate()
                                 val savedId = app.modelSettings.saveModel(
@@ -2205,7 +2209,7 @@ private fun ModelSettingsPage(
     saving: Boolean,
     canDelete: Boolean,
     onSave: (
-        String?, String, String, String, String, String, String, String, List<String>, Boolean, (String) -> Unit,
+        String?, String, String, String, String, String, String, String, String, List<String>, Boolean, (String) -> Unit,
     ) -> Unit,
     onSelect: (String) -> Unit,
     onDelete: (String, () -> Unit) -> Unit,
@@ -2228,6 +2232,9 @@ private fun ModelSettingsPage(
     }
     var output by rememberSaveable(editorKey) {
         mutableStateOf((editingProfile?.outputReserve ?: ContextPolicy().outputReserve).toString())
+    }
+    var compactPercent by rememberSaveable(editorKey) {
+        mutableStateOf((editingProfile?.compactTriggerPercent ?: DEFAULT_COMPACT_TRIGGER_PERCENT).toString())
     }
     var reasoningField by rememberSaveable(editorKey) {
         mutableStateOf(editingProfile?.reasoningEffortField ?: "reasoning_effort")
@@ -2389,6 +2396,18 @@ private fun ModelSettingsPage(
                 Modifier.testTag("model_output"),
                 keyboardType = KeyboardType.Number,
             )
+            ModelField(
+                compactPercent,
+                { compactPercent = it.filter(Char::isDigit).take(2) },
+                localizedText("自动压缩阈值（%）", "Auto-compaction threshold (%)"),
+                Modifier.testTag("model_compact_percent"),
+                keyboardType = KeyboardType.Number,
+            )
+            Text(
+                localizedText("输入估算达到可用预算的该百分比时自动压缩较早上下文；范围 $MIN_COMPACT_TRIGGER_PERCENT–$MAX_COMPACT_TRIGGER_PERCENT，越大越晚压缩。", "Earlier context is auto-compacted when the estimated input reaches this percentage of the usable budget; range $MIN_COMPACT_TRIGGER_PERCENT–$MAX_COMPACT_TRIGGER_PERCENT, higher compacts later."),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
             Text(
                 localizedText("上下文总量包含输入和最大输出；App 会从总量中预留最大输出与少量协议余量。数值需要与模型服务支持的范围一致。", "The context includes input and maximum output. The app reserves space for maximum output and protocol overhead. Match the range supported by your model service."),
                 style = MaterialTheme.typography.bodySmall,
@@ -2448,6 +2467,7 @@ private fun ModelSettingsPage(
                     key,
                     window,
                     output,
+                    compactPercent,
                     reasoningField,
                     reasoningEfforts,
                     supportsImages,
@@ -2570,6 +2590,37 @@ private fun ReasoningEffortEditor(
                 Text(
                     localizedText("新增", "Add"), Modifier.padding(start = 5.dp), color = colors.secondary,
                     style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+
+    // 一键填入官方档位：GLM-5.3 仅 low/high/max；GLM-5.2 全档；其余 OpenAI 兼容按通用五档。
+    Text(
+        localizedText("按服务推荐填充", "Fill from provider presets"),
+        style = MaterialTheme.typography.labelLarge,
+        color = colors.secondary,
+    )
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val presets = listOf(
+            "GLM-5.3" to listOf("low", "high", "max"),
+            "GLM-5.2" to listOf("minimal", "low", "medium", "high", "xhigh", "max"),
+            localizedText("通用", "Generic") to DEFAULT_REASONING_EFFORTS,
+        )
+        presets.forEach { (label, preset) ->
+            Surface(
+                modifier = Modifier.clickable { onChange(preset) },
+                shape = RoundedCornerShape(13.dp),
+                color = colors.accentSoft,
+                border = BorderStroke(1.dp, colors.divider),
+            ) {
+                Text(
+                    label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    color = colors.accent, style = MaterialTheme.typography.bodyMedium,
                 )
             }
         }

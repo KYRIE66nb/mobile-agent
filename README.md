@@ -160,6 +160,8 @@ Settings → Models → New profile:
 - Base URL: `https://open.bigmodel.cn/api/paas/v4`
 - Model: `glm-5.3-flash` (for vision use `glm-4.5v` and enable the Vision toggle)
 - API key: your Zhipu key
+- Reasoning effort: keep the parameter name `reasoning_effort`; the editor can one-tap fill official levels (GLM-5.3: `low`/`high`/`max`; GLM-5.2: `minimal`–`max` full range); the composer chip switches effort per send
+- Auto-compaction threshold: adjustable on the same editor page (30%–95%, default 80%) — raise it for large-window models; set the context length to the model's real window (e.g. GLM-5.3's 1M)
 
 ## Roadmap
 

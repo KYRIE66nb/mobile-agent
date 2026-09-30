@@ -160,6 +160,8 @@ cd mobile-agent
 - 地址：`https://open.bigmodel.cn/api/paas/v4`
 - 模型：`glm-5.3-flash`（视觉能力用 `glm-4.5v` 并开启"视觉模型"开关）
 - Key：智谱开放平台 API Key
+- 思考强度：参数名保持 `reasoning_effort`，等级可在编辑器一键填入官方档位（GLM-5.3：`low`/`high`/`max`；GLM-5.2：`minimal`–`max` 全档）；聊天输入框左侧可随时切换
+- 自动压缩阈值：同一编辑页可调（30%–95%，默认 80%），大窗口模型可调晚压缩；上下文长度按模型真实窗口填写（如 GLM-5.3 的 1M）
 
 ## 路线图
 
