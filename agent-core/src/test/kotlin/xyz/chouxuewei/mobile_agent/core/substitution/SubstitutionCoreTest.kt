@@ -243,23 +243,45 @@ class SubstitutionCoreTest {
         // 暂停期间倒计时仍按绝对截止计算
         assertEquals(15_000 - (t - anchorAt), e.timers(t).second.remaining(t))
         e.resume()
-        // 恢复后重建基线发现回弹到 4：未验证候选在盲窗内被推翻 → 撤单
+        // 恢复后重建基线：计时保留（悬置候选在重置时按确认处理），无撤单事件
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
-        assertTrue(events.any { it is TimerEvent.CandidateCancelled })
-        assertFalse(e.timers(t).second.active)
+        assertTrue(events.none { it is TimerEvent.CandidateCancelled })
+        assertTrue(e.timers(t).second.active)
+        assertFalse(e.timers(t).second.pending)
     }
 
     @Test
-    fun `invalid frames beyond timeout reset baseline`() {
+    fun `prolonged invalid frames keep baseline so next drop still detects`() {
         var t = 0L
         val e = engine(now = { t })
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
-        // 2.5s 无效帧 → 基线作废；之后回到 4 也只是新基线
+        // 非规范豆型/无效帧（KO 画面、转场、特效遮挡）不重置基线——
+        // 稳定计数跨过噪声期继续持有（开源实现：非规范豆型不产任何变更）。
         var sawReset = false
         repeat(26) { t += 100; if (e.onFrame(4, null, t).any { it is TimerEvent.BaselineReset }) sawReset = true }
-        assertTrue(sawReset)
+        assertFalse(sawReset)
+        // 噪声期结束回到原计数：无事件
         repeat(3) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
+        // 关键：之后真替身照常检测——噪声没丢基线
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
+        val c = events.filterIsInstance<TimerEvent.SubstitutionCandidate>().single()
+        assertEquals(4, c.fromCount); assertEquals(3, c.toCount)
+    }
+
+    @Test
+    fun `drop during noise window still detects when valid frames return`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        // 替身发生在满屏特效中：2.5s 全是非规范帧，特效散去时已剩 3 颗
+        repeat(26) { t += 100; e.onFrame(4, null, t) }
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
+        // 基线未丢 → 4→3 差值正常产候选（等价于原盲窗补发，但无需特判）
+        assertTrue(events.any { it is TimerEvent.SubstitutionCandidate })
+        assertTrue(e.timers(t).second.active)
     }
 
     @Test
@@ -383,20 +405,45 @@ class SubstitutionCoreTest {
     }
 
     @Test
-    fun `manual reset then rebound cancels unverified kept timer`() {
+    fun `manual reset re-arms detection so next substitution still fires`() {
         var t = 0L
         val e = engine(now = { t })
         repeat(20) { t += 100; e.onFrame(4, 4, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) } // 悬置候选 4→3
         assertTrue(e.timers(t).second.pending)
-        // 手动重置发生在验证窗内：未决候选按确认保留，但记下了 pendingFrom
+        // 服务手动重置路径：先清计时再重建基线
+        e.cancelTimer(TimerSide.ENEMY)
         e.resetBaseline("manual")
-        assertTrue(e.timers(t).second.active)
-        // 重建发现计数弹回原值 → 重置前的掉落是假信号 → 撤单
-        var events: List<TimerEvent> = emptyList()
-        repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
-        assertTrue(events.any { it is TimerEvent.CandidateCancelled })
         assertFalse(e.timers(t).second.active)
+        // 重建基线 4 → 下一个真替身照常计
+        repeat(3) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
+        assertTrue(events.any { it is TimerEvent.SubstitutionCandidate })
+        assertTrue(e.timers(t).second.active)
+    }
+
+    @Test
+    fun `consecutive substitutions on the same side each fire`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        // 第一次替身 4→3
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
+        assertTrue(events.any { it is TimerEvent.SubstitutionCandidate })
+        // 验证窗过后确认
+        repeat(20) { t += 100; e.onFrame(4, 3, t) }
+        assertTrue(e.timers(t).second.active && !e.timers(t).second.pending)
+        // 涨豆回 4（等验证+涨豆动画时间），然后第二次替身 4→3
+        repeat(30) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
+        val c = events.filterIsInstance<TimerEvent.SubstitutionCandidate>().single()
+        assertEquals(4, c.fromCount); assertEquals(3, c.toCount)
+        // 豆继续掉到 2（第三颗消耗）也能再计一次
+        repeat(20) { t += 100; e.onFrame(4, 3, t) }
+        repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
+        assertTrue(events.any { it is TimerEvent.SubstitutionCandidate })
     }
 
     @Test

@@ -228,8 +228,7 @@ class SubstitutionTimerService : Service() {
         val cellDiag = AgentLog.enabled && now - lastObservedLogAt > 2000
         fun countDots(side: TimerSide): Int? {
             val cells = cfg.layout.dotCells(side, access.width, access.height)
-            var lit = 0
-            var unknown = 0
+            val states = ArrayList<DotState>(cells.size)
             val marks = StringBuilder()
             val inset = (1f - cfg.tuning.cellInnerFraction) / 2f
             for (cell in cells) {
@@ -246,18 +245,21 @@ class SubstitutionTimerService : Service() {
                         DotState.LIT -> 'L'; DotState.EMPTY -> 'E'; DotState.UNKNOWN -> 'U'
                     } + "(%.2f/%.2f)".format(result.litRatio, result.dimRatio),
                 ).append(' ')
-                when (result.state) {
-                    DotState.LIT -> lit++
-                    DotState.EMPTY -> Unit
-                    DotState.UNKNOWN -> unknown++
-                }
+                states += result.state
             }
             if (cellDiag) {
-                AgentLog.d(TAG) { "cells $side=${marks.trim()} lit=$lit unk=$unknown" }
+                AgentLog.d(TAG) { "cells $side=${marks.trim()}" }
             }
-            // 不可信格过多 → 本帧该侧无有效估计
-            if (unknown > cells.size * cfg.tuning.maxUnknownRatio) return null
-            return lit
+            // 规范豆型校验（开源实现的关键）：豆只能连续点亮——我方从左填满、
+            // 敌方从右填满（等价于反转后做同样的前缀检查）。含 UNKNOWN 或
+            // 出现"暗-亮-暗"洞形的帧整帧丢弃，不产任何状态变化。
+            val ordered = if (side == TimerSide.SELF) states else states.asReversed()
+            val firstDark = ordered.indexOfFirst { it != DotState.LIT }
+            val canonical = ordered.none { it == DotState.UNKNOWN } &&
+                (firstDark < 0 || ordered.drop(firstDark).all { it == DotState.EMPTY })
+            // 非规范 → null：引擎侧整帧忽略，稳定计数跨过噪声期继续持有
+            if (!canonical) return null
+            return ordered.count { it == DotState.LIT }
         }
 
         val selfCount = countDots(TimerSide.SELF)
