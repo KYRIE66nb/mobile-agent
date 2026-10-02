@@ -262,8 +262,14 @@ class SubstitutionTimerService : Service() {
         }
         for (e in events) {
             AgentLog.i(TAG) { "event $e" }
-            if (e is TimerEvent.AmbiguousDrop) {
-                _uiState.update { it.copy(detail = "疑似多豆变化，未自动计时") }
+            when (e) {
+                is TimerEvent.AmbiguousDrop ->
+                    _uiState.update { it.copy(detail = "疑似多豆变化，未自动计时") }
+                is TimerEvent.CandidateCancelled ->
+                    _uiState.update { it.copy(detail = "候选已撤销（豆数回弹，非替身）") }
+                is TimerEvent.WobbleIgnored ->
+                    _uiState.update { it.copy(detail = "豆数短暂抖动，已忽略") }
+                else -> Unit
             }
         }
         if (events.isNotEmpty()) publishTimers()

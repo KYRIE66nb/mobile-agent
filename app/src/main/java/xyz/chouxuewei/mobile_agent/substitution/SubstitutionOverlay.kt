@@ -107,6 +107,7 @@ class SubstitutionOverlay(
         }
         statusText?.text = when {
             enemy.conflict || self.conflict -> "⚠ 候选冲突"
+            enemy.pending || self.pending -> "推断中…"
             enemy.active || self.active -> "疑似替身冷却中"
             else -> "监视中"
         }

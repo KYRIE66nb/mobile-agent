@@ -9,8 +9,12 @@ internal class StabilityTracker(private val confirmFrames: Int) {
     var stable: Int? = null
         private set
 
+    /** 当前候选计数首次出现的时间——用于把计时锚定在"豆数实际变化"而非"确认"时刻。 */
+    var firstObservedAtMs: Long = 0
+        private set
+
     /** 输入本帧观测计数（null = 不可信帧）。返回新确认的稳定计数（含首次基线）。 */
-    fun observe(count: Int?): Int? {
+    fun observe(count: Int?, atMs: Long): Int? {
         if (count == null) {
             candidateStreak = 0
             candidateCount = -1
@@ -26,6 +30,7 @@ internal class StabilityTracker(private val confirmFrames: Int) {
         } else {
             candidateCount = count
             candidateStreak = 1
+            firstObservedAtMs = atMs
         }
         if (candidateStreak >= confirmFrames) {
             stable = count
@@ -55,6 +60,20 @@ sealed class TimerEvent {
     /** 一次掉多豆/异常跳变——不自动计时，需要人工判断。 */
     data class AmbiguousDrop(val side: TimerSide, val fromCount: Int, val toCount: Int) : TimerEvent()
 
+    /** 悬置候选被推翻：豆数回弹/级联消耗——计时已撤销。 */
+    data class CandidateCancelled(
+        val side: TimerSide,
+        val fromCount: Int,
+        val toCount: Int,
+        val reason: String,
+    ) : TimerEvent()
+
+    /** 悬置候选验证通过：回弹窗内豆数未回到原值。 */
+    data class CandidateConfirmed(val side: TimerSide, val count: Int) : TimerEvent()
+
+    /** 高位短驻后落回更早稳定值——判定为闪光误点亮抖动，不产生候选。 */
+    data class WobbleIgnored(val side: TimerSide, val fromCount: Int, val toCount: Int) : TimerEvent()
+
     /** 基线重建（换局/校准变化/长时间无效帧）。 */
     data class BaselineReset(val side: TimerSide?, val reason: String) : TimerEvent()
 }
@@ -77,6 +96,14 @@ class SubstitutionEngine(
         var lastCandidateAtMs: Long = Long.MIN_VALUE
         var lastValidAtMs: Long = 0
         var baselineEstablished = false
+        /** 当前稳定计数确认的时点——"高位短驻"判抖动用。 */
+        var stableSinceMs: Long = 0
+        /** 上一个稳定计数（before 之前的那一个）——落回它说明是抖动不是替身。 */
+        var prevStable: Int? = null
+        // 悬置候选：from/to/验证截止时间
+        var pendingFrom: Int? = null
+        var pendingTo: Int = -1
+        var pendingUntilMs: Long = 0
     }
 
     private val self = Side(TimerSide.SELF, config.tuning.confirmFrames)
@@ -99,6 +126,10 @@ class SubstitutionEngine(
     fun resetBaseline(reason: String) {
         self.tracker.reset(); enemy.tracker.reset()
         self.baselineEstablished = false; enemy.baselineEstablished = false
+        // 基线作废后悬置验证无从谈起——按已确认处理，保留计时继续走
+        self.pendingFrom = null; enemy.pendingFrom = null
+        self.timer = self.timer.copy(pending = false)
+        enemy.timer = enemy.timer.copy(pending = false)
         emit(TimerEvent.BaselineReset(null, reason))
     }
 
@@ -121,53 +152,113 @@ class SubstitutionEngine(
 
     private fun feed(side: Side, count: Int?, atMs: Long, events: MutableList<TimerEvent>) {
         if (count == null) {
-            side.tracker.observe(null)
+            side.tracker.observe(null, atMs)
             if (side.baselineEstablished && atMs - side.lastValidAtMs > config.tuning.invalidBaselineTimeoutMs) {
                 side.tracker.reset()
                 side.baselineEstablished = false
+                // 无法继续验证 → 悬置候选按已确认处理，计时保留
+                side.pendingFrom = null
+                side.timer = side.timer.copy(pending = false)
                 events += TimerEvent.BaselineReset(side.side, "invalid_frames_timeout")
                     .also { log(it.toString(), atMs) }
             }
+            evaluatePending(side, atMs, events)
             return
         }
         side.lastValidAtMs = atMs
         val before = side.tracker.stable
-        val after = side.tracker.observe(count)
-        if (after == null || after == before) return
-        if (!side.baselineEstablished) {
-            side.baselineEstablished = true
-            log("baseline ${side.side}=$after", atMs)
+        val after = side.tracker.observe(count, atMs)
+        if (after == null || after == before) {
+            evaluatePending(side, atMs, events)
             return
         }
+        if (!side.baselineEstablished) {
+            side.baselineEstablished = true
+            side.stableSinceMs = atMs
+            side.prevStable = null
+            log("baseline ${side.side}=$after", atMs)
+            evaluatePending(side, atMs, events)
+            return
+        }
+        // priorStable = "before" 之前的稳定值；heldMs = before 已驻留时长
+        val priorStable = side.prevStable
+        val heldMs = atMs - side.stableSinceMs
+        side.prevStable = before
+        side.stableSinceMs = atMs
         val drop = before!! - after
         when {
             drop == 1 -> {
+                if (side.pendingFrom != null) {
+                    // 悬置未决又掉豆 = 级联消耗（奥义逐颗耗尽等）——不是单次替身
+                    cancelPending(side, atMs, events, "cascade_drop")
+                    events += TimerEvent.AmbiguousDrop(side.side, before, after)
+                        .also { log(it.toString(), atMs) }
+                    return
+                }
+                if (heldMs < config.tuning.minStableBeforeDropMs && after == priorStable) {
+                    // 高位短驻后落回原稳定值：闪光误点亮抖动，不是替身
+                    events += TimerEvent.WobbleIgnored(side.side, before, after)
+                        .also { log(it.toString(), atMs) }
+                    return
+                }
                 val dedupe = side.lastCandidateAtMs != Long.MIN_VALUE &&
                     atMs - side.lastCandidateAtMs < config.tuning.dedupeMs
                 if (dedupe) {
                     log("dedupe ${side.side} $before->$after", atMs)
                     return
                 }
-                val conflict = side.timer.active &&
+                val conflict = side.timer.active && !side.timer.pending &&
                     side.timer.remaining(atMs) > config.cooldownMs * config.tuning.conflictWindowFraction
+                // 锚定在首次观测到该计数的帧——消除确认期带来的计时滞后
+                val anchor = side.tracker.firstObservedAtMs
                 side.lastCandidateAtMs = atMs
                 side.timer = SideTimer(
                     side = side.side,
                     active = true,
-                    endAtMs = atMs + config.cooldownMs,
+                    endAtMs = anchor + config.cooldownMs,
                     suspected = true,
                     conflict = conflict,
-                    eventAtMs = atMs,
+                    eventAtMs = anchor,
+                    pending = true,
                 )
-                events += TimerEvent.SubstitutionCandidate(side.side, atMs, before, after, conflict)
+                side.pendingFrom = before
+                side.pendingTo = after
+                side.pendingUntilMs = atMs + config.tuning.pendingVerifyMs
+                events += TimerEvent.SubstitutionCandidate(side.side, anchor, before, after, conflict)
                     .also { log(it.toString(), atMs) }
             }
             drop > 1 -> {
+                if (side.pendingFrom != null) cancelPending(side, atMs, events, "multi_drop")
                 events += TimerEvent.AmbiguousDrop(side.side, before, after)
                     .also { log(it.toString(), atMs) }
             }
             // drop <= 0（涨豆）不产事件
         }
+        evaluatePending(side, atMs, events)
+    }
+
+    /** 悬置候选验证：回弹到原值→撤销；窗口结束未回弹→确认。 */
+    private fun evaluatePending(side: Side, atMs: Long, events: MutableList<TimerEvent>) {
+        val from = side.pendingFrom ?: return
+        val stable = side.tracker.stable
+        if (stable != null && stable >= from) {
+            cancelPending(side, atMs, events, "count_bounced")
+        } else if (atMs >= side.pendingUntilMs) {
+            side.pendingFrom = null
+            if (side.timer.pending) {
+                side.timer = side.timer.copy(pending = false)
+                events += TimerEvent.CandidateConfirmed(side.side, stable ?: -1)
+                    .also { log(it.toString(), atMs) }
+            }
+        }
+    }
+
+    private fun cancelPending(side: Side, atMs: Long, events: MutableList<TimerEvent>, reason: String) {
+        val from = side.pendingFrom ?: return
+        side.pendingFrom = null
+        if (side.timer.pending) side.timer = SideTimer(side.side)
+        events += TimerEvent.CandidateCancelled(side.side, from, side.pendingTo, reason)
+            .also { log(it.toString(), atMs) }
     }
 
     private fun select(side: TimerSide) = if (side == TimerSide.SELF) self else enemy

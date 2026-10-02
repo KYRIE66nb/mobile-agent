@@ -171,9 +171,12 @@ class SubstitutionCoreTest {
         val e = engine(now = { t })
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
-        // 第二次掉豆距首次候选 900ms（>800ms 去重窗），仍在冷却前半段 → conflict
+        // 悬置候选期内的再次掉豆会被视为级联消耗——先等验证窗(2500ms)结束确认
+        repeat(30) { t += 100; e.onFrame(4, 3, t) }
+        assertFalse(e.timers(t).second.pending)
+        // 已确认计时仍在冷却前半段 → 第二次掉豆标记 conflict
         var events: List<TimerEvent> = emptyList()
-        repeat(3) { t += 300; events = e.onFrame(4, 2, t) }
+        repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
         val c = events.filterIsInstance<TimerEvent.SubstitutionCandidate>().single()
         assertTrue(c.conflict)
     }
@@ -184,11 +187,11 @@ class SubstitutionCoreTest {
         val e = engine(now = { t })
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
-        // 豆恢复再立刻减少，间隔 < dedupeMs(800) → 抑制
+        // 豆恢复再立刻减少：恢复回弹会撤销悬置候选；再次掉落属高位短驻抖动（WobbleIgnored）
         repeat(3) { t += 50; e.onFrame(4, 4, t) }
         var second: List<TimerEvent> = emptyList()
         repeat(3) { t += 50; second = e.onFrame(4, 3, t) }
-        assertTrue(second.isEmpty())
+        assertTrue(second.none { it is TimerEvent.SubstitutionCandidate })
     }
 
     @Test
@@ -196,11 +199,12 @@ class SubstitutionCoreTest {
         var t = 10_000L
         val e = engine(now = { t })
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        // 掉豆首见在 t=10400，确认于 10600——endAt 锚定首见时刻
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
         val timer = e.timers(t).second
-        assertEquals(15_000 - 0, timer.remaining(t))
+        assertEquals(15_000 - 200, timer.remaining(t))
         t += 9_000
-        assertEquals(6_000, timer.remaining(t))
+        assertEquals(5_800, timer.remaining(t))
         t += 7_000
         assertEquals(0, timer.remaining(t))
     }
@@ -212,10 +216,10 @@ class SubstitutionCoreTest {
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
         e.pause()
-        val firedAt = t
+        val anchorAt = t - 200 // 掉豆首见帧（确认帧前 200ms）
         repeat(5) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
         // 暂停期间倒计时仍按绝对截止计算
-        assertEquals(15_000 - (t - firedAt), e.timers(t).second.remaining(t))
+        assertEquals(15_000 - (t - anchorAt), e.timers(t).second.remaining(t))
         e.resume()
         // 恢复后首组稳定只重建基线：4→4 无事件
         repeat(3) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
@@ -242,6 +246,80 @@ class SubstitutionCoreTest {
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 37; events = e.onFrame(4, 3, t) }
         assertEquals(1, events.filterIsInstance<TimerEvent.SubstitutionCandidate>().size)
+    }
+
+    // ---- 误报抑制（真机复盘：闪光误点亮/遮挡回弹/级联消耗） ----
+
+    @Test
+    fun `brief elevation then return to prior stable is wobble not substitution`() {
+        var t = 0L
+        val e = engine(now = { t })
+        // 2 颗豆长期稳定（>minStableBeforeDrop 阈值建立"长期稳定"印象）
+        repeat(20) { t += 100; e.onFrame(4, 2, t) }
+        // 闪光让某格误读为点亮：2→3 确认但只驻留 ~300ms
+        repeat(3) { t += 100; e.onFrame(4, 3, t) }
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
+        assertTrue(events.any { it is TimerEvent.WobbleIgnored })
+        assertTrue(events.none { it is TimerEvent.SubstitutionCandidate })
+        assertFalse(e.timers(t).second.active)
+    }
+
+    @Test
+    fun `long held count then drop is still a real candidate`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 2, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) }
+        // 升到 3 后驻留 1.5s（>1.2s 阈值）再掉回 2——真替身，不是抖动
+        repeat(15) { t += 100; e.onFrame(4, 3, t) }
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
+        assertEquals(1, events.filterIsInstance<TimerEvent.SubstitutionCandidate>().size)
+    }
+
+    @Test
+    fun `occlusion drop that bounces back cancels pending timer`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 4, t) }
+        // 遮挡造成 4→3 确认 → 悬置计时已启动
+        repeat(3) { t += 100; e.onFrame(4, 3, t) }
+        assertTrue(e.timers(t).second.active)
+        assertTrue(e.timers(t).second.pending)
+        // 遮挡消失：计数回弹到 4（确认 3 帧）→ 撤销计时
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
+        assertTrue(events.any { it is TimerEvent.CandidateCancelled })
+        assertFalse(e.timers(t).second.active)
+    }
+
+    @Test
+    fun `sustained drop confirms after verify window`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) }
+        assertTrue(e.timers(t).second.pending)
+        // 保持 2.6s（>2500ms 验证窗）无回弹 → 确认
+        var confirmed = false
+        repeat(26) { t += 100; if (e.onFrame(4, 3, t).any { it is TimerEvent.CandidateConfirmed }) confirmed = true }
+        assertTrue(confirmed)
+        assertFalse(e.timers(t).second.pending)
+        assertTrue(e.timers(t).second.active)
+    }
+
+    @Test
+    fun `drop during pending verify is cascade not a second substitution`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) } // 悬置候选 4→3
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 2, t) } // 悬置期又掉 → 级联
+        assertTrue(events.any { it is TimerEvent.CandidateCancelled })
+        assertTrue(events.any { it is TimerEvent.AmbiguousDrop })
+        assertFalse(e.timers(t).second.active)
     }
 }
 

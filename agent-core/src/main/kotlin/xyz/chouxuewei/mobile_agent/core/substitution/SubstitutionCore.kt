@@ -80,6 +80,13 @@ data class DetectionTuning(
     val dedupeMs: Long = 800,
     /** 倒计时进行中又出现新候选 → 标记冲突而非静默覆盖。 */
     val conflictWindowFraction: Float = 0.5f,
+    /**
+     * 掉落前的"高位计数"须已稳定该时长才接受为替身候选；
+     * 闪光误点亮造成的高位短驻 + 落回原值被判为抖动而非替身。
+     */
+    val minStableBeforeDropMs: Long = 1200,
+    /** 悬置候选验证窗：窗口内豆数回弹到原值 → 撤销计时（遮挡类误报兜底）。 */
+    val pendingVerifyMs: Long = 2500,
 )
 
 class DotClassifier(private val tuning: DetectionTuning = DetectionTuning()) {
@@ -169,7 +176,7 @@ data class TimerConfig(
     val showSelfTimer: Boolean = true,
     /** 决斗场替身术经验冷却（秒）。首版为可配置经验值，非实测校准值。 */
     val cooldownMs: Long = 15_000,
-    val frameIntervalMs: Long = 140,
+    val frameIntervalMs: Long = 80,
     val layout: TimerLayout = TimerLayout(),
     val tuning: DetectionTuning = DetectionTuning(),
     /** 校准完成后才允许进入识别；默认布局只是校准起点。 */
@@ -187,6 +194,8 @@ data class SideTimer(
     val suspected: Boolean = true,
     val conflict: Boolean = false,
     val eventAtMs: Long = 0,
+    /** 候选尚在回弹验证窗内——掉豆被推翻时计时会被撤销。 */
+    val pending: Boolean = false,
 ) {
     fun remaining(nowMs: Long) = max(0L, endAtMs - nowMs)
 }
