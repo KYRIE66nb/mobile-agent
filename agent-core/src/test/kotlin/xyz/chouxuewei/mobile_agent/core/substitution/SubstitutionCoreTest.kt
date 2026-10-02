@@ -18,9 +18,9 @@ class SubstitutionCoreTest {
     // ---- 逐像素颜色盒分类器 ----
 
     @Test
-    fun `lit blue bead pixel classified LIT for self`() {
-        // 亮蓝豆心纯色
-        val r = DotClassifier().classify(solid(80, 180, 230), TimerSide.SELF)
+    fun `lit gold bead pixel classified LIT for self`() {
+        // 亮橙金豆心纯色——我方豆实测为赤金色
+        val r = DotClassifier().classify(solid(245, 170, 50), TimerSide.SELF)
         assertEquals(DotState.LIT, r.state)
         assertTrue(r.litRatio > 0.9f)
     }
@@ -40,8 +40,8 @@ class SubstitutionCoreTest {
 
     @Test
     fun `lit bead mixed with dark surround still LIT by pixel ratio`() {
-        // 12/49 亮豆像素 + 其余暗背景：占比表决仍判 LIT——均值池化会稀释失败
-        val pixels = IntArray(49) { i -> if (i < 12) 0xFF50B4E6.toInt() else 0xFF14141A.toInt() }
+        // 12/49 亮豆像素（金）+ 其余暗背景：占比表决仍判 LIT——均值池化会稀释失败
+        val pixels = IntArray(49) { i -> if (i < 12) 0xFFF0AA32.toInt() else 0xFF14141A.toInt() }
         val r = DotClassifier().classify(pixels, TimerSide.SELF)
         assertEquals(DotState.LIT, r.state)
     }
