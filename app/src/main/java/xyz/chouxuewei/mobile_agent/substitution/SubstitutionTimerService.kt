@@ -339,6 +339,11 @@ class SubstitutionTimerService : Service() {
                 val pkg = currentForegroundPackage(usm) ?: lastKnown
                 if (pkg != null) lastKnown = pkg
                 val inGame = cfg.gamePackage.isNotBlank() && pkg == cfg.gamePackage
+                // 自愈：已在游戏内但状态停在 WAITING（如 PAUSED→Resume 后前台包未变化，
+                // 不会再发 GameForeground）→ 每轮轮询补发，转移本身是幂等的
+                if (inGame && _uiState.value.state == TimerServiceState.WAITING_FOR_GAME) {
+                    SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameForeground)
+                }
                 if (inGame != _uiState.value.gameInForeground) {
                     AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
                     _uiState.update { it.copy(gameInForeground = inGame) }
@@ -397,6 +402,10 @@ class SubstitutionTimerService : Service() {
         engine?.resume()
         pushState(detail = "")
         SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Resume)
+        // Resume 只会回到 WAITING_FOR_GAME——人还在游戏里时立刻补发 GameForeground
+        if (_uiState.value.gameInForeground) {
+            SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameForeground)
+        }
         updateNotification()
     }
 
