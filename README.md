@@ -123,9 +123,9 @@
 
 ### 火影替身计时——真机对局实拍
 
-<video src="https://github.com/KYRIE66nb/mobile-agent/raw/main/docs/assets/substitution-timer-demo.mp4" controls muted playsinline width="760" poster="https://github.com/KYRIE66nb/mobile-agent/raw/main/docs/assets/screenshots/substitution-ingame.png"></video>
+https://github.com/user-attachments/assets/85936c9f-b971-43ba-98e9-bf004bf29ebd
 
-决斗场实战录屏：敌方替身"推测已恢复"、我方疑似替身 7.0s 读秒——全程本机像素推断，不走模型、不联网。若视频未自动加载，[点此打开 GitHub 播放器](docs/assets/substitution-timer-demo.mp4)。
+决斗场实战录屏：敌方替身"推测已恢复"、我方疑似替身 7.0s 读秒——全程本机像素推断，不走模型、不联网。
 
 <table>
   <tr>
