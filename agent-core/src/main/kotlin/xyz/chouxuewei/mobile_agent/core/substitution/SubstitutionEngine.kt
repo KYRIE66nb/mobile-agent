@@ -100,10 +100,11 @@ class SubstitutionEngine(
         var stableSinceMs: Long = 0
         /** 上一个稳定计数（before 之前的那一个）——落回它说明是抖动不是替身。 */
         var prevStable: Int? = null
-        // 悬置候选：from/to/验证截止时间
+        // 悬置候选：from/to/验证截止时间/候选产生时刻（区分快回弹与真实涨豆）
         var pendingFrom: Int? = null
         var pendingTo: Int = -1
         var pendingUntilMs: Long = 0
+        var pendingAtMs: Long = 0
         /** 基线重置前最后确认的稳定计数——盲窗重建时对比判断盲期内是否发生了替身。 */
         var resetFromStable: Int? = null
         /** 重置时被强制确认的悬置候选 from——重建发现回弹原值时要追加撤单。 */
@@ -212,6 +213,7 @@ class SubstitutionEngine(
                         side.pendingFrom = resetFrom
                         side.pendingTo = after
                         side.pendingUntilMs = atMs + config.tuning.pendingVerifyMs
+                        side.pendingAtMs = atMs
                         events += TimerEvent.SubstitutionCandidate(side.side, anchor, resetFrom, after, conflict = false)
                             .also { log("blind_window_recovery ${side.side} $resetFrom->$after", atMs) }
                     }
@@ -271,6 +273,7 @@ class SubstitutionEngine(
                 side.pendingFrom = before
                 side.pendingTo = after
                 side.pendingUntilMs = atMs + config.tuning.pendingVerifyMs
+                side.pendingAtMs = atMs
                 events += TimerEvent.SubstitutionCandidate(side.side, anchor, before, after, conflict)
                     .also { log(it.toString(), atMs) }
             }
@@ -284,19 +287,27 @@ class SubstitutionEngine(
         evaluatePending(side, atMs, events)
     }
 
-    /** 悬置候选验证：回弹到原值→撤销；窗口结束未回弹→确认。 */
+    /** 悬置候选验证：快回弹→撤单（遮挡闪烁）；慢回弹/窗口结束→确认（真实涨豆或真替身）。 */
     private fun evaluatePending(side: Side, atMs: Long, events: MutableList<TimerEvent>) {
         val from = side.pendingFrom ?: return
         val stable = side.tracker.stable
         if (stable != null && stable >= from) {
-            cancelPending(side, atMs, events, "count_bounced")
-        } else if (atMs >= side.pendingUntilMs) {
-            side.pendingFrom = null
-            if (side.timer.pending) {
-                side.timer = side.timer.copy(pending = false)
-                events += TimerEvent.CandidateConfirmed(side.side, stable ?: -1)
-                    .also { log(it.toString(), atMs) }
+            if (atMs - side.pendingAtMs < config.tuning.fastReboundCancelMs) {
+                cancelPending(side, atMs, events, "count_bounced")
+            } else {
+                confirmPending(side, atMs, events, stable, "regain")
             }
+        } else if (atMs >= side.pendingUntilMs) {
+            confirmPending(side, atMs, events, stable ?: -1, "window_end")
+        }
+    }
+
+    private fun confirmPending(side: Side, atMs: Long, events: MutableList<TimerEvent>, count: Int, via: String) {
+        side.pendingFrom = null
+        if (side.timer.pending) {
+            side.timer = side.timer.copy(pending = false)
+            events += TimerEvent.CandidateConfirmed(side.side, count)
+                .also { log("$it via=$via", atMs) }
         }
     }
 

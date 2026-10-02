@@ -289,7 +289,7 @@ class SubstitutionCoreTest {
         val e = engine(now = { t })
         repeat(20) { t += 100; e.onFrame(4, 2, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
-        // 升到 3 后驻留 2.6s（>2.5s 阈值）再掉回 2——真替身，不是抖动
+        // 升到 3 后驻留 2.6s（>1.2s 抖动窗）再掉回 2——涨豆后的真替身，要计
         repeat(26) { t += 100; e.onFrame(4, 3, t) }
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
@@ -305,11 +305,29 @@ class SubstitutionCoreTest {
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
         assertTrue(e.timers(t).second.active)
         assertTrue(e.timers(t).second.pending)
-        // 遮挡消失：计数回弹到 4（确认 3 帧）→ 撤销计时
+        // 遮挡快速消失（<600ms）：计数回弹到 4 → 撤销计时
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
         assertTrue(events.any { it is TimerEvent.CandidateCancelled })
         assertFalse(e.timers(t).second.active)
+    }
+
+    @Test
+    fun `slow rebound after drop is real regain and keeps the timer`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 4, t) }
+        // 真替身 4→3 → 悬置候选
+        repeat(3) { t += 100; e.onFrame(4, 3, t) }
+        assertTrue(e.timers(t).second.pending)
+        // 800ms 后豆回复 4（>600ms 慢回弹 = 真实涨豆）→ 确认而非撤销
+        repeat(8) { t += 100; e.onFrame(4, 3, t) }
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
+        assertTrue(events.any { it is TimerEvent.CandidateConfirmed })
+        assertTrue(events.none { it is TimerEvent.CandidateCancelled })
+        assertTrue(e.timers(t).second.active)
+        assertFalse(e.timers(t).second.pending)
     }
 
     @Test
@@ -358,16 +376,16 @@ class SubstitutionCoreTest {
     }
 
     @Test
-    fun `blind window rebound cancels unverified kept timer`() {
+    fun `manual reset then rebound cancels unverified kept timer`() {
         var t = 0L
         val e = engine(now = { t })
         repeat(20) { t += 100; e.onFrame(4, 4, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) } // 悬置候选 4→3
         assertTrue(e.timers(t).second.pending)
-        // 遮挡持续 >2s → 基线重置，未决候选被按确认保留
-        repeat(26) { t += 100; e.onFrame(4, null, t) }
+        // 手动重置发生在验证窗内：未决候选按确认保留，但记下了 pendingFrom
+        e.resetBaseline("manual")
         assertTrue(e.timers(t).second.active)
-        // 重建发现计数回弹到 4 → 盲窗内的掉落是假信号 → 撤单
+        // 重建发现计数弹回原值 → 重置前的掉落是假信号 → 撤单
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
         assertTrue(events.any { it is TimerEvent.CandidateCancelled })

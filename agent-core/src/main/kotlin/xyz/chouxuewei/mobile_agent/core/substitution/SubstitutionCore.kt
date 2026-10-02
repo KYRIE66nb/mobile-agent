@@ -101,11 +101,16 @@ data class DetectionTuning(
     /**
      * 掉落前的"高位计数"须已稳定该时长才接受为替身候选；
      * 涨豆动画/闪光造成的高位驻留 + 落回原值在该窗内被判为抖动而非替身。
-     * 代价：涨豆后立刻（<窗长）真替身会被吞——换取"获得豆不计时"的确定性。
+     * 代价：涨豆后立刻（<窗长）真替身会被吞——窗长是 FP/FN 的权衡点。
      */
-    val minStableBeforeDropMs: Long = 2500,
-    /** 悬置候选验证窗：窗口内豆数回弹到原值 → 撤销计时（遮挡类误报兜底）。 */
-    val pendingVerifyMs: Long = 2500,
+    val minStableBeforeDropMs: Long = 1200,
+    /** 悬置候选验证窗：窗口内快回弹撤单、慢回弹按真实涨豆确认。 */
+    val pendingVerifyMs: Long = 1500,
+    /**
+     * 悬置期回弹判定分界：候选后 <该值 弹回原值 = 遮挡/闪烁假掉落 → 撤单；
+     * ≥该值 才弹回 = 大概率真实涨豆 → 确认计时（真替身的豆不可能这么快回复）。
+     */
+    val fastReboundCancelMs: Long = 600,
 )
 
 /**
