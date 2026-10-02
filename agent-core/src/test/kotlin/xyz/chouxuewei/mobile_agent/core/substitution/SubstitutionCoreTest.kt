@@ -236,8 +236,11 @@ class SubstitutionCoreTest {
         // 暂停期间倒计时仍按绝对截止计算
         assertEquals(15_000 - (t - anchorAt), e.timers(t).second.remaining(t))
         e.resume()
-        // 恢复后首组稳定只重建基线：4→4 无事件
-        repeat(3) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
+        // 恢复后重建基线发现回弹到 4：未验证候选在盲窗内被推翻 → 撤单
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
+        assertTrue(events.any { it is TimerEvent.CandidateCancelled })
+        assertFalse(e.timers(t).second.active)
     }
 
     @Test
@@ -286,8 +289,8 @@ class SubstitutionCoreTest {
         val e = engine(now = { t })
         repeat(20) { t += 100; e.onFrame(4, 2, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
-        // 升到 3 后驻留 1.5s（>1.2s 阈值）再掉回 2——真替身，不是抖动
-        repeat(15) { t += 100; e.onFrame(4, 3, t) }
+        // 升到 3 后驻留 2.6s（>2.5s 阈值）再掉回 2——真替身，不是抖动
+        repeat(26) { t += 100; e.onFrame(4, 3, t) }
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
         assertEquals(1, events.filterIsInstance<TimerEvent.SubstitutionCandidate>().size)
@@ -335,6 +338,50 @@ class SubstitutionCoreTest {
         assertTrue(events.any { it is TimerEvent.CandidateCancelled })
         assertTrue(events.any { it is TimerEvent.AmbiguousDrop })
         assertFalse(e.timers(t).second.active)
+    }
+
+    // ---- 盲窗重建检测（真机复盘：挨揍特效 → 帧无效 → 基线重置 → 替身被吞） ----
+
+    @Test
+    fun `blind window net drop by one still emits substitution candidate`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 4, t) }
+        // 满屏特效 → 连续 >2s 无效帧 → 基线作废
+        repeat(26) { t += 100; e.onFrame(4, null, t) }
+        // 特效散去豆数 4→3：盲窗内发生了替身——补发候选（仍走悬置验证）
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
+        val c = events.filterIsInstance<TimerEvent.SubstitutionCandidate>().single()
+        assertEquals(4, c.fromCount); assertEquals(3, c.toCount)
+        assertTrue(e.timers(t).second.pending)
+    }
+
+    @Test
+    fun `blind window rebound cancels unverified kept timer`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) } // 悬置候选 4→3
+        assertTrue(e.timers(t).second.pending)
+        // 遮挡持续 >2s → 基线重置，未决候选被按确认保留
+        repeat(26) { t += 100; e.onFrame(4, null, t) }
+        assertTrue(e.timers(t).second.active)
+        // 重建发现计数回弹到 4 → 盲窗内的掉落是假信号 → 撤单
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
+        assertTrue(events.any { it is TimerEvent.CandidateCancelled })
+        assertFalse(e.timers(t).second.active)
+    }
+
+    @Test
+    fun `bead gain during blind window produces no candidate`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 3, t) }
+        repeat(26) { t += 100; e.onFrame(4, null, t) }
+        // 盲窗内涨豆 3→4：不产任何事件
+        repeat(5) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
     }
 }
 

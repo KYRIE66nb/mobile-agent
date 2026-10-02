@@ -100,9 +100,10 @@ data class DetectionTuning(
     val conflictWindowFraction: Float = 0.5f,
     /**
      * 掉落前的"高位计数"须已稳定该时长才接受为替身候选；
-     * 闪光误点亮造成的高位短驻 + 落回原值被判为抖动而非替身。
+     * 涨豆动画/闪光造成的高位驻留 + 落回原值在该窗内被判为抖动而非替身。
+     * 代价：涨豆后立刻（<窗长）真替身会被吞——换取"获得豆不计时"的确定性。
      */
-    val minStableBeforeDropMs: Long = 1200,
+    val minStableBeforeDropMs: Long = 2500,
     /** 悬置候选验证窗：窗口内豆数回弹到原值 → 撤销计时（遮挡类误报兜底）。 */
     val pendingVerifyMs: Long = 2500,
 )

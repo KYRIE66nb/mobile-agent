@@ -104,6 +104,10 @@ class SubstitutionEngine(
         var pendingFrom: Int? = null
         var pendingTo: Int = -1
         var pendingUntilMs: Long = 0
+        /** 基线重置前最后确认的稳定计数——盲窗重建时对比判断盲期内是否发生了替身。 */
+        var resetFromStable: Int? = null
+        /** 重置时被强制确认的悬置候选 from——重建发现回弹原值时要追加撤单。 */
+        var resetPendingFrom: Int? = null
     }
 
     private val self = Side(TimerSide.SELF, config.tuning.confirmFrames)
@@ -124,6 +128,11 @@ class SubstitutionEngine(
     }
 
     fun resetBaseline(reason: String) {
+        // 记录丢失前的稳定计数与未决候选——盲窗重建时做差值检测
+        self.resetFromStable = self.tracker.stable
+        enemy.resetFromStable = enemy.tracker.stable
+        self.resetPendingFrom = self.pendingFrom
+        enemy.resetPendingFrom = enemy.pendingFrom
         self.tracker.reset(); enemy.tracker.reset()
         self.baselineEstablished = false; enemy.baselineEstablished = false
         // 基线作废后悬置验证无从谈起——按已确认处理，保留计时继续走
@@ -154,6 +163,8 @@ class SubstitutionEngine(
         if (count == null) {
             side.tracker.observe(null, atMs)
             if (side.baselineEstablished && atMs - side.lastValidAtMs > config.tuning.invalidBaselineTimeoutMs) {
+                side.resetFromStable = side.tracker.stable
+                side.resetPendingFrom = side.pendingFrom
                 side.tracker.reset()
                 side.baselineEstablished = false
                 // 无法继续验证 → 悬置候选按已确认处理，计时保留
@@ -176,6 +187,42 @@ class SubstitutionEngine(
             side.baselineEstablished = true
             side.stableSinceMs = atMs
             side.prevStable = null
+            val resetFrom = side.resetFromStable
+            val resetPendingFrom = side.resetPendingFrom
+            side.resetFromStable = null
+            side.resetPendingFrom = null
+            if (resetFrom != null) {
+                val diff = resetFrom - after
+                when {
+                    // 盲窗重建发现豆数弹回悬置前的原值 → 盲期内被保留的候选是假掉落，撤单
+                    resetPendingFrom != null && after >= resetPendingFrom -> {
+                        side.timer = SideTimer(side.side)
+                        events += TimerEvent.CandidateCancelled(side.side, resetPendingFrom, after, "blind_rebound")
+                            .also { log(it.toString(), atMs) }
+                    }
+                    // 盲窗内净掉一颗 → 替身发生在不可见期，补发候选（锚在重建首见帧，仍走悬置验证）
+                    diff == 1 -> {
+                        val anchor = side.tracker.firstObservedAtMs
+                        side.lastCandidateAtMs = atMs
+                        side.timer = SideTimer(
+                            side = side.side, active = true,
+                            endAtMs = anchor + config.cooldownMs,
+                            suspected = true, eventAtMs = anchor, pending = true,
+                        )
+                        side.pendingFrom = resetFrom
+                        side.pendingTo = after
+                        side.pendingUntilMs = atMs + config.tuning.pendingVerifyMs
+                        events += TimerEvent.SubstitutionCandidate(side.side, anchor, resetFrom, after, conflict = false)
+                            .also { log("blind_window_recovery ${side.side} $resetFrom->$after", atMs) }
+                    }
+                    diff > 1 -> {
+                        events += TimerEvent.AmbiguousDrop(side.side, resetFrom, after)
+                            .also { log("blind_window_multi ${side.side} $resetFrom->$after", atMs) }
+                    }
+                    // diff <= 0 = 盲窗内涨豆/无变化——涨豆不产事件
+                    else -> if (diff < 0) log("blind_window_gain ${side.side} $resetFrom->$after", atMs)
+                }
+            }
             log("baseline ${side.side}=$after", atMs)
             evaluatePending(side, atMs, events)
             return
