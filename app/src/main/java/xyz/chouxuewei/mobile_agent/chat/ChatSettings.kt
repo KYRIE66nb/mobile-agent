@@ -228,7 +228,7 @@ fun ChatSettings(
     var page by rememberSaveable {
         mutableStateOf(
             initialPage.takeIf {
-                it in setOf("general", "personalization", "capabilities", "model", "voice", "data", "about")
+                it in setOf("general", "personalization", "capabilities", "model", "voice", "data", "about", "timer")
             } ?: "general",
         )
     }
@@ -322,6 +322,7 @@ fun ChatSettings(
         SettingsTab("capabilities", localizedText("能力", "Capabilities"), R.drawable.lucide_circle_check),
         SettingsTab("voice", localizedText("语音", "Voice"), R.drawable.lucide_mic),
         SettingsTab("model", localizedText("模型服务", "Model service"), R.drawable.lucide_bot),
+        SettingsTab("timer", localizedText("替身计时", "Timer"), R.drawable.lucide_clock),
         SettingsTab("data", localizedText("数据管理", "Data"), R.drawable.lucide_database),
         SettingsTab("about", localizedText("关于", "About"), R.drawable.lucide_info),
     )
@@ -475,6 +476,8 @@ fun ChatSettings(
                         }
                     },
                 )
+
+                "timer" -> xyz.chouxuewei.mobile_agent.substitution.SubstitutionSettingsPage(app)
 
                 "personalization" -> PersonalizationSettings(
                     value = personalizedInstructions,

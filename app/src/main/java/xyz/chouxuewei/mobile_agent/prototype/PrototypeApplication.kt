@@ -146,6 +146,9 @@ class PrototypeApplication : Application() {
 
     /** 决策审计持久化：只落裁决元数据与请求哈希，不存请求原文/密钥。 */
     val decisionAudit by lazy { xyz.chouxuewei.mobile_agent.data.DecisionAuditStore(this) }
+    val substitutionSettings by lazy {
+        xyz.chouxuewei.mobile_agent.data.SubstitutionTimerRepository(this)
+    }
 
     /**
      * 测试当前所选后端的连通性：发送一道最小的 choice 判定（不含任何用户数据），
@@ -282,6 +285,7 @@ class PrototypeApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        xyz.chouxuewei.mobile_agent.substitution.SubstitutionTimerCoordinator.attach(this)
         AgentLog.install(AgentLog.Sink { level, tag, message, error ->
             when (level) {
                 AgentLog.Level.DEBUG -> if (error == null) Log.d(tag, message) else Log.d(tag, message, error)
