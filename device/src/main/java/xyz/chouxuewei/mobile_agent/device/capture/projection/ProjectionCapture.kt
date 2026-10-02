@@ -8,6 +8,7 @@ import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.HandlerThread
 import java.util.concurrent.atomic.AtomicBoolean
+import xyz.chouxuewei.mobile_agent.device.capture.FrameAccess
 
 /**
  * 主屏 MediaProjection 采集会话：ImageReader 单线程、只留最新帧。
@@ -17,17 +18,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 调用方负责：先注册 MediaProjection stop 回调、持有 FGS 存活。
  */
 class ProjectionCapture {
-
-    interface FrameAccess {
-        val width: Int
-        val height: Int
-
-        /** 在 [l,t,r,b] 像素矩形内按 grid×grid 网格取样，返回 ARGB 数组。 */
-        fun sample(l: Int, t: Int, r: Int, b: Int, grid: Int): IntArray
-
-        /** 整帧缩略图（仅校准预览用，内存对象不落盘）。 */
-        fun snapshot(targetWidth: Int): android.graphics.Bitmap
-    }
 
     private var thread: HandlerThread? = null
     private var handler: Handler? = null

@@ -1,0 +1,122 @@
+package xyz.chouxuewei.mobile_agent.device.capture
+
+import android.graphics.Bitmap
+import android.graphics.Rect
+import android.view.accessibility.AccessibilityWindowInfo
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import xyz.chouxuewei.mobile_agent.device.accessibility.AccessibilityWindowTarget
+import xyz.chouxuewei.mobile_agent.device.accessibility.AgentAccessibilityService
+import xyz.chouxuewei.mobile_agent.device.accessibility.AccessibilityScreenshotException
+
+/**
+ * 无障碍截屏帧源：与 MediaProjection 完全独立的两条通路，系统录屏抢占
+ * 投影令牌时不受影响。用 takeScreenshotOfWindow 只截游戏窗口——悬浮层
+ * （计时胶囊、录屏控制条）不会进入像素，反而比投影更干净。
+ *
+ * 帧率受系统截屏限速（约 3~10fps），足够豆槽检测但远低于投影——
+ * 只做降级通道，不做主通道。
+ */
+class AccessibilityFrameSource(
+    private val svc: AgentAccessibilityService,
+    private val displayId: Int,
+    private val gamePackage: String,
+    private val screenW: Int,
+    private val screenH: Int,
+    private val onFrame: (FrameAccess) -> Unit,
+    private val onClosed: (String) -> Unit,
+) {
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    fun start() {
+        scope.launch {
+            var failures = 0
+            while (isActive) {
+                val target = findGameWindow()
+                if (target == null) { delay(400); continue }
+                try {
+                    val capture = svc.captureWindow(target)
+                    val access = BitmapFrameAccess(capture.bitmap, capture.target.bounds, screenW, screenH)
+                    try {
+                        onFrame(access)
+                    } catch (t: Throwable) {
+                        android.util.Log.e(TAG, "frame callback threw, frame dropped", t)
+                    } finally {
+                        capture.bitmap.recycle()
+                    }
+                    failures = 0
+                    delay(50)
+                } catch (e: AccessibilityScreenshotException) {
+                    failures++
+                    delay(if (e.isRateLimited) 320 else 600)
+                } catch (t: Throwable) {
+                    failures++
+                    android.util.Log.e(TAG, "screenshot failed", t)
+                    delay(600)
+                }
+                if (failures > 90) { onClosed("a11y_frames_unrecoverable"); break }
+            }
+        }
+    }
+
+    fun stop() = scope.cancel()
+
+    private fun findGameWindow(): AccessibilityWindowTarget? {
+        val windows = svc.windowsOnAllDisplays.get(displayId).orEmpty()
+        return try {
+            windows.firstNotNullOfOrNull { window ->
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@firstNotNullOfOrNull null
+                val root = window.root ?: return@firstNotNullOfOrNull null
+                val pkg = try { root.packageName?.toString() } finally { root.recycle() }
+                if (pkg != gamePackage) return@firstNotNullOfOrNull null
+                val bounds = Rect().also(window::getBoundsInScreen)
+                if (bounds.isEmpty) null else AccessibilityWindowTarget(window.id, bounds, pkg)
+            }
+        } finally {
+            windows.forEach { it.recycle() }
+        }
+    }
+
+    private class BitmapFrameAccess(
+        private val bitmap: Bitmap,
+        private val bounds: Rect,
+        private val screenW: Int,
+        private val screenH: Int,
+    ) : FrameAccess {
+        override val width = screenW
+        override val height = screenH
+
+        override fun sample(l: Int, t: Int, r: Int, b: Int, grid: Int): IntArray {
+            val left = (l - bounds.left).coerceIn(0, bitmap.width - 1)
+            val right = (r - bounds.left).coerceIn(left + 1, bitmap.width)
+            val top = (t - bounds.top).coerceIn(0, bitmap.height - 1)
+            val bottom = (b - bounds.top).coerceIn(top + 1, bitmap.height)
+            val w = right - left
+            val h = bottom - top
+            val gx = maxOf(1, minOf(grid, w))
+            val gy = maxOf(1, minOf(grid, h))
+            val out = IntArray(gx * gy)
+            var i = 0
+            for (y in 0 until gy) {
+                val row = top + y * h / gy
+                for (x in 0 until gx) {
+                    out[i++] = bitmap.getPixel(left + x * w / gx, row)
+                }
+            }
+            return out
+        }
+
+        override fun snapshot(targetWidth: Int): Bitmap {
+            val outW = targetWidth.coerceAtMost(bitmap.width)
+            val outH = (bitmap.height.toLong() * outW / bitmap.width).toInt().coerceAtLeast(1)
+            return Bitmap.createScaledBitmap(bitmap, outW, outH, true)
+        }
+    }
+
+    private companion object { const val TAG = "A11yFrameSource" }
+}

@@ -39,6 +39,9 @@ import xyz.chouxuewei.mobile_agent.core.substitution.TimerConfig
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerEvent
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerServiceState
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerSide
+import xyz.chouxuewei.mobile_agent.device.accessibility.AgentAccessibilityService
+import xyz.chouxuewei.mobile_agent.device.capture.AccessibilityFrameSource
+import xyz.chouxuewei.mobile_agent.device.capture.FrameAccess
 import xyz.chouxuewei.mobile_agent.device.capture.projection.ProjectionCapture
 import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
 
@@ -62,6 +65,11 @@ class SubstitutionTimerService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var capture: ProjectionCapture? = null
+    /** 无障碍截屏兜底通道：录屏抢投影时启用，与 MediaProjection 完全独立。 */
+    private var a11ySource: AccessibilityFrameSource? = null
+    /** 切通道时 suppress capture 的"正常停止"回调——不能当会话丢失处理。 */
+    private var suppressCaptureClose = false
+    private var projectionCallback: android.media.projection.MediaProjection.Callback? = null
     /** 采集线程最近一帧到达时刻——VirtualDisplay 被系统夺走时帧流静默，靠它兜底。 */
     @Volatile private var lastFrameAt = 0L
     private var captureRestarts = 0
@@ -128,11 +136,13 @@ class SubstitutionTimerService : Service() {
                     ?: error("MediaProjection 创建失败")
                 projection = proj
                 // 官方要求：创建捕获前先注册停止回调
-                proj.registerCallback(object : android.media.projection.MediaProjection.Callback() {
+                val cb = object : android.media.projection.MediaProjection.Callback() {
                     override fun onStop() {
                         onSessionLost("系统已停止屏幕共享")
                     }
-                }, null)
+                }
+                projectionCallback = cb
+                proj.registerCallback(cb, null)
                 engine = SubstitutionEngine(cfg, clock = SystemClock::elapsedRealtime)
                 SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.PermissionGranted)
                 if (cfg.calibrated) {
@@ -202,8 +212,23 @@ class SubstitutionTimerService : Service() {
                 proj,
                 metrics.widthPixels, metrics.heightPixels, metrics.densityDpi,
                 onFrame = ::onFrame,
-                onClosed = { reason -> onSessionLost(reason) },
+                onClosed = { reason -> onCaptureClosed(reason) },
             )
+        }
+    }
+
+    /** 捕获会话关闭：令牌真死前先看无障碍兜底能不能接住（录屏共存），不行才丢会话。 */
+    private fun onCaptureClosed(reason: String) {
+        if (suppressCaptureClose) return
+        scope.launch {
+            if (started && Build.VERSION.SDK_INT >= 34 &&
+                AgentAccessibilityService.connected != null &&
+                _uiState.value.gameInForeground) {
+                AgentLog.w(TAG) { "projection lost ($reason), switching to a11y capture" }
+                switchToA11yCapture()
+            } else {
+                onSessionLost(reason)
+            }
         }
     }
 
@@ -211,7 +236,7 @@ class SubstitutionTimerService : Service() {
     private var lastSampleAt = 0L
     private var lastObservedLogAt = 0L
 
-    private fun onFrame(access: ProjectionCapture.FrameAccess) {
+    private fun onFrame(access: FrameAccess) {
         lastFrameAt = SystemClock.elapsedRealtime()
         val cfg = config ?: return
         val eng = engine ?: return
@@ -324,31 +349,80 @@ class SubstitutionTimerService : Service() {
     }
 
     /** 帧流看门狗：MONITORING+游戏前台却持续无帧 = VirtualDisplay 被夺走
-     *  （如系统录屏抢投影）或采集线程死亡——原地重建捕获，60s 内最多 3 次。 */
+     *  （系统录屏抢投影，MIUI 单投影互斥）或采集线程死亡。
+     *  先原地重建 VD 两次；仍饿则切无障碍截屏通道（与投影完全独立、与录屏共存）。 */
     private fun startCaptureWatchdog() {
         scope.launch {
             while (true) {
                 delay(1000)
                 val state = _uiState.value
-                val c = capture ?: continue
                 if (!started || state.state != TimerServiceState.MONITORING ||
                     !state.gameInForeground) continue
                 val now = SystemClock.elapsedRealtime()
                 if (now - lastFrameAt < 3000) continue
+                val a11y = a11ySource
+                if (a11y != null) {
+                    // 无障碍通道已激活却饿：多半是服务断连——直接重建一次
+                    AgentLog.w(TAG) { "a11y capture starved ${now - lastFrameAt}ms, restarting source" }
+                    lastFrameAt = now
+                    a11y.stop()
+                    a11ySource = null
+                    startA11yCapture()
+                    continue
+                }
+                val c = capture ?: continue
                 if (now - captureRestartWindowStart > 60_000) {
                     captureRestartWindowStart = now; captureRestarts = 0
                 }
                 captureRestarts++
-                if (captureRestarts > 3) {
-                    AgentLog.e(TAG) { "capture starved: 3 restarts in 60s failed, session lost" }
-                    onSessionLost("画面捕获被系统中断且无法恢复")
-                    break
+                val hasA11y = Build.VERSION.SDK_INT >= 34 &&
+                    AgentAccessibilityService.connected != null
+                when {
+                    // 重建两次仍被抢 → 有备用通道直接切，不再跟录屏互抢
+                    captureRestarts > 2 && hasA11y -> {
+                        AgentLog.w(TAG) { "VD restart failed twice, switching to accessibility capture" }
+                        switchToA11yCapture()
+                    }
+                    captureRestarts > 3 -> {
+                        AgentLog.e(TAG) { "capture starved: restarts failed, session lost" }
+                        onSessionLost("画面捕获被系统中断且无法恢复")
+                        break
+                    }
+                    else -> {
+                        AgentLog.w(TAG) { "capture starved ${now - lastFrameAt}ms, restarting VD (#$captureRestarts)" }
+                        lastFrameAt = now
+                        c.restart()
+                    }
                 }
-                AgentLog.w(TAG) { "capture starved ${now - lastFrameAt}ms, restarting VD (#$captureRestarts)" }
-                lastFrameAt = now
-                c.restart()
             }
         }
+    }
+
+    /** 放弃投影通道，切换到无障碍截屏（系统录屏共存模式）。 */
+    private fun switchToA11yCapture() {
+        suppressCaptureClose = true
+        // 先摘掉 onStop 监听——stop() 会触发它，不能误当会话丢失
+        projectionCallback?.let { cb ->
+            runCatching { projection?.unregisterCallback(cb) }
+        }
+        capture?.stop(); capture = null
+        projection = null // 令牌让位——不再持有死投影
+        startA11yCapture()
+        pushState(detail = "已切换无障碍捕获（可与录屏共存）")
+    }
+
+    private fun startA11yCapture() {
+        val svc = AgentAccessibilityService.connected ?: return
+        val cfg = config ?: return
+        val metrics = resources.displayMetrics
+        lastFrameAt = SystemClock.elapsedRealtime()
+        a11ySource = AccessibilityFrameSource(
+            svc, android.view.Display.DEFAULT_DISPLAY, cfg.gamePackage,
+            metrics.widthPixels, metrics.heightPixels,
+            onFrame = ::onFrame,
+            onClosed = { reason -> onSessionLost(reason) },
+        ).also { it.start() }
+        AgentLog.i(TAG) { "a11y capture started pkg=${cfg.gamePackage}" }
     }
 
     /** 每 ~300ms 刷新倒计时显示（刷新频率与检测频率解耦）。 */
@@ -448,8 +522,10 @@ class SubstitutionTimerService : Service() {
 
     /** 用户停止/系统撤销/共享抢占：释放资源并进入可解释状态。 */
     private fun stopSession(userInitiated: Boolean) {
+        suppressCaptureClose = true
         started = false
         ticker?.cancel(); foregroundWatch?.cancel()
+        a11ySource?.stop(); a11ySource = null
         capture?.stop(); capture = null
         overlay?.destroy(); overlay = null
         projection = null
@@ -462,8 +538,10 @@ class SubstitutionTimerService : Service() {
 
     private fun onSessionLost(reason: String) {
         scope.launch {
+            suppressCaptureClose = true
             started = false
             ticker?.cancel(); foregroundWatch?.cancel()
+            a11ySource?.stop(); a11ySource = null
             capture?.stop(); capture = null
             overlay?.destroy(); overlay = null
             pushState(detail = "$reason，返回 App 重新授权")
@@ -555,6 +633,7 @@ class SubstitutionTimerService : Service() {
 
     override fun onDestroy() {
         ticker?.cancel(); foregroundWatch?.cancel()
+        a11ySource?.stop(); a11ySource = null
         capture?.stop()
         overlay?.destroy()
         _uiState.value = UiState()
