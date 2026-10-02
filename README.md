@@ -113,6 +113,16 @@ Hand "every morning" / "when a notification arrives" automations to triggers —
 - **Platform limits**: battery savers and OEM background policies may delay firing (no exact-alarm permission is requested); notification matching needs Notification Access granted;
 - **Spoken results**: enable "Speak task results" under Settings → General to have finished tasks read their summary aloud through the system TTS (offline, opt-in).
 
+### Substitution timer (Naruto Mobile)
+
+A purely **on-device** inference timer for the Substitution-jutsu cooldown in arena duels: no chat turn, no model call, no network — grant screen capture once, enter a match, and a countdown capsule floats above the game when either side's chakra dots drop:
+
+- **Root-free capture**: MediaProjection + a `mediaProjection`-typed foreground service reads the main display; ImageReader keeps only the newest frame (slow devices drop, never queue);
+- **Honest inference**: each side's dot slots are grid-sampled into HSV classification; a count is confirmed only after 3 consecutive frames agree, and only a stable `n→n−1` drop becomes a *suspected* substitution that starts a monotonic-clock cooldown — active skill costs, multi-dot jumps, flicker, and occlusions never masquerade as substitutes;
+- **Explicit auto-start semantics**: opening the app idempotently walks grant → standby → monitoring; denial never re-prompts in a loop; pause-this-session and permanent-off are separate states; leaving the game hides the timer;
+- **Calibration-driven**: the settings page frames both dot rows on a real in-memory game frame; coordinates, cooldown, and thresholds are persisted and adjustable;
+- **Hard boundaries**: no input injection, no process memory reads, no detection bypass — it observes pixels and shows an estimated cooldown only (details: `docs/substitution-timer.md`).
+
 ### Models and tools
 
 - **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
@@ -180,6 +190,7 @@ Settings → Models → New profile:
 - [x] Notification RemoteInput quick replies (reply without opening the app; sensitive notifications excluded)
 - [x] Capability/authorization overview page (system grants + advanced channels + capability groups + one-tap setup)
 - [x] Pluggable standalone decision-model backend (Laya / Jev over `/v1/systemone`; off by default, interactive tasks only, SHADOW/ENFORCE modes)
+- [x] Naruto substitution timer (root-free MediaProjection capture, fully local dot-count inference + floating cooldown, no model or network)
 
 ## Permissions and data boundaries
 
