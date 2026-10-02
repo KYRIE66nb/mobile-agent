@@ -53,7 +53,7 @@ class SubstitutionTimerRepository(context: Context) {
             autoStartOnAppOpen = p[Keys.AUTO_START] ?: true,
             gamePackage = p[Keys.GAME_PACKAGE] ?: "",
             showSelfTimer = p[Keys.SHOW_SELF] ?: true,
-            cooldownMs = p[Keys.COOLDOWN_MS] ?: 13_500,
+            cooldownMs = p[Keys.COOLDOWN_MS] ?: 15_000,
             frameIntervalMs = (p[Keys.FRAME_INTERVAL_MS] ?: 140).coerceIn(80, 500),
             calibrated = p[Keys.CALIBRATED] ?: false,
             layout = decodeLayout(p[Keys.LAYOUT]),

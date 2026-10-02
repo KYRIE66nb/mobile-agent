@@ -191,7 +191,7 @@ data class TimerConfig(
     val gamePackage: String = "",
     val showSelfTimer: Boolean = true,
     /** 决斗场替身术冷却。开源实现常用经验值 13.5s；如有偏差可在设置页调整。 */
-    val cooldownMs: Long = 13_500,
+    val cooldownMs: Long = 15_000,
     val frameIntervalMs: Long = 80,
     val layout: TimerLayout = TimerLayout(),
     val tuning: DetectionTuning = DetectionTuning(),

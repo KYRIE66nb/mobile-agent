@@ -309,7 +309,7 @@ class SubstitutionTimerService : Service() {
     private fun startTicker() {
         ticker = scope.launch {
             while (true) {
-                delay(300)
+                delay(100)
                 publishTimers()
             }
         }
