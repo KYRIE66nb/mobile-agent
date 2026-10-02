@@ -24,6 +24,105 @@ No APIs, no web versions — the agent looks at the screen and taps it like a pe
 
 [Interactive architecture map](docs/assets/agent-loop.html) — open locally; supports zoom, path tracing, and dark mode.
 
+## Screenshots
+
+Real captures from a physical device — no mockups. The dark floating pill on some frames is the agent overlay (expand / artifacts / settings / dismiss); it streams what the agent is doing while a task runs.
+
+### One task, end to end
+
+<table>
+  <tr>
+    <td width="25%"><img src="docs/assets/screenshots/chat-empty.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/ask-user.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/tool-approval.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/tool-calls.png"></td>
+  </tr>
+  <tr>
+    <td><b>Ask.</b> Describe the task in the composer — model chip and per-send reasoning effort are right there.</td>
+    <td><b>Clarify.</b> Ambiguous requests pause on a structured question with tappable options instead of guessing.</td>
+    <td><b>Approve.</b> Tools marked "ask every time" wait for your verdict — deny, allow once, or always.</td>
+    <td><b>Act.</b> Tool calls stream as collapsible cards: read-only calls run in parallel, writes stay sequential.</td>
+  </tr>
+</table>
+
+### Conversations and tool management
+
+<table>
+  <tr>
+    <td width="25%"><img src="docs/assets/screenshots/chat.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/history-drawer.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/tools.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/tools-2.png"></td>
+  </tr>
+  <tr>
+    <td>Markdown-rendered answers; the composer carries voice input, attachments, thinking toggle, and the model chip.</td>
+    <td>Pinned / recent conversations with search — local storage only, nothing leaves the device.</td>
+    <td>Every tool group is switchable, each with its own permission level (allow / while in use / ask every time).</td>
+    <td>Unavailable tools say exactly why — here screen operation wants Root, and notifications want access first.</td>
+  </tr>
+</table>
+
+### Settings: safety gate, failover, capabilities, models
+
+<table>
+  <tr>
+    <td width="25%"><img src="docs/assets/screenshots/settings-general.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/settings-general-2.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/settings-general-3.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/personalize.png"></td>
+  </tr>
+  <tr>
+    <td>Theme, language, step cap, the action safety gate, and the dedicated decision backend entry.</td>
+    <td>Decision backend picker, model failover, spoken results, ad guard, scheduled tasks.</td>
+    <td>Device-operation target (auto / main / background), verbose logs, persistent overlay, Root status.</td>
+    <td>Custom instructions — long-term preferences, habits, and reply style the agent remembers.</td>
+  </tr>
+  <tr>
+    <td width="20%"><img src="docs/assets/screenshots/capabilities.png"></td>
+    <td width="20%"><img src="docs/assets/screenshots/capabilities-groups.png"></td>
+    <td width="20%"><img src="docs/assets/screenshots/model-profile.png"></td>
+    <td width="20%"><img src="docs/assets/screenshots/model-effort.png"></td>
+    <td width="20%"><img src="docs/assets/screenshots/model-vision.png"></td>
+  </tr>
+  <tr>
+    <td>Capability overview: every system authorization and advanced channel, with one-tap jumps to grant screens.</td>
+    <td>Each tool group reports its status — available, limited, or unsupported — with the blocker named.</td>
+    <td>Model profiles: base URL, model ID, context window, up to 20 saved configurations.</td>
+    <td>Auto-compaction threshold plus reasoning-effort levels with one-tap official presets.</td>
+    <td>The vision-model toggle — screenshots ride along with observations so the model can tap by pixel.</td>
+  </tr>
+</table>
+
+### Voice, data, updates
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/assets/screenshots/voice.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/data-usage.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/about.png"></td>
+  </tr>
+  <tr>
+    <td>Speech transcription over OpenAI-compatible or iFLYTEK endpoints, with a test-connection button.</td>
+    <td>Per-model token usage, artifact retention, and JSON export/import of the whole conversation store.</td>
+    <td>Version info and in-app updates straight from GitHub Releases.</td>
+  </tr>
+</table>
+
+### Naruto substitution timer — fully on-device
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/assets/screenshots/substitution-settings.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/substitution-calibration.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/substitution-ingame.jpg"></td>
+  </tr>
+  <tr>
+    <td>Enable, auto-start on app open, cooldown and sampling settings — status and session controls inline.</td>
+    <td>Dot-slot calibration draws both players' chakra rows on a real captured frame; sliders fine-tune the boxes.</td>
+    <td>In a match, a countdown capsule floats over the game — enemy / own cooldown state, monitored locally.</td>
+  </tr>
+</table>
+
 ## Core capabilities
 
 ### Dual-path UI perception

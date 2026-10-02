@@ -24,6 +24,105 @@
 
 [交互式架构图](docs/assets/agent-loop.html)（下载后用浏览器打开，支持缩放 / 路径追踪 / 暗色模式）
 
+## 界面实拍
+
+全部来自真机截图，没有渲染图。部分画面上悬浮的深色小条是 Agent 悬浮窗（展开 / 产物 / 设置 / 关闭），任务执行时会实时同步 Agent 正在做什么。
+
+### 一次任务的完整链路
+
+<table>
+  <tr>
+    <td width="25%"><img src="docs/assets/screenshots/chat-empty.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/ask-user.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/tool-approval.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/tool-calls.png"></td>
+  </tr>
+  <tr>
+    <td><b>提需求。</b>输入框里就有模型切换和单次发送的思考强度。</td>
+    <td><b>问清楚。</b>需求有关键歧义时停下来让你点选，而不是瞎猜。</td>
+    <td><b>过你手。</b>设为"每次询问"的工具会等你裁决：不允许 / 仅此次 / 始终允许。</td>
+    <td><b>去执行。</b>工具调用流式渲染成卡片：只读调用并行跑，写操作保持顺序。</td>
+  </tr>
+</table>
+
+### 对话与工具管理
+
+<table>
+  <tr>
+    <td width="25%"><img src="docs/assets/screenshots/chat.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/history-drawer.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/tools.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/tools-2.png"></td>
+  </tr>
+  <tr>
+    <td>Markdown 排版回答；输入区集成语音、附件、思考开关和模型选择。</td>
+    <td>置顶/最近会话可搜索，全部只存在本机。</td>
+    <td>每组工具独立开关，各有权限档位（始终允许 / 使用时 / 每次询问）。</td>
+    <td>不可用的工具直接说明缺什么——比如手机操作要 Root，通知要先授权。</td>
+  </tr>
+</table>
+
+### 设置：安全闸、故障切换、能力总览、模型
+
+<table>
+  <tr>
+    <td width="25%"><img src="docs/assets/screenshots/settings-general.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/settings-general-2.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/settings-general-3.png"></td>
+    <td width="25%"><img src="docs/assets/screenshots/personalize.png"></td>
+  </tr>
+  <tr>
+    <td>主题、语言、步数上限、操作安全闸、专用决策后端入口。</td>
+    <td>决策后端选择、模型故障切换、结果语音播报、广告守卫、定时任务。</td>
+    <td>设备操作位置（自动/主屏/后台）、详细日志、常驻悬浮助手、Root 状态。</td>
+    <td>个性化提示词——长期记住你的偏好、习惯和回复风格。</td>
+  </tr>
+  <tr>
+    <td width="20%"><img src="docs/assets/screenshots/capabilities.png"></td>
+    <td width="20%"><img src="docs/assets/screenshots/capabilities-groups.png"></td>
+    <td width="20%"><img src="docs/assets/screenshots/model-profile.png"></td>
+    <td width="20%"><img src="docs/assets/screenshots/model-effort.png"></td>
+    <td width="20%"><img src="docs/assets/screenshots/model-vision.png"></td>
+  </tr>
+  <tr>
+    <td>能力总览：所有系统授权与高级通道一目了然，可一键跳转授权页。</td>
+    <td>每个工具组如实报告状态——可用 / 受限 / 不支持，并写清卡点。</td>
+    <td>模型配置：服务地址、模型 ID、上下文窗口，最多存 20 套。</td>
+    <td>自动压缩阈值 + 思考强度档位，官方推荐值一键填充。</td>
+    <td>视觉模型开关——截图随界面识别结果一起发给模型，按像素坐标操作图标和图片界面。</td>
+  </tr>
+</table>
+
+### 语音、数据与更新
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/assets/screenshots/voice.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/data-usage.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/about.png"></td>
+  </tr>
+  <tr>
+    <td>语音转写走 OpenAI 兼容或讯飞接口，配完可先测连接。</td>
+    <td>分模型 token 用量、产物保留策略、整库 JSON 导出/导入。</td>
+    <td>版本信息与从 GitHub Releases 直接检查更新。</td>
+  </tr>
+</table>
+
+### 火影替身计时——完全在本机跑
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/assets/screenshots/substitution-settings.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/substitution-calibration.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/substitution-ingame.jpg"></td>
+  </tr>
+  <tr>
+    <td>开关、进 App 自动启动、冷却与采样参数，会话状态内联展示。</td>
+    <td>豆槽校准把双方查克拉豆框画在真实捕获帧上，滑块微调。</td>
+    <td>对局中倒计时胶囊浮在游戏上——敌我替身状态，本地推断。</td>
+  </tr>
+</table>
+
 ## 核心能力
 
 ### 双路径界面感知
