@@ -46,8 +46,8 @@ android {
         applicationId = "xyz.chouxuewei.mobile_agent"
         minSdk = 24
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.1.16"
+        versionCode = 17
+        versionName = "0.1.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
