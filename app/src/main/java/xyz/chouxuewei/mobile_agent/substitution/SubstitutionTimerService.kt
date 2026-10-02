@@ -270,9 +270,13 @@ class SubstitutionTimerService : Service() {
             return
         }
         foregroundWatch = scope.launch(Dispatchers.IO) {
+            var lastKnown: String? = null
             while (true) {
                 val cfg = config ?: break
-                val pkg = currentForegroundPackage(usm)
+                // 最近窗口无事件时保持上次判定——切换事件只发生在跳转瞬间，
+                // 短窗口查空不等于"离开了游戏"
+                val pkg = currentForegroundPackage(usm) ?: lastKnown
+                if (pkg != null) lastKnown = pkg
                 val inGame = cfg.gamePackage.isNotBlank() && pkg == cfg.gamePackage
                 if (inGame != _uiState.value.gameInForeground) {
                     _uiState.update { it.copy(gameInForeground = inGame) }
@@ -282,11 +286,13 @@ class SubstitutionTimerService : Service() {
                     if (inGame) {
                         // 进游戏：重建基线，首组稳定帧只建基线不计时
                         engine?.resetBaseline("game_foreground")
-                        scope.launch { overlay?.show() }
-                        if (_uiState.value.state == TimerServiceState.WAITING_FOR_GAME ||
-                            _uiState.value.state == TimerServiceState.NEEDS_CALIBRATION
-                        ) {
+                        // 校准完成才挂计时悬浮窗，未校准期间不显示"监视中"误导
+                        if (config?.calibrated == true) scope.launch { overlay?.show() }
+                        // 未校准不进 MONITORING——不能伪装成"识别中"；预览帧照产供校准用
+                        if (_uiState.value.state == TimerServiceState.WAITING_FOR_GAME) {
                             pushState(state = TimerServiceState.MONITORING, detail = "")
+                        } else if (_uiState.value.state == TimerServiceState.NEEDS_CALIBRATION) {
+                            pushState(detail = "已进入游戏——回设置页完成校准后开始识别")
                         }
                     } else {
                         scope.launch { overlay?.hide() }
@@ -303,7 +309,8 @@ class SubstitutionTimerService : Service() {
 
     private fun currentForegroundPackage(usm: UsageStatsManager): String? {
         val end = System.currentTimeMillis()
-        val events = usm.queryEvents(end - 4_000, end)
+        // 两分钟窗口取最后一条前台事件：停留在一屏不放前台事件属常态
+        val events = usm.queryEvents(end - 120_000, end)
         var pkg: String? = null
         val event = UsageEvents.Event()
         while (events.hasNextEvent()) {
