@@ -72,12 +72,12 @@ data class RgbBox(
     }
 }
 
-/** 分类判定参数。点亮豆逐像素颜色盒（我方亮蓝/敌方赤金/熄灭暗青）+ 格内占比表决。 */
+/** 分类判定参数。点亮豆逐像素颜色盒 + 格内占比表决。点亮色不分侧而分状态：非满=青蓝、满四颗=金色。 */
 data class DetectionTuning(
-    /** 我方"点亮"豆颜色盒——实测为赤金/亮橙菱形（开源参考的"赤金"盒）。 */
-    val litSelfBox: RgbBox = RgbBox(179, 19, 1, 255, 255, 206),
-    /** 敌方"点亮"豆颜色盒——实测为亮青蓝菱形（开源参考的"亮蓝"盒；R 上限排除纯白闪光）。 */
-    val litEnemyBox: RgbBox = RgbBox(0, 120, 170, 225, 255, 255),
+    /** 点亮豆·青蓝盒（未满状态；开源参考的"亮蓝"盒；R 上限排除纯白闪光）。 */
+    val litCyanBox: RgbBox = RgbBox(0, 120, 170, 225, 255, 255),
+    /** 点亮豆·金色盒（四颗全亮时整排变金——开源参考的"赤金"盒）。 */
+    val litGoldBox: RgbBox = RgbBox(179, 19, 1, 255, 255, 206),
     /** 熄灭豆槽颜色盒（深藏青，放宽以覆盖暗色背景混入）。 */
     val dimBox: RgbBox = RgbBox(0, 0, 0, 90, 100, 150),
     /** 格内命中点亮盒的像素占比 ≥ 该值 → LIT。亮豆中心纯色约占格 20-40%。 */
@@ -122,11 +122,12 @@ class DotClassifier(private val tuning: DetectionTuning = DetectionTuning()) {
 
     fun classify(argb: IntArray, side: TimerSide): Result {
         if (argb.isEmpty()) return Result(DotState.UNKNOWN, 0f, 0f, 0f)
-        val litBox = if (side == TimerSide.SELF) tuning.litSelfBox else tuning.litEnemyBox
+        // 点亮豆双色：未满=青蓝、满四=金色——任一盒命中都算点亮
         var lit = 0
         var dim = 0
         for (px in argb) {
-            if (litBox.contains(px)) lit++ else if (tuning.dimBox.contains(px)) dim++
+            if (tuning.litCyanBox.contains(px) || tuning.litGoldBox.contains(px)) lit++
+            else if (tuning.dimBox.contains(px)) dim++
         }
         val n = argb.size.toFloat()
         val litRatio = lit / n

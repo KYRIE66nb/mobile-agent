@@ -19,10 +19,17 @@ class SubstitutionCoreTest {
 
     @Test
     fun `lit gold bead pixel classified LIT for self`() {
-        // 亮橙金豆心纯色——我方豆实测为赤金色
+        // 亮橙金豆心纯色——满四颗时整排变金
         val r = DotClassifier().classify(solid(245, 170, 50), TimerSide.SELF)
         assertEquals(DotState.LIT, r.state)
         assertTrue(r.litRatio > 0.9f)
+    }
+
+    @Test
+    fun `gold and cyan lit pixels both count as lit on either side`() {
+        // 点亮色不分侧：非满=青蓝、满四=金色
+        assertEquals(DotState.LIT, DotClassifier().classify(solid(245, 170, 50), TimerSide.ENEMY).state)
+        assertEquals(DotState.LIT, DotClassifier().classify(solid(80, 180, 230), TimerSide.SELF).state)
     }
 
     @Test
