@@ -78,9 +78,17 @@ class SubstitutionTimerService : Service() {
             ACTION_PAUSE -> pauseSession()
             ACTION_RESUME -> resumeSession()
             ACTION_RESET -> {
+                AgentLog.i(TAG) { "manual reset engine=${engine != null} started=$started paused=${engine?.paused}" }
+                // 重置=修正语义：暂停态也一并解除，否则基线永不重建看起来像"不再计算"
+                if (engine?.paused == true) {
+                    engine?.resume()
+                    SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Resume)
+                    updateNotification()
+                }
                 engine?.cancelTimer(TimerSide.SELF)
                 engine?.cancelTimer(TimerSide.ENEMY)
                 engine?.resetBaseline("manual_reset")
+                pushState(detail = "已重置计时，重新建立基线")
                 publishTimers()
             }
             ACTION_STOP -> stopSession(userInitiated = true)
@@ -134,6 +142,7 @@ class SubstitutionTimerService : Service() {
                 startForegroundWatch()
                 startTicker()
                 started = true
+                SubstitutionTimerCoordinator.onServiceStarted()
                 // 协调器状态机是唯一事实源：服务只镜像，不再各推各的状态
                 scope.launch {
                     SubstitutionTimerCoordinator.state.collect { s ->

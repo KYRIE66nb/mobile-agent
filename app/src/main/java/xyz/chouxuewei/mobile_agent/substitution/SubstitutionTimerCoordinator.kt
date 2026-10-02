@@ -37,12 +37,18 @@ object SubstitutionTimerCoordinator {
     private val _state = MutableStateFlow(TimerServiceState.DISABLED)
     val state: StateFlow<TimerServiceState> = _state
 
+    /** 已授权但服务还没确认启动的投影令牌——进程崩溃/后台拒启动都不丢，App 可见时重试。 */
+    private var pendingConsentCode: Int = Activity.RESULT_CANCELED
+    private var pendingConsentData: Intent? = null
+
     fun attach(app: PrototypeApplication) {
         this.app = app
         scope.launch {
             // 设置变化同步状态：用户永久关闭 → DISABLED；校准完成 → Calibrated
             app.substitutionSettings.config.collect { cfg ->
                 if (!cfg.enabled && _state.value != TimerServiceState.DISABLED) {
+                    pendingConsentCode = Activity.RESULT_CANCELED
+                    pendingConsentData = null
                     transition(LaunchEvent.Disabled)
                     stopService()
                 } else if (cfg.calibrated && _state.value == TimerServiceState.NEEDS_CALIBRATION) {
@@ -67,6 +73,12 @@ object SubstitutionTimerCoordinator {
             val cfg = app.substitutionSettings.current()
             if (!cfg.enabled || !cfg.autoStartOnAppOpen) {
                 if (!cfg.enabled) transition(LaunchEvent.Disabled)
+                return@launch
+            }
+            // 上次授权后服务没能起来（后台拒启动/进程被杀）→ 直接复用暂存令牌重试，不再弹窗
+            if (pendingConsentData != null) {
+                visibleSessionRequested = true
+                tryStartPendingService()
                 return@launch
             }
             xyz.chouxuewei.mobile_agent.core.AgentLog.i("SubTimer") {
@@ -110,9 +122,30 @@ object SubstitutionTimerCoordinator {
             "consent result code=$resultCode data=${data != null}"
         }
         if (resultCode == Activity.RESULT_OK && data != null) {
-            startService(resultCode, data)
+            pendingConsentCode = resultCode
+            pendingConsentData = data
+            tryStartPendingService()
         } else {
             transition(LaunchEvent.PermissionDenied)
+        }
+    }
+
+    /** 服务完成启动后回掉：令牌已消费，丢弃暂存。 */
+    fun onServiceStarted() {
+        pendingConsentCode = Activity.RESULT_CANCELED
+        pendingConsentData = null
+    }
+
+    private fun tryStartPendingService() {
+        val data = pendingConsentData ?: return
+        val ok = runCatching { startService(pendingConsentCode, data) }.isSuccess
+        if (!ok) {
+            // 单应用共享会把游戏立刻顶到前台——本进程已退后台时 startForegroundService 必抛。
+            // 不转 Failed（ERROR 无出口）：令牌留着，停在 NEEDS_PERMISSION，
+            // App 下次可见时 onAppVisible 用暂存令牌重试，不重新弹授权。
+            xyz.chouxuewei.mobile_agent.core.AgentLog.w("SubTimer") {
+                "deferred: startForegroundService blocked while backgrounded"
+            }
         }
     }
 
@@ -160,7 +193,14 @@ object SubstitutionTimerCoordinator {
 
     private fun serviceAction(action: String) {
         val ctx = app ?: return
-        ctx.startService(Intent(ctx, SubstitutionTimerService::class.java).setAction(action))
+        // 服务已死时后台 startService 会抛 IllegalStateException——手动操作绝不允许崩进程
+        runCatching {
+            ctx.startService(Intent(ctx, SubstitutionTimerService::class.java).setAction(action))
+        }.onFailure {
+            xyz.chouxuewei.mobile_agent.core.AgentLog.w("SubTimer") {
+                "serviceAction $action failed: ${it.message}"
+            }
+        }
     }
 
     /** 手动启动（设置页"立即开始"按钮）：直接进授权流程，绕过自动启动开关。 */

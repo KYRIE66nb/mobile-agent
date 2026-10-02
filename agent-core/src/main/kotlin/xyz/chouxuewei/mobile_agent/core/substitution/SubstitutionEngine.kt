@@ -223,7 +223,7 @@ class SubstitutionEngine(
                     else -> if (diff < 0) log("blind_window_gain ${side.side} $resetFrom->$after", atMs)
                 }
             }
-            log("baseline ${side.side}=$after", atMs)
+            log("baseline ${side.side}=$after resetFrom=$resetFrom", atMs)
             evaluatePending(side, atMs, events)
             return
         }
