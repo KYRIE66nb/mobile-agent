@@ -34,6 +34,9 @@ class ProjectionCapture {
     private var reader: ImageReader? = null
     private var display: android.hardware.display.VirtualDisplay? = null
     private var projection: MediaProjection? = null
+    private var width = 0
+    private var height = 0
+    private var dpi = 0
     private val running = AtomicBoolean(false)
 
     /** 最新帧槽：慢消费时丢旧帧，不排队。 */
@@ -41,6 +44,8 @@ class ProjectionCapture {
 
     private var onFrame: ((FrameAccess) -> Unit)? = null
     private var onClosed: ((String) -> Unit)? = null
+
+    private companion object { const val TAG = "ProjectionCapture" }
 
     fun start(
         projection: MediaProjection,
@@ -54,6 +59,7 @@ class ProjectionCapture {
         this.projection = projection
         this.onFrame = onFrame
         this.onClosed = onClosed
+        this.width = width; this.height = height; this.dpi = dpi
         val t = HandlerThread("substitution-capture").also { it.start() }
         thread = t
         val h = Handler(t.looper)
@@ -136,10 +142,38 @@ class ProjectionCapture {
         }
         try {
             callback(access)
+        } catch (t: Throwable) {
+            // 帧回调异常不能杀采集线程——否则 ImageReader 缓冲区塞满后 VirtualDisplay
+            // 停产且无任何报错，表现为"监视中但永不计数"。吞掉记日志，下一帧照常。
+            android.util.Log.e(TAG, "frame callback threw, frame dropped", t)
         } finally {
             image.close()
         }
         if (!running.get()) onClosed?.invoke("stopped")
+    }
+
+    /** VirtualDisplay 被系统夺走（如第三方录屏抢投影）时原地重建：复用同一
+     *  MediaProjection 令牌，reader+VD 全部换新；重建失败走 onClosed。 */
+    fun restart() {
+        if (!running.get()) return
+        val p = projection ?: return
+        val h = handler ?: return
+        h.post {
+            pending?.close(); pending = null
+            display?.release(); display = null
+            reader?.close(); reader = null
+            try {
+                reader = newReader(width, height, h)
+                display = p.createVirtualDisplay(
+                    "substitution-timer", width, height, dpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    reader!!.surface, null, h,
+                )
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "capture restart failed", t)
+                onClosed?.invoke("restart_failed:${t.message}")
+            }
+        }
     }
 
     /** 旋转/共享尺寸变化：重建 reader+surface 并 resize VirtualDisplay，不重复 createVirtualDisplay。 */

@@ -62,6 +62,10 @@ class SubstitutionTimerService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var capture: ProjectionCapture? = null
+    /** 采集线程最近一帧到达时刻——VirtualDisplay 被系统夺走时帧流静默，靠它兜底。 */
+    @Volatile private var lastFrameAt = 0L
+    private var captureRestarts = 0
+    private var captureRestartWindowStart = 0L
     private var projection: android.media.projection.MediaProjection? = null
     private var engine: SubstitutionEngine? = null
     private var config: TimerConfig? = null
@@ -141,6 +145,7 @@ class SubstitutionTimerService : Service() {
                 startCapture(proj)
                 startForegroundWatch()
                 startTicker()
+                startCaptureWatchdog()
                 started = true
                 SubstitutionTimerCoordinator.onServiceStarted()
                 // 协调器状态机是唯一事实源：服务只镜像，不再各推各的状态
@@ -191,6 +196,7 @@ class SubstitutionTimerService : Service() {
         } else {
             @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(metrics)
         }
+        lastFrameAt = SystemClock.elapsedRealtime()
         capture = ProjectionCapture().also { c ->
             c.start(
                 proj,
@@ -206,6 +212,7 @@ class SubstitutionTimerService : Service() {
     private var lastObservedLogAt = 0L
 
     private fun onFrame(access: ProjectionCapture.FrameAccess) {
+        lastFrameAt = SystemClock.elapsedRealtime()
         val cfg = config ?: return
         val eng = engine ?: return
         val monitoring = !eng.paused && uiState.value.state == TimerServiceState.MONITORING
@@ -314,6 +321,34 @@ class SubstitutionTimerService : Service() {
         val showSelf = config?.showSelfTimer ?: true
         // 悬浮窗 View 只能在主线程操作
         scope.launch { overlay?.updateTimers(selfTimer, enemyTimer, showSelf) }
+    }
+
+    /** 帧流看门狗：MONITORING+游戏前台却持续无帧 = VirtualDisplay 被夺走
+     *  （如系统录屏抢投影）或采集线程死亡——原地重建捕获，60s 内最多 3 次。 */
+    private fun startCaptureWatchdog() {
+        scope.launch {
+            while (true) {
+                delay(1000)
+                val state = _uiState.value
+                val c = capture ?: continue
+                if (!started || state.state != TimerServiceState.MONITORING ||
+                    !state.gameInForeground) continue
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastFrameAt < 3000) continue
+                if (now - captureRestartWindowStart > 60_000) {
+                    captureRestartWindowStart = now; captureRestarts = 0
+                }
+                captureRestarts++
+                if (captureRestarts > 3) {
+                    AgentLog.e(TAG) { "capture starved: 3 restarts in 60s failed, session lost" }
+                    onSessionLost("画面捕获被系统中断且无法恢复")
+                    break
+                }
+                AgentLog.w(TAG) { "capture starved ${now - lastFrameAt}ms, restarting VD (#$captureRestarts)" }
+                lastFrameAt = now
+                c.restart()
+            }
+        }
     }
 
     /** 每 ~300ms 刷新倒计时显示（刷新频率与检测频率解耦）。 */
