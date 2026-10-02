@@ -61,13 +61,15 @@ data class DotSample(
 
 /** 分类判定参数；HSV 区间用于识别"点亮"豆（多为高饱和亮色），暗/低饱和为空槽。 */
 data class DetectionTuning(
-    val litMinSaturation: Float = 0.35f,
-    val litMinValue: Float = 0.45f,
-    val litMaxVariance: Float = 0.08f,
-    val emptyMaxValue: Float = 0.30f,
+    // 真机实测：亮豆格（我方蓝豆 0.62/0.33，敌方橙豆 0.43/0.48）饱和度为主特征，
+    // 均值亮度被格内暗背景稀释，方差天然高于纯色块——阈值据此放宽。
+    val litMinSaturation: Float = 0.40f,
+    val litMinValue: Float = 0.30f,
+    val litMaxVariance: Float = 0.25f,
+    val emptyMaxValue: Float = 0.28f,
     val emptyMaxSaturation: Float = 0.45f,
-    /** 方差超过该值视为爆闪/遮挡 → UNKNOWN。 */
-    val unknownVariance: Float = 0.20f,
+    /** 方差超过该值视为爆闪/遮挡 → UNKNOWN。亮豆格实测 ~0.19，留余量。 */
+    val unknownVariance: Float = 0.30f,
     /** 连续一致帧数才确认计数变化。 */
     val confirmFrames: Int = 3,
     /** 稳定计数窗口内允许的 UNKNOWN 帧比例；超过则整个估计为 null。 */

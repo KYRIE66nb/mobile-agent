@@ -69,6 +69,9 @@ object SubstitutionTimerCoordinator {
                 if (!cfg.enabled) transition(LaunchEvent.Disabled)
                 return@launch
             }
+            xyz.chouxuewei.mobile_agent.core.AgentLog.i("SubTimer") {
+                "onAppVisible state=${_state.value} enabled=${cfg.enabled} auto=${cfg.autoStartOnAppOpen}"
+            }
             when (_state.value) {
                 TimerServiceState.DISABLED -> {
                     transition(LaunchEvent.AppOpened)
@@ -103,6 +106,9 @@ object SubstitutionTimerCoordinator {
     /** MainActivity 授权结果回调。 */
     fun onConsentResult(resultCode: Int, data: Intent?) {
         consentInFlight = false
+        xyz.chouxuewei.mobile_agent.core.AgentLog.i("SubTimer") {
+            "consent result code=$resultCode data=${data != null}"
+        }
         if (resultCode == Activity.RESULT_OK && data != null) {
             startService(resultCode, data)
         } else {
@@ -113,8 +119,14 @@ object SubstitutionTimerCoordinator {
     fun onLaunchEvent(event: LaunchEvent) = transition(event)
 
     fun transition(event: LaunchEvent): TimerServiceState {
+        val before = machine.current
         val next = machine.transition(event)
         _state.value = next
+        if (next != before || event is LaunchEvent.Failed) {
+            xyz.chouxuewei.mobile_agent.core.AgentLog.i("SubTimer") {
+                "machine $before -[$event]-> $next"
+            }
+        }
         return next
     }
 

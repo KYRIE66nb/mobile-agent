@@ -49,7 +49,13 @@ class SubstitutionOverlay(
     }
 
     fun show() {
-        if (shown || !android.provider.Settings.canDrawOverlays(context)) return
+        if (shown) return
+        if (!android.provider.Settings.canDrawOverlays(context)) {
+            xyz.chouxuewei.mobile_agent.core.AgentLog.w("SubTimer") {
+                "overlay skipped: SYSTEM_ALERT_WINDOW not granted"
+            }
+            return
+        }
         val container = buildView()
         val p = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -68,7 +74,20 @@ class SubstitutionOverlay(
         view = container
         params = p
         shown = true
-        windows.addView(container, p)
+        runCatching { windows.addView(container, p) }
+            .onSuccess {
+                xyz.chouxuewei.mobile_agent.core.AgentLog.i("SubTimer") {
+                    "overlay attached at ${p.x},${p.y}"
+                }
+            }
+            .onFailure { t ->
+                shown = false
+                view = null; params = null
+                enemyText = null; selfText = null; statusText = null
+                xyz.chouxuewei.mobile_agent.core.AgentLog.e("SubTimer", t) {
+                    "overlay attach failed"
+                }
+            }
     }
 
     fun hide() {

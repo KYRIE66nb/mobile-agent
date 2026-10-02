@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import xyz.chouxuewei.mobile_agent.MainActivity
+import xyz.chouxuewei.mobile_agent.core.AgentLog
 import xyz.chouxuewei.mobile_agent.core.substitution.DotClassifier
 import xyz.chouxuewei.mobile_agent.core.substitution.DotSample
 import xyz.chouxuewei.mobile_agent.core.substitution.DotState
@@ -91,6 +92,8 @@ class SubstitutionTimerService : Service() {
 
     private fun handleStart(intent: Intent) {
         if (started) return // 幂等：多次 START 复用同一会话
+        // FGS 契约：无论授权结果如何都必须先 startForeground，否则系统按超时杀进程
+        startForegroundWithNotification()
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
         val data = if (Build.VERSION.SDK_INT >= 33) {
             intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
@@ -98,12 +101,12 @@ class SubstitutionTimerService : Service() {
             @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_RESULT_DATA)
         }
         if (resultCode != Activity.RESULT_OK || data == null) {
-            pushState(state = TimerServiceState.NEEDS_PERMISSION, detail = "录屏授权被拒绝")
+            AgentLog.w(TAG) { "consent invalid: code=$resultCode data=${data != null}" }
+            pushState(detail = "录屏授权被拒绝")
             SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.PermissionDenied)
             stopSelf()
             return
         }
-        startForegroundWithNotification()
         val app = application as PrototypeApplication
         scope.launch {
             config = app.substitutionSettings.current()
@@ -123,23 +126,37 @@ class SubstitutionTimerService : Service() {
                 SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.PermissionGranted)
                 if (cfg.calibrated) {
                     SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Calibrated)
-                    pushState(state = TimerServiceState.WAITING_FOR_GAME, detail = "等待进入目标游戏")
+                    pushState(detail = "等待进入目标游戏")
                 } else {
-                    pushState(
-                        state = TimerServiceState.NEEDS_CALIBRATION,
-                        detail = "请在设置页完成豆槽校准后开始识别",
-                    )
+                    pushState(detail = "请在设置页完成豆槽校准后开始识别")
                 }
                 overlay = SubstitutionOverlay(this@SubstitutionTimerService, app.substitutionSettings)
                 startCapture(proj)
                 startForegroundWatch()
                 startTicker()
                 started = true
+                // 协调器状态机是唯一事实源：服务只镜像，不再各推各的状态
+                scope.launch {
+                    SubstitutionTimerCoordinator.state.collect { s ->
+                        if (s != _uiState.value.state) {
+                            AgentLog.i(TAG) { "state ${_uiState.value.state} -> $s" }
+                        }
+                        _uiState.update { it.copy(state = s) }
+                        updateNotification()
+                    }
+                }
                 // 配置变更热更新：仅检测相关字段变化才重建引擎（悬浮窗位置等不触发）
                 scope.launch {
                     app.substitutionSettings.config.collect { newCfg ->
                         val old = config
                         config = newCfg
+                        if (old != null && !old.calibrated && newCfg.calibrated &&
+                            _uiState.value.gameInForeground
+                        ) {
+                            // 游戏中完成校准：立即重评估前台状态，不必等离开再回来
+                            SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameForeground)
+                            scope.launch { overlay?.show() }
+                        }
                         if (old == null || old.layout != newCfg.layout ||
                             old.tuning != newCfg.tuning || old.cooldownMs != newCfg.cooldownMs
                         ) {
@@ -149,7 +166,7 @@ class SubstitutionTimerService : Service() {
                     }
                 }
             } catch (t: Throwable) {
-                pushState(state = TimerServiceState.ERROR, detail = "采集启动失败：${t.message}")
+                pushState(detail = "采集启动失败：${t.message}")
                 SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Failed(t.message ?: "start failed"))
             }
         }
@@ -176,7 +193,10 @@ class SubstitutionTimerService : Service() {
         }
     }
 
-    /** 采集线程回调：监视中采样判定；缩略预览帧始终按节流产出供校准页使用。 */
+    /** 采集线程回调：监视中按 frameIntervalMs 采样判定；缩略预览帧节流产出供校准页。 */
+    private var lastSampleAt = 0L
+    private var lastObservedLogAt = 0L
+
     private fun onFrame(access: ProjectionCapture.FrameAccess) {
         val cfg = config ?: return
         val eng = engine ?: return
@@ -192,19 +212,33 @@ class SubstitutionTimerService : Service() {
             publishPreview(access.snapshot(PREVIEW_WIDTH))
         }
         if (!monitoring) return
+        // 按配置采样间隔节流：投影帧率(~160fps)远高于检测需求
+        if (now - lastSampleAt < cfg.frameIntervalMs) return
+        lastSampleAt = now
 
         val classifier = classifierOf(cfg)
+        val cellDiag = AgentLog.enabled && now - lastObservedLogAt > 2000
         fun countDots(side: TimerSide): Int? {
             val cells = cfg.layout.dotCells(side, access.width, access.height)
             var lit = 0
             var unknown = 0
+            val marks = StringBuilder()
             for (cell in cells) {
                 val sample = DotSample.of(access.sample(cell[0], cell[1], cell[2], cell[3], SAMPLE_GRID))
-                when (classifier.classify(sample).state) {
+                val result = classifier.classify(sample)
+                if (cellDiag) marks.append(
+                    when (result.state) {
+                        DotState.LIT -> 'L'; DotState.EMPTY -> 'E'; DotState.UNKNOWN -> 'U'
+                    } + "(%.2f/%.2f/%.2f)".format(sample.meanSaturation, sample.meanValue, sample.colorVariance),
+                ).append(' ')
+                when (result.state) {
                     DotState.LIT -> lit++
                     DotState.EMPTY -> Unit
                     DotState.UNKNOWN -> unknown++
                 }
+            }
+            if (cellDiag) {
+                AgentLog.d(TAG) { "cells $side=${marks.trim()} lit=$lit unk=$unknown" }
             }
             // 不可信格过多 → 本帧该侧无有效估计
             if (unknown > cells.size * cfg.tuning.maxUnknownRatio) return null
@@ -221,7 +255,13 @@ class SubstitutionTimerService : Service() {
                 hudValid = selfCount != null && enemyCount != null,
             )
         }
+        // 诊断节流：每 ~2s 记一次观测计数（只记数字，不记画面）
+        if (now - lastObservedLogAt > 2000) {
+            lastObservedLogAt = now
+            AgentLog.d(TAG) { "observe self=$selfCount enemy=$enemyCount" }
+        }
         for (e in events) {
+            AgentLog.i(TAG) { "event $e" }
             if (e is TimerEvent.AmbiguousDrop) {
                 _uiState.update { it.copy(detail = "疑似多豆变化，未自动计时") }
             }
@@ -279,6 +319,7 @@ class SubstitutionTimerService : Service() {
                 if (pkg != null) lastKnown = pkg
                 val inGame = cfg.gamePackage.isNotBlank() && pkg == cfg.gamePackage
                 if (inGame != _uiState.value.gameInForeground) {
+                    AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
                     _uiState.update { it.copy(gameInForeground = inGame) }
                     SubstitutionTimerCoordinator.onLaunchEvent(
                         if (inGame) LaunchEvent.GameForeground else LaunchEvent.GameLeft
@@ -290,7 +331,7 @@ class SubstitutionTimerService : Service() {
                         if (config?.calibrated == true) scope.launch { overlay?.show() }
                         // 未校准不进 MONITORING——不能伪装成"识别中"；预览帧照产供校准用
                         if (_uiState.value.state == TimerServiceState.WAITING_FOR_GAME) {
-                            pushState(state = TimerServiceState.MONITORING, detail = "")
+                            pushState(detail = "")
                         } else if (_uiState.value.state == TimerServiceState.NEEDS_CALIBRATION) {
                             pushState(detail = "已进入游戏——回设置页完成校准后开始识别")
                         }
@@ -298,7 +339,7 @@ class SubstitutionTimerService : Service() {
                         scope.launch { overlay?.hide() }
                         engine?.resetBaseline("game_left")
                         if (_uiState.value.state == TimerServiceState.MONITORING) {
-                            pushState(state = TimerServiceState.WAITING_FOR_GAME, detail = "已离开游戏")
+                            pushState(detail = "已离开游戏")
                         }
                     }
                 }
@@ -326,14 +367,14 @@ class SubstitutionTimerService : Service() {
 
     private fun pauseSession() {
         engine?.pause()
-        pushState(state = TimerServiceState.PAUSED, detail = "已暂停本次（倒计时仍按截止时间计）")
+        pushState(detail = "已暂停本次（倒计时仍按截止时间计）")
         SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Pause)
         updateNotification()
     }
 
     private fun resumeSession() {
         engine?.resume()
-        pushState(state = TimerServiceState.WAITING_FOR_GAME, detail = "")
+        pushState(detail = "")
         SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Resume)
         updateNotification()
     }
@@ -345,7 +386,7 @@ class SubstitutionTimerService : Service() {
         capture?.stop(); capture = null
         overlay?.destroy(); overlay = null
         projection = null
-        pushState(state = TimerServiceState.DISABLED, detail = "")
+        pushState(detail = "")
         if (userInitiated) SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Stop)
         else SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.SessionLost)
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -358,20 +399,16 @@ class SubstitutionTimerService : Service() {
             ticker?.cancel(); foregroundWatch?.cancel()
             capture?.stop(); capture = null
             overlay?.destroy(); overlay = null
-            pushState(state = TimerServiceState.NEEDS_PERMISSION, detail = "$reason，返回 App 重新授权")
+            pushState(detail = "$reason，返回 App 重新授权")
             SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.SessionLost)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
     }
 
-    private fun pushState(state: TimerServiceState? = null, detail: String? = null) {
-        _uiState.update {
-            it.copy(
-                state = state ?: it.state,
-                detail = detail ?: it.detail,
-            )
-        }
+    /** 只推说明文本；状态由 SubstitutionTimerCoordinator 状态机镜像接管。 */
+    private fun pushState(detail: String? = null) {
+        _uiState.update { it.copy(detail = detail ?: it.detail) }
         updateNotification()
     }
 
@@ -469,6 +506,7 @@ class SubstitutionTimerService : Service() {
         const val SAMPLE_GRID = 6
         private const val CHANNEL_ID = "substitution_timer"
         private const val NOTIFICATION_ID = 9401
+        private const val TAG = "SubTimer"
 
         private val _uiState = MutableStateFlow(UiState())
         val uiState: StateFlow<UiState> = _uiState
