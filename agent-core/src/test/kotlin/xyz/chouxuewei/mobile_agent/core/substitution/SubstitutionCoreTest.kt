@@ -8,32 +8,47 @@ import org.junit.Test
 private fun solid(r: Int, g: Int, b: Int): IntArray =
     IntArray(16) { (0xFF shl 24) or (r shl 16) or (g shl 8) or b }
 
+// 爆闪/遮挡夹具：全部颜色都落在点亮盒与熄灭盒之外（棕/绿杂色）
 private fun noisy(): IntArray = IntArray(16) { i ->
-    if (i % 2 == 0) (0xFF shl 24) or 0xFFFFFF else (0xFF shl 24)
+    if (i % 2 == 0) (0xFF shl 24) or 0x963C50 else (0xFF shl 24) or 0x3C963C
 }
 
 class SubstitutionCoreTest {
 
-    // ---- DotSample / 分类器 ----
+    // ---- 逐像素颜色盒分类器 ----
 
     @Test
-    fun `lit dot classified LIT`() {
-        // 高饱和亮金（豆点亮的典型色）
-        val sample = DotSample.of(solid(240, 200, 40))
-        val r = DotClassifier().classify(sample)
+    fun `lit blue bead pixel classified LIT for self`() {
+        // 亮蓝豆心纯色
+        val r = DotClassifier().classify(solid(80, 180, 230), TimerSide.SELF)
         assertEquals(DotState.LIT, r.state)
-        assertTrue(r.confidence > 0.3f)
+        assertTrue(r.litRatio > 0.9f)
+    }
+
+    @Test
+    fun `lit cyan bead pixel classified LIT for enemy`() {
+        // 实测：双方点亮豆同为亮青白
+        val r = DotClassifier().classify(solid(120, 220, 245), TimerSide.ENEMY)
+        assertEquals(DotState.LIT, r.state)
     }
 
     @Test
     fun `empty slot classified EMPTY`() {
-        val r = DotClassifier().classify(DotSample.of(solid(20, 20, 26)))
+        val r = DotClassifier().classify(solid(20, 20, 26), TimerSide.SELF)
         assertEquals(DotState.EMPTY, r.state)
     }
 
     @Test
+    fun `lit bead mixed with dark surround still LIT by pixel ratio`() {
+        // 12/49 亮豆像素 + 其余暗背景：占比表决仍判 LIT——均值池化会稀释失败
+        val pixels = IntArray(49) { i -> if (i < 12) 0xFF50B4E6.toInt() else 0xFF14141A.toInt() }
+        val r = DotClassifier().classify(pixels, TimerSide.SELF)
+        assertEquals(DotState.LIT, r.state)
+    }
+
+    @Test
     fun `flashy or occluded sample classified UNKNOWN`() {
-        val r = DotClassifier().classify(DotSample.of(noisy()))
+        val r = DotClassifier().classify(noisy(), TimerSide.SELF)
         assertEquals(DotState.UNKNOWN, r.state)
     }
 

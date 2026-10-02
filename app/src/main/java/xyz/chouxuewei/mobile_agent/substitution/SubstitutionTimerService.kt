@@ -31,7 +31,6 @@ import kotlinx.coroutines.launch
 import xyz.chouxuewei.mobile_agent.MainActivity
 import xyz.chouxuewei.mobile_agent.core.AgentLog
 import xyz.chouxuewei.mobile_agent.core.substitution.DotClassifier
-import xyz.chouxuewei.mobile_agent.core.substitution.DotSample
 import xyz.chouxuewei.mobile_agent.core.substitution.DotState
 import xyz.chouxuewei.mobile_agent.core.substitution.LaunchEvent
 import xyz.chouxuewei.mobile_agent.core.substitution.SideTimer
@@ -223,13 +222,20 @@ class SubstitutionTimerService : Service() {
             var lit = 0
             var unknown = 0
             val marks = StringBuilder()
+            val inset = (1f - cfg.tuning.cellInnerFraction) / 2f
             for (cell in cells) {
-                val sample = DotSample.of(access.sample(cell[0], cell[1], cell[2], cell[3], SAMPLE_GRID))
-                val result = classifier.classify(sample)
+                // 只采样格子中心区：避开豆间分隔线与 HUD 边缘混入的背景
+                val w = cell[2] - cell[0]; val h = cell[3] - cell[1]
+                val l = (cell[0] + w * inset).toInt()
+                val t = (cell[1] + h * inset).toInt()
+                val r = (cell[2] - w * inset).toInt()
+                val b = (cell[3] - h * inset).toInt()
+                val pixels = access.sample(l, t, r, b, cfg.tuning.sampleGrid)
+                val result = classifier.classify(pixels, side)
                 if (cellDiag) marks.append(
                     when (result.state) {
                         DotState.LIT -> 'L'; DotState.EMPTY -> 'E'; DotState.UNKNOWN -> 'U'
-                    } + "(%.2f/%.2f/%.2f)".format(sample.meanSaturation, sample.meanValue, sample.colorVariance),
+                    } + "(%.2f/%.2f)".format(result.litRatio, result.dimRatio),
                 ).append(' ')
                 when (result.state) {
                     DotState.LIT -> lit++
@@ -509,7 +515,6 @@ class SubstitutionTimerService : Service() {
         const val ACTION_OPEN_SETTINGS = "xyz.chouxuewei.mobile_agent.substitution.OPEN_SETTINGS"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
-        const val SAMPLE_GRID = 6
         private const val CHANNEL_ID = "substitution_timer"
         private const val NOTIFICATION_ID = 9401
         private const val TAG = "SubTimer"

@@ -59,17 +59,35 @@ data class DotSample(
     }
 }
 
-/** 分类判定参数；HSV 区间用于识别"点亮"豆（多为高饱和亮色），暗/低饱和为空槽。 */
+/** RGB 颜色盒：通道落进区间即命中。参考成熟开源实现的思路——逐像素盒判定而非均值统计。 */
+data class RgbBox(
+    val minR: Int, val minG: Int, val minB: Int,
+    val maxR: Int, val maxG: Int, val maxB: Int,
+) {
+    fun contains(argb: Int): Boolean {
+        val r = (argb ushr 16) and 0xFF
+        val g = (argb ushr 8) and 0xFF
+        val b = argb and 0xFF
+        return r in minR..maxR && g in minG..maxG && b in minB..maxB
+    }
+}
+
+/** 分类判定参数。点亮豆逐像素颜色盒（我方亮蓝/敌方赤金/熄灭暗青）+ 格内占比表决。 */
 data class DetectionTuning(
-    // 真机实测：亮豆格（我方蓝豆 0.62/0.33，敌方橙豆 0.43/0.48）饱和度为主特征，
-    // 均值亮度被格内暗背景稀释，方差天然高于纯色块——阈值据此放宽。
-    val litMinSaturation: Float = 0.40f,
-    val litMinValue: Float = 0.30f,
-    val litMaxVariance: Float = 0.25f,
-    val emptyMaxValue: Float = 0.28f,
-    val emptyMaxSaturation: Float = 0.45f,
-    /** 方差超过该值视为爆闪/遮挡 → UNKNOWN。亮豆格实测 ~0.19，留余量。 */
-    val unknownVariance: Float = 0.30f,
+    /** 我方"点亮"豆颜色盒（亮青白菱形；R 上限排除纯白闪光）。 */
+    val litSelfBox: RgbBox = RgbBox(0, 120, 170, 225, 255, 255),
+    /** 敌方"点亮"豆颜色盒——实测与我方同为亮青蓝，默认一致；个别皮肤配色不同时可独立调。 */
+    val litEnemyBox: RgbBox = RgbBox(0, 120, 170, 225, 255, 255),
+    /** 熄灭豆槽颜色盒（深藏青，放宽以覆盖暗色背景混入）。 */
+    val dimBox: RgbBox = RgbBox(0, 0, 0, 90, 100, 150),
+    /** 格内命中点亮盒的像素占比 ≥ 该值 → LIT。亮豆中心纯色约占格 20-40%。 */
+    val litPixelMinRatio: Float = 0.12f,
+    /** 格内命中熄灭盒的像素占比 ≥ 该值 → EMPTY。 */
+    val dimPixelMinRatio: Float = 0.40f,
+    /** 每格采样网格（grid×grid 像素）。 */
+    val sampleGrid: Int = 7,
+    /** 格子内缩比例：只采样中心区域，避开豆间分隔与 HUD 边缘。 */
+    val cellInnerFraction: Float = 0.6f,
     /** 连续一致帧数才确认计数变化。 */
     val confirmFrames: Int = 3,
     /** 稳定计数窗口内允许的 UNKNOWN 帧比例；超过则整个估计为 null。 */
@@ -89,32 +107,30 @@ data class DetectionTuning(
     val pendingVerifyMs: Long = 2500,
 )
 
+/**
+ * 逐像素颜色盒分类器：格内每个采样像素独立判定（点亮盒/熄灭盒/其他），
+ * 再按占比表决格子状态——不做均值池化，亮豆不会被背景稀释信号。
+ */
 class DotClassifier(private val tuning: DetectionTuning = DetectionTuning()) {
-    data class Result(val state: DotState, val confidence: Float)
+    data class Result(val state: DotState, val confidence: Float, val litRatio: Float, val dimRatio: Float)
 
-    fun classify(sample: DotSample): Result {
-        if (sample.colorVariance > tuning.unknownVariance) {
-            return Result(DotState.UNKNOWN, 0f)
+    fun classify(argb: IntArray, side: TimerSide): Result {
+        if (argb.isEmpty()) return Result(DotState.UNKNOWN, 0f, 0f, 0f)
+        val litBox = if (side == TimerSide.SELF) tuning.litSelfBox else tuning.litEnemyBox
+        var lit = 0
+        var dim = 0
+        for (px in argb) {
+            if (litBox.contains(px)) lit++ else if (tuning.dimBox.contains(px)) dim++
         }
-        val litScore = saturationMargin(sample.meanSaturation, tuning.litMinSaturation) +
-            valueMargin(sample.meanValue, tuning.litMinValue)
-        if (sample.meanSaturation >= tuning.litMinSaturation &&
-            sample.meanValue >= tuning.litMinValue &&
-            sample.colorVariance <= tuning.litMaxVariance
-        ) {
-            return Result(DotState.LIT, litScore.coerceIn(0.05f, 1f))
+        val n = argb.size.toFloat()
+        val litRatio = lit / n
+        val dimRatio = dim / n
+        return when {
+            litRatio >= tuning.litPixelMinRatio -> Result(DotState.LIT, litRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
+            dimRatio >= tuning.dimPixelMinRatio -> Result(DotState.EMPTY, dimRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
+            else -> Result(DotState.UNKNOWN, 0f, litRatio, dimRatio)
         }
-        if (sample.meanValue <= tuning.emptyMaxValue ||
-            (sample.meanSaturation <= tuning.emptyMaxSaturation && sample.meanValue <= tuning.litMinValue * 0.8f)
-        ) {
-            val conf = ((tuning.litMinValue - sample.meanValue) / tuning.litMinValue).coerceIn(0.05f, 1f)
-            return Result(DotState.EMPTY, conf)
-        }
-        return Result(DotState.UNKNOWN, 0f)
     }
-
-    private fun saturationMargin(v: Float, min: Float) = ((v - min) / (1f - min)).coerceIn(0f, 1f)
-    private fun valueMargin(v: Float, min: Float) = ((v - min) / (1f - min)).coerceIn(0f, 1f)
 }
 
 /** 归一化矩形（相对"游戏内容区域"而非物理屏）。 */
@@ -174,8 +190,8 @@ data class TimerConfig(
     val autoStartOnAppOpen: Boolean = true,
     val gamePackage: String = "",
     val showSelfTimer: Boolean = true,
-    /** 决斗场替身术经验冷却（秒）。首版为可配置经验值，非实测校准值。 */
-    val cooldownMs: Long = 15_000,
+    /** 决斗场替身术冷却。开源实现常用经验值 13.5s；如有偏差可在设置页调整。 */
+    val cooldownMs: Long = 13_500,
     val frameIntervalMs: Long = 80,
     val layout: TimerLayout = TimerLayout(),
     val tuning: DetectionTuning = DetectionTuning(),
