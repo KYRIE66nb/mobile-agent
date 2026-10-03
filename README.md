@@ -188,6 +188,21 @@ https://github.com/user-attachments/assets/85936c9f-b971-43ba-98e9-bf004bf29ebd
 
 清理类操作属于 `EXTERNAL_WRITE`/`DESTRUCTIVE`，会过安全闸裁决并经审批弹窗确认。
 
+真机实测——对它说一句"清理手机"的完整过程：
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/assets/screenshots/cleanup-approval.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/cleanup-askuser.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/cleanup-result.png"></td>
+  </tr>
+  <tr>
+    <td>清缓存触发安全闸审批——操作范围、风险说明、将执行的参数全部摆明再动手。</td>
+    <td>中途主动反问：要不要结束后台进程释放内存？选项结构化，点一下即答。</td>
+    <td>收尾汇报：各应用缓存占用排名、已清结果、下一步怎么批量清（甚至主动提醒别误点"清除数据"）。</td>
+  </tr>
+</table>
+
 ### 广告守卫（Ad Guard）
 
 弹窗和摇一摇广告只闪现几秒，模型来不及反应——所以拦截交给无障碍事件流上的**确定性规则引擎**（毫秒级，不走模型），模型退居二线负责按需配规则：
@@ -198,6 +213,19 @@ https://github.com/user-attachments/assets/85936c9f-b971-43ba-98e9-bf004bf29ebd
 - **Agent 可编程**：对它说"XX 老弹红包广告""XX 一摇就跳淘宝"，它会用 `adguard_add_rule` 现场写一条规则，下次直接秒拦。
 
 每规则独立冷却 + 全局熔断（防误配规则循环误点），拦截成功弹 Toast 提示，`adguard_status` 可回放最近拦截记录。需要无障碍服务在线；设置页一键开关，默认关闭。
+
+真机实测——对它说"帮我拦抖音的开屏广告"：
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/adguard-approval.png"></td>
+    <td width="50%"><img src="docs/assets/screenshots/adguard-result.png"></td>
+  </tr>
+  <tr>
+    <td>悬浮窗里就能看到它构造规则的全过程：跳过文案候选、上下文条件逐项取舍，新增规则过审批才落库——中间它自己发现匹配词有个错字，主动删了重建。</td>
+    <td>完工汇报：守卫开关顺手打开、无障碍已连接、3 条规则（2 内置 + 新加的"抖音开屏跳过"）；包名无法本机核实也如实披露，并主动提出补一条弹窗类规则。</td>
+  </tr>
+</table>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/ad-guard.dark.png">

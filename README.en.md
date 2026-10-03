@@ -188,6 +188,21 @@ Say "clean up my phone" or "free some memory" — three paths chosen automatical
 
 Cleanup calls are `EXTERNAL_WRITE`/`DESTRUCTIVE` — they pass the safety gate and an approval dialog.
 
+Captured on a real device — the whole run after one "clean up my phone":
+
+<table>
+  <tr>
+    <td width="33%"><img src="docs/assets/screenshots/cleanup-approval.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/cleanup-askuser.png"></td>
+    <td width="33%"><img src="docs/assets/screenshots/cleanup-result.png"></td>
+  </tr>
+  <tr>
+    <td>Cache clearing goes through the safety gate: scope, risk notes, and the exact parameters are shown before anything runs.</td>
+    <td>Mid-task it asks back — kill background apps for RAM or stick to cache? Structured options, one tap to answer.</td>
+    <td>Wrap-up: per-app cache ranking, what was cleaned, and how to batch the rest — it even warns you not to hit "Clear data".</td>
+  </tr>
+</table>
+
 ### Ad guard
 
 Popups and shake ads flash for only a few seconds — far too fast for a model loop. Blocking runs on a **deterministic rule engine** inside the accessibility event stream (millisecond latency, no model in the loop); the model's job is configuring rules on demand:
@@ -198,6 +213,19 @@ Popups and shake ads flash for only a few seconds — far too fast for a model l
 - **Agent-programmable** — tell it "this app keeps popping lottery ads" or "one shake throws me into a store", and it writes a rule on the spot via `adguard_add_rule` so the next ad is killed instantly.
 
 Per-rule cooldowns plus a global circuit breaker stop misconfigured loops; every block surfaces a toast, and `adguard_status` replays recent blocks. Requires the accessibility service; toggled in settings, off by default.
+
+Real run — "block Douyin's splash ads", watched live in the floating window:
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/adguard-approval.png"></td>
+    <td width="50%"><img src="docs/assets/screenshots/adguard-result.png"></td>
+  </tr>
+  <tr>
+    <td>Rule construction in the open: candidate skip texts, context conditions weighed one by one, and the new rule lands only after approval — it even caught its own typo mid-way, deleted the rule and rebuilt it.</td>
+    <td>Done: guard switched on, accessibility connected, 3 rules (2 built-in + the new "Douyin splash skip"); it discloses that the package name couldn't be verified on-device and offers a popup rule as a follow-up.</td>
+  </tr>
+</table>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/ad-guard.dark.png">
