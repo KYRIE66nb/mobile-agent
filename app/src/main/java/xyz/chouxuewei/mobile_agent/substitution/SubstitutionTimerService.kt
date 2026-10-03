@@ -106,12 +106,16 @@ class SubstitutionTimerService : Service() {
             ACTION_SWAP -> {
                 val cfg = config
                 if (cfg != null) {
-                    val app = application as PrototypeApplication
-                    scope.launch {
-                        app.substitutionSettings.setSwapSides(!cfg.swapSides)
+                    // 显式选边：EXTRA_SELF_LEFT=true → 我方在左（swapSides=false）
+                    val selfOnLeft = intent?.getBooleanExtra(EXTRA_SELF_LEFT, !cfg.swapSides)
+                        ?: !cfg.swapSides
+                    val targetSwap = !selfOnLeft
+                    if (targetSwap != cfg.swapSides) {
+                        val app = application as PrototypeApplication
+                        scope.launch { app.substitutionSettings.setSwapSides(targetSwap) }
                     }
-                    AgentLog.i(TAG) { "side swap requested swapSides=${!cfg.swapSides}" }
-                    pushState(detail = if (!cfg.swapSides) "已切换：我方在右" else "已切换：我方在左")
+                    AgentLog.i(TAG) { "side select selfOnLeft=$selfOnLeft swapSides=$targetSwap" }
+                    pushState(detail = if (selfOnLeft) "我方在左 · 敌方在右" else "我方在右 · 敌方在左")
                 }
             }
             ACTION_STOP -> stopSession(userInitiated = true)
@@ -682,6 +686,7 @@ class SubstitutionTimerService : Service() {
         const val ACTION_RESUME = "xyz.chouxuewei.mobile_agent.substitution.RESUME"
         const val ACTION_RESET = "xyz.chouxuewei.mobile_agent.substitution.RESET"
         const val ACTION_SWAP = "xyz.chouxuewei.mobile_agent.substitution.SWAP"
+        const val EXTRA_SELF_LEFT = "xyz.chouxuewei.mobile_agent.substitution.SELF_LEFT"
         const val ACTION_STOP = "xyz.chouxuewei.mobile_agent.substitution.STOP"
         const val ACTION_OPEN_SETTINGS = "xyz.chouxuewei.mobile_agent.substitution.OPEN_SETTINGS"
         const val EXTRA_RESULT_CODE = "result_code"

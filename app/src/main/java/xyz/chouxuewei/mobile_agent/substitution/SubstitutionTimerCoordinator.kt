@@ -190,13 +190,17 @@ object SubstitutionTimerCoordinator {
     fun resume() = serviceAction(SubstitutionTimerService.ACTION_RESUME)
     fun stop() = serviceAction(SubstitutionTimerService.ACTION_STOP)
     fun resetTimers() = serviceAction(SubstitutionTimerService.ACTION_RESET)
-    fun swapSides() = serviceAction(SubstitutionTimerService.ACTION_SWAP)
 
-    private fun serviceAction(action: String) {
+    /** 明确选边：selfOnLeft=true 表示我方在屏幕左侧。 */
+    fun setPlayerSide(selfOnLeft: Boolean) = serviceAction(SubstitutionTimerService.ACTION_SWAP) {
+        putExtra(SubstitutionTimerService.EXTRA_SELF_LEFT, selfOnLeft)
+    }
+
+    private fun serviceAction(action: String, extras: Intent.() -> Unit = {}) {
         val ctx = app ?: return
         // 服务已死时后台 startService 会抛 IllegalStateException——手动操作绝不允许崩进程
         runCatching {
-            ctx.startService(Intent(ctx, SubstitutionTimerService::class.java).setAction(action))
+            ctx.startService(Intent(ctx, SubstitutionTimerService::class.java).setAction(action).apply(extras))
         }.onFailure {
             xyz.chouxuewei.mobile_agent.core.AgentLog.w("SubTimer") {
                 "serviceAction $action failed: ${it.message}"

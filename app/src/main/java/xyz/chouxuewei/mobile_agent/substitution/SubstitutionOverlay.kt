@@ -38,6 +38,9 @@ class SubstitutionOverlay(
     private var enemyText: TextView? = null
     private var selfText: TextView? = null
     private var statusText: TextView? = null
+    private var sideLeftBtn: TextView? = null
+    private var sideRightBtn: TextView? = null
+    private var swapSides = false
     private var shown = false
     private var savedX: Int? = null
     private var savedY: Int? = null
@@ -45,6 +48,8 @@ class SubstitutionOverlay(
     init {
         scope.launch { repo.config.collect {
             savedX = it.overlayX; savedY = it.overlayY
+            swapSides = it.swapSides
+            updateSideButtons()
         } }
     }
 
@@ -84,6 +89,7 @@ class SubstitutionOverlay(
                 shown = false
                 view = null; params = null
                 enemyText = null; selfText = null; statusText = null
+                sideLeftBtn = null; sideRightBtn = null
                 xyz.chouxuewei.mobile_agent.core.AgentLog.e("SubTimer", t) {
                     "overlay attach failed"
                 }
@@ -96,6 +102,7 @@ class SubstitutionOverlay(
         view?.let { runCatching { windows.removeView(it) } }
         view = null; params = null
         enemyText = null; selfText = null; statusText = null
+        sideLeftBtn = null; sideRightBtn = null
     }
 
     fun updateTimers(self: SideTimer, enemy: SideTimer, showSelf: Boolean) {
@@ -145,6 +152,22 @@ class SubstitutionOverlay(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
             text = "监视中"
         }
+        // 选边：我方在屏幕哪边点哪边——当前边高亮，换边即重选
+        val sideRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(2), 0, 0)
+            addView(TextView(context).apply {
+                text = "我方位置"
+                setTextColor(0xFFB0BEC5.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                setPadding(0, 0, dp(6), 0)
+            })
+            sideLeftBtn = sideSegment("左") { SubstitutionTimerCoordinator.setPlayerSide(true) }
+            sideRightBtn = sideSegment("右") { SubstitutionTimerCoordinator.setPlayerSide(false) }
+            addView(sideLeftBtn)
+            addView(sideRightBtn)
+        }
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             addView(smallButton("暂停") {
@@ -153,13 +176,12 @@ class SubstitutionOverlay(
             addView(smallButton("重置") {
                 SubstitutionTimerCoordinator.resetTimers()
             })
-            addView(smallButton("换边") {
-                SubstitutionTimerCoordinator.swapSides()
-            })
         }
+        updateSideButtons()
         root.addView(enemyText)
         root.addView(selfText)
         root.addView(statusText)
+        root.addView(sideRow)
         root.addView(controls)
 
         var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
@@ -202,6 +224,27 @@ class SubstitutionOverlay(
             setPadding(dp(8), dp(2), dp(8), dp(2))
             setOnClickListener { onClick() }
         }
+
+    private fun sideSegment(label: String, onClick: () -> Unit): TextView =
+        TextView(context).apply {
+            text = label
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setPadding(dp(12), dp(3), dp(12), dp(3))
+            setOnClickListener { onClick() }
+        }
+
+    private fun updateSideButtons() {
+        fun TextView?.style(active: Boolean) = this?.apply {
+            setTextColor(if (active) 0xFFFFFFFF.toInt() else 0xFF8A97A5.toInt())
+            background = GradientDrawable().apply {
+                setColor(if (active) 0xFF1976D2.toInt() else 0x33FFFFFF)
+                cornerRadius = dp(6).toFloat()
+            }
+        }
+        // swapSides=true 表示我方读右槽——高亮跟随配置
+        sideLeftBtn.style(!swapSides)
+        sideRightBtn.style(swapSides)
+    }
 
     private fun dp(v: Int) = (v * context.resources.displayMetrics.density).toInt()
 
