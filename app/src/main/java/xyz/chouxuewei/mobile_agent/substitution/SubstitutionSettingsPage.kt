@@ -98,6 +98,9 @@ fun SubstitutionSettingsPage(app: PrototypeApplication) {
         SettingSwitch("显示我方计时", config.showSelfTimer) {
             scope.launch { app.substitutionSettings.setShowSelf(it) }
         }
+        SettingSwitch("我方在右侧（实战分边互换）", config.swapSides) {
+            scope.launch { app.substitutionSettings.setSwapSides(it) }
+        }
 
         HorizontalDivider()
 

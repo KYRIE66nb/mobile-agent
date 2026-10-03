@@ -38,6 +38,7 @@ class SubstitutionTimerRepository(context: Context) {
         val LAYOUT = stringPreferencesKey("st_layout")
         val OVERLAY_X = intPreferencesKey("st_overlay_x")
         val OVERLAY_Y = intPreferencesKey("st_overlay_y")
+        val SWAP_SIDES = booleanPreferencesKey("st_swap_sides")
 
         // 检测调参（HSV 阈值三键为旧版残留，新实现用颜色盒，仅保留仍生效的键）
         val LIT_PIXEL_RATIO = floatPreferencesKey("st_lit_pixel_ratio")
@@ -57,6 +58,7 @@ class SubstitutionTimerRepository(context: Context) {
             frameIntervalMs = (p[Keys.FRAME_INTERVAL_MS] ?: 140).coerceIn(80, 500),
             calibrated = p[Keys.CALIBRATED] ?: false,
             layout = decodeLayout(p[Keys.LAYOUT]),
+            swapSides = p[Keys.SWAP_SIDES] ?: false,
             overlayX = p[Keys.OVERLAY_X],
             overlayY = p[Keys.OVERLAY_Y],
             tuning = DetectionTuning(
@@ -76,6 +78,7 @@ class SubstitutionTimerRepository(context: Context) {
     suspend fun setAutoStart(value: Boolean) = edit { it[Keys.AUTO_START] = value }
     suspend fun setGamePackage(value: String) = edit { it[Keys.GAME_PACKAGE] = value.trim() }
     suspend fun setShowSelf(value: Boolean) = edit { it[Keys.SHOW_SELF] = value }
+    suspend fun setSwapSides(value: Boolean) = edit { it[Keys.SWAP_SIDES] = value }
 
     suspend fun setCooldownMs(value: Long) =
         edit { it[Keys.COOLDOWN_MS] = value.coerceIn(1_000, 120_000) }

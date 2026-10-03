@@ -204,6 +204,8 @@ data class TimerConfig(
     val tuning: DetectionTuning = DetectionTuning(),
     /** 校准完成后才允许进入识别；默认布局只是校准起点。 */
     val calibrated: Boolean = false,
+    /** 实战我方可能分到右侧：true 时我方读右槽位（右满豆方向）、敌方读左槽。 */
+    val swapSides: Boolean = false,
     val overlayX: Int? = null,
     val overlayY: Int? = null,
 )

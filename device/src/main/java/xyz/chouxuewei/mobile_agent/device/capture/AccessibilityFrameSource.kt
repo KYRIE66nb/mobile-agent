@@ -52,14 +52,17 @@ class AccessibilityFrameSource(
                     failures = 0
                     delay(50)
                 } catch (e: AccessibilityScreenshotException) {
+                    // 截屏失败（窗口不可见/限速/后台）是常态，重试即可——
+                    // 帧流饥饿的升级裁决归服务侧看门狗，这里绝不自裁会话
                     failures++
                     delay(if (e.isRateLimited) 320 else 600)
                 } catch (t: Throwable) {
                     failures++
-                    android.util.Log.e(TAG, "screenshot failed", t)
+                    if (failures % 30 == 1) {
+                        android.util.Log.e(TAG, "screenshot failed x$failures", t)
+                    }
                     delay(600)
                 }
-                if (failures > 90) { onClosed("a11y_frames_unrecoverable"); break }
             }
         }
     }

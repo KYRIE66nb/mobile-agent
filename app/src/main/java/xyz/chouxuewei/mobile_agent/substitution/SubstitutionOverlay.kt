@@ -153,6 +153,9 @@ class SubstitutionOverlay(
             addView(smallButton("重置") {
                 SubstitutionTimerCoordinator.resetTimers()
             })
+            addView(smallButton("换边") {
+                SubstitutionTimerCoordinator.swapSides()
+            })
         }
         root.addView(enemyText)
         root.addView(selfText)

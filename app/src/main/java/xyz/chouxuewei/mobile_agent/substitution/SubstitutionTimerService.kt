@@ -103,6 +103,17 @@ class SubstitutionTimerService : Service() {
                 pushState(detail = "已重置计时，重新建立基线")
                 publishTimers()
             }
+            ACTION_SWAP -> {
+                val cfg = config
+                if (cfg != null) {
+                    val app = application as PrototypeApplication
+                    scope.launch {
+                        app.substitutionSettings.setSwapSides(!cfg.swapSides)
+                    }
+                    AgentLog.i(TAG) { "side swap requested swapSides=${!cfg.swapSides}" }
+                    pushState(detail = if (!cfg.swapSides) "已切换：我方在右" else "已切换：我方在左")
+                }
+            }
             ACTION_STOP -> stopSession(userInitiated = true)
             else -> stopSelf()
         }
@@ -180,6 +191,13 @@ class SubstitutionTimerService : Service() {
                             SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameForeground)
                             scope.launch { overlay?.show() }
                         }
+                        if (old != null && old.swapSides != newCfg.swapSides) {
+                            // 换边：身份归属翻转，旧计时/基线全部作废重建
+                            engine?.cancelTimer(TimerSide.SELF)
+                            engine?.cancelTimer(TimerSide.ENEMY)
+                            engine?.resetBaseline("side_swap")
+                            publishTimers()
+                        }
                         if (old == null || old.layout != newCfg.layout ||
                             old.tuning != newCfg.tuning || old.cooldownMs != newCfg.cooldownMs
                         ) {
@@ -222,8 +240,7 @@ class SubstitutionTimerService : Service() {
         if (suppressCaptureClose) return
         scope.launch {
             if (started && Build.VERSION.SDK_INT >= 34 &&
-                AgentAccessibilityService.connected != null &&
-                _uiState.value.gameInForeground) {
+                AgentAccessibilityService.connected != null) {
                 AgentLog.w(TAG) { "projection lost ($reason), switching to a11y capture" }
                 switchToA11yCapture()
             } else {
@@ -259,7 +276,13 @@ class SubstitutionTimerService : Service() {
         val classifier = classifierOf(cfg)
         val cellDiag = AgentLog.enabled && now - lastObservedLogAt > 2000
         fun countDots(side: TimerSide): Int? {
-            val cells = cfg.layout.dotCells(side, access.width, access.height)
+            // 槽位与身份解耦：实战我方可能分到右侧——swapSides 时我方读右槽
+            // 豆只能沿固定屏幕方向点亮：左槽从左填满、右槽从右填满
+            val onLeft = (side == TimerSide.SELF) != cfg.swapSides
+            val cells = cfg.layout.dotCells(
+                if (onLeft) TimerSide.SELF else TimerSide.ENEMY,
+                access.width, access.height,
+            )
             val states = ArrayList<DotState>(cells.size)
             val marks = StringBuilder()
             val inset = (1f - cfg.tuning.cellInnerFraction) / 2f
@@ -282,10 +305,10 @@ class SubstitutionTimerService : Service() {
             if (cellDiag) {
                 AgentLog.d(TAG) { "cells $side=${marks.trim()}" }
             }
-            // 规范豆型校验（开源实现的关键）：豆只能连续点亮——我方从左填满、
-            // 敌方从右填满（等价于反转后做同样的前缀检查）。含 UNKNOWN 或
+            // 规范豆型校验（开源实现的关键）：豆只能连续点亮——左槽从左填满、
+            // 右槽从右填满（等价于反转后做同样的前缀检查）。含 UNKNOWN 或
             // 出现"暗-亮-暗"洞形的帧整帧丢弃，不产任何状态变化。
-            val ordered = if (side == TimerSide.SELF) states else states.asReversed()
+            val ordered = if (onLeft) states else states.asReversed()
             val firstDark = ordered.indexOfFirst { it != DotState.LIT }
             val canonical = ordered.none { it == DotState.UNKNOWN } &&
                 (firstDark < 0 || ordered.drop(firstDark).all { it == DotState.EMPTY })
@@ -296,7 +319,15 @@ class SubstitutionTimerService : Service() {
 
         val selfCount = countDots(TimerSide.SELF)
         val enemyCount = countDots(TimerSide.ENEMY)
-        val events = eng.onFrame(selfCount, enemyCount, now)
+        // 双零跳帧：两侧"全灭"同时出现 = 回合间/转场豆槽整排消失（暗背景命中
+        // 暗盒读出的伪 0），不是真实零豆状态——整帧忽略，计数跨过转场保持。
+        // 单侧 0 照常喂（最后一颗豆的替身仍能触发）。
+        val bothDark = selfCount == 0 && enemyCount == 0
+        val events = eng.onFrame(
+            if (bothDark) null else selfCount,
+            if (bothDark) null else enemyCount,
+            now,
+        )
         _uiState.update {
             it.copy(
                 selfDots = selfCount ?: -1,
@@ -362,7 +393,12 @@ class SubstitutionTimerService : Service() {
                 if (now - lastFrameAt < 3000) continue
                 val a11y = a11ySource
                 if (a11y != null) {
-                    // 无障碍通道已激活却饿：多半是服务断连——直接重建一次
+                    // 无障碍通道已激活却饿：服务断连→丢会话，否则重建帧源
+                    if (AgentAccessibilityService.connected == null) {
+                        AgentLog.e(TAG) { "a11y capture starved and service disconnected" }
+                        onSessionLost("无障碍服务被系统关闭")
+                        break
+                    }
                     AgentLog.w(TAG) { "a11y capture starved ${now - lastFrameAt}ms, restarting source" }
                     lastFrameAt = now
                     a11y.stop()
@@ -645,6 +681,7 @@ class SubstitutionTimerService : Service() {
         const val ACTION_PAUSE = "xyz.chouxuewei.mobile_agent.substitution.PAUSE"
         const val ACTION_RESUME = "xyz.chouxuewei.mobile_agent.substitution.RESUME"
         const val ACTION_RESET = "xyz.chouxuewei.mobile_agent.substitution.RESET"
+        const val ACTION_SWAP = "xyz.chouxuewei.mobile_agent.substitution.SWAP"
         const val ACTION_STOP = "xyz.chouxuewei.mobile_agent.substitution.STOP"
         const val ACTION_OPEN_SETTINGS = "xyz.chouxuewei.mobile_agent.substitution.OPEN_SETTINGS"
         const val EXTRA_RESULT_CODE = "result_code"

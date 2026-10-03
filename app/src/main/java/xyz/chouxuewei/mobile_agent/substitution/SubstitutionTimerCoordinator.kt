@@ -190,6 +190,7 @@ object SubstitutionTimerCoordinator {
     fun resume() = serviceAction(SubstitutionTimerService.ACTION_RESUME)
     fun stop() = serviceAction(SubstitutionTimerService.ACTION_STOP)
     fun resetTimers() = serviceAction(SubstitutionTimerService.ACTION_RESET)
+    fun swapSides() = serviceAction(SubstitutionTimerService.ACTION_SWAP)
 
     private fun serviceAction(action: String) {
         val ctx = app ?: return
