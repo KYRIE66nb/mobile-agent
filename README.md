@@ -340,12 +340,12 @@ cd mobile-agent
 
 应用可能申请麦克风、通知、悬浮窗、开机启动、应用列表以及无障碍权限。Root、无障碍、截图和外部模型调用都是高权限能力，**只有在你主动开启或确认后才使用**。
 
-模型请求、语音转写和网页访问会把相关内容发送给你配置的第三方服务。安装前请阅读 [隐私说明](PRIVACY.md)。
+模型请求、语音转写和网页访问会把相关内容发送给你配置的第三方服务。安装前请阅读 [隐私说明](docs/PRIVACY.md)。
 
 ## 文档
 
 - [产品定义](docs/PRODUCT.md) · [设计规范](docs/DESIGN.md) · [技术架构](docs/ARCHITECTURE.md) · [实施计划](docs/PLAN.md)
-- [第三方声明](THIRD_PARTY_NOTICES.md) · [安全策略](SECURITY.md)
+- [更新记录](CHANGELOG.md) · [第三方声明](docs/THIRD_PARTY_NOTICES.md) · [安全策略](SECURITY.md)
 
 ## License
 

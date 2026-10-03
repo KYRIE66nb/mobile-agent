@@ -34,4 +34,4 @@ Mobile Agent 是一个 Android AI 聊天软件。用户通过持续对话与 AI 
 
 M0 + M1a 已完成定向验收，M1b 已由用户完成产品验收。M2 已接入客户端联网搜索、公开网页正文提取、可追溯来源卡片、图片输入、图片/文本系统分享和附件清理；PDF 暂缓，后续顺序见 [实施计划](PLAN.md)。
 
-根目录 [第三方声明](../THIRD_PARTY_NOTICES.md) 与 licenses/ 维护已使用组件的许可资料。
+[第三方声明](THIRD_PARTY_NOTICES.md) 与 licenses/ 维护已使用组件的许可资料。

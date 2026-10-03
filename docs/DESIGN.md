@@ -238,7 +238,7 @@ TalkBack 可读出发送、停止、附件、工具名称与执行状态。状�
 - [官方源码](https://github.com/lucide-icons/lucide)
 - [官方许可证](https://lucide.dev/license)
 
-Lucide 提供 SVG 图标，许可为 ISC；其中列明的 Feather 派生图标还包含 MIT 声明。实际导入时保留上游完整许可证及版权信息，锁定来源版本/提交，并在 THIRD_PARTY_NOTICES.md 记录用到的资源与转换方式。
+Lucide 提供 SVG 图标，许可为 ISC；其中列明的 Feather 派生图标还包含 MIT 声明。实际导入时保留上游完整许可证及版权信息，锁定来源版本/提交，并在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 记录用到的资源与转换方式。
 
 ### 图标语义映射
 

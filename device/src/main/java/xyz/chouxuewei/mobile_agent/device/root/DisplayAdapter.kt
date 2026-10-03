@@ -2,7 +2,7 @@
  * Virtual display construction and flags adapted from scrcpy v4.1.
  * Copyright (C) 2018 Genymobile; Copyright (C) 2018-2026 Romain Vimont.
  * Licensed under the Apache License, Version 2.0.
- * See THIRD_PARTY_NOTICES.md and licenses/scrcpy-LICENSE.
+ * See docs/THIRD_PARTY_NOTICES.md and licenses/scrcpy-LICENSE.
  */
 package xyz.chouxuewei.mobile_agent.device.root
 

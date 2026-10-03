@@ -340,12 +340,12 @@ Settings → Models → New profile:
 
 The app may request microphone, notifications, display-over-other-apps, boot startup, installed-app list, and accessibility access. Root, accessibility, screenshots, and external model calls are highly privileged — used **only after you explicitly enable or approve them**.
 
-Model requests, speech transcription, and webpage access send selected content to the third-party services you configured. Read the [Privacy Notice](PRIVACY.md) before installing.
+Model requests, speech transcription, and webpage access send selected content to the third-party services you configured. Read the [Privacy Notice](docs/PRIVACY.md) before installing.
 
 ## Documentation
 
 - [Product Definition](docs/PRODUCT.md) · [Design Guidelines](docs/DESIGN.md) · [Technical Architecture](docs/ARCHITECTURE.md) · [Implementation Plan](docs/PLAN.md) — currently in Chinese
-- [Third-Party Notices](THIRD_PARTY_NOTICES.md) · [Security Policy](SECURITY.md)
+- [Changelog](CHANGELOG.md) · [Third-Party Notices](docs/THIRD_PARTY_NOTICES.md) · [Security Policy](SECURITY.md)
 
 ## License
 
