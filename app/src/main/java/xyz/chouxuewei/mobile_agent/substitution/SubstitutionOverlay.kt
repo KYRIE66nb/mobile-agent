@@ -40,7 +40,9 @@ class SubstitutionOverlay(
     private var statusText: TextView? = null
     private var sideLeftBtn: TextView? = null
     private var sideRightBtn: TextView? = null
+    private var pauseBtn: TextView? = null
     private var swapSides = false
+    private var paused = false
     private var shown = false
     private var savedX: Int? = null
     private var savedY: Int? = null
@@ -89,7 +91,7 @@ class SubstitutionOverlay(
                 shown = false
                 view = null; params = null
                 enemyText = null; selfText = null; statusText = null
-                sideLeftBtn = null; sideRightBtn = null
+                sideLeftBtn = null; sideRightBtn = null; pauseBtn = null
                 xyz.chouxuewei.mobile_agent.core.AgentLog.e("SubTimer", t) {
                     "overlay attach failed"
                 }
@@ -102,21 +104,33 @@ class SubstitutionOverlay(
         view?.let { runCatching { windows.removeView(it) } }
         view = null; params = null
         enemyText = null; selfText = null; statusText = null
-        sideLeftBtn = null; sideRightBtn = null
+        sideLeftBtn = null; sideRightBtn = null; pauseBtn = null
     }
 
-    fun updateTimers(self: SideTimer, enemy: SideTimer, showSelf: Boolean) {
+    fun updateTimers(
+        self: SideTimer, enemy: SideTimer, showSelf: Boolean,
+        paused: Boolean, monitoring: Boolean, selfDots: Int, enemyDots: Int,
+    ) {
         val now = SystemClock.elapsedRealtime()
+        this.paused = paused
         enemyText?.text = timerText("敌方", enemy, now)
         selfText?.apply {
             visibility = if (showSelf) View.VISIBLE else View.GONE
             text = timerText("我方", self, now)
         }
+        // 状态行带实时读数：豆|两侧各是多少一眼可见——数字跟着画面动
+        // 就是"正在识别"的证据，比任何状态文案都直观
+        fun dots(c: Int) = if (c < 0) "-" else "$c"
         statusText?.text = when {
+            paused -> "已暂停 · 点「开启」恢复"
+            !monitoring -> "等待进入游戏"
             enemy.conflict || self.conflict -> "⚠ 候选冲突"
             enemy.pending || self.pending -> "推断中…"
-            enemy.active || self.active -> "疑似替身冷却中"
-            else -> "监视中"
+            else -> "监视中 · 豆${dots(selfDots)}|${dots(enemyDots)}"
+        }
+        pauseBtn?.apply {
+            text = if (paused) "开启" else "暂停"
+            setTextColor(if (paused) 0xFF81C784.toInt() else 0xFF90CAF9.toInt())
         }
     }
 
@@ -170,9 +184,12 @@ class SubstitutionOverlay(
         }
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(smallButton("暂停") {
-                SubstitutionTimerCoordinator.pause()
-            })
+            // 暂停/开启单键切换：文案跟状态走，一眼看出现在在不在跑
+            pauseBtn = smallButton("暂停") {
+                if (paused) SubstitutionTimerCoordinator.resume()
+                else SubstitutionTimerCoordinator.pause()
+            } as TextView
+            addView(pauseBtn)
             addView(smallButton("重置") {
                 SubstitutionTimerCoordinator.resetTimers()
             })

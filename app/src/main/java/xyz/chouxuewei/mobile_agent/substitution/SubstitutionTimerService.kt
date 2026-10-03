@@ -239,6 +239,9 @@ class SubstitutionTimerService : Service() {
         }
     }
 
+    /** 后台期捕获死亡的挂起标记：回前台时优先切无障碍兜底再丢会话。 */
+    private var captureDead = false
+
     /** 捕获会话关闭：令牌真死前先看无障碍兜底能不能接住（录屏共存），不行才丢会话。 */
     private fun onCaptureClosed(reason: String) {
         if (suppressCaptureClose) return
@@ -247,6 +250,15 @@ class SubstitutionTimerService : Service() {
                 AgentAccessibilityService.connected != null) {
                 AgentLog.w(TAG) { "projection lost ($reason), switching to a11y capture" }
                 switchToA11yCapture()
+            } else if (started && !_uiState.value.gameInForeground) {
+                // 后台/息屏时捕获死亡（投影被系统收走、屏幕不渲染）是常态，
+                // 无障碍此刻多半还没重连——先挂起，回前台由前台监听裁决
+                captureDead = true
+                AgentLog.w(TAG) {
+                    "capture lost in background ($reason), deferred " +
+                        "(a11y=${AgentAccessibilityService.connected != null})"
+                }
+                pushState(detail = "捕获已断开，回到游戏时自动恢复")
             } else {
                 onSessionLost(reason)
             }
@@ -309,16 +321,20 @@ class SubstitutionTimerService : Service() {
             if (cellDiag) {
                 AgentLog.d(TAG) { "cells $side=${marks.trim()}" }
             }
-            // 规范豆型校验（开源实现的关键）：豆只能连续点亮——左槽从左填满、
-            // 右槽从右填满（等价于反转后做同样的前缀检查）。含 UNKNOWN 或
-            // 出现"暗-亮-暗"洞形的帧整帧丢弃，不产任何状态变化。
-            val ordered = if (onLeft) states else states.asReversed()
-            val firstDark = ordered.indexOfFirst { it != DotState.LIT }
-            val canonical = ordered.none { it == DotState.UNKNOWN } &&
-                (firstDark < 0 || ordered.drop(firstDark).all { it == DotState.EMPTY })
+            // 规范豆型校验：点亮的豆必须连续且锚定某一端——左锚右锚都算合法。
+            // 实测同一物理槽位的锚定方向随分边翻转（训练场自方在左读 L L L E，
+            // 实战敌方分到左槽读 E L L L）——方向假设写死必然有一侧瞎。
+            // 含 UNKNOWN、洞形（暗-亮-暗）、居中块的帧整帧丢弃，不产状态变化。
+            val firstLit = states.indexOfFirst { it == DotState.LIT }
+            val lastLit = states.indexOfLast { it == DotState.LIT }
+            val anchored = firstLit == 0 || lastLit == states.size - 1
+            val contiguous = firstLit >= 0 &&
+                (firstLit..lastLit).all { states[it] == DotState.LIT }
+            val canonical = states.none { it == DotState.UNKNOWN } &&
+                (firstLit < 0 || (anchored && contiguous))
             // 非规范 → null：引擎侧整帧忽略，稳定计数跨过噪声期继续持有
             if (!canonical) return null
-            return ordered.count { it == DotState.LIT }
+            return states.count { it == DotState.LIT }
         }
 
         val selfCount = countDots(TimerSide.SELF)
@@ -379,8 +395,16 @@ class SubstitutionTimerService : Service() {
             it.copy(selfTimer = selfTimer, enemyTimer = enemyTimer)
         }
         val showSelf = config?.showSelfTimer ?: true
+        val st = _uiState.value
         // 悬浮窗 View 只能在主线程操作
-        scope.launch { overlay?.updateTimers(selfTimer, enemyTimer, showSelf) }
+        scope.launch {
+            overlay?.updateTimers(
+                selfTimer, enemyTimer, showSelf,
+                paused = eng.paused,
+                monitoring = st.state == TimerServiceState.MONITORING,
+                selfDots = st.selfDots, enemyDots = st.enemyDots,
+            )
+        }
     }
 
     /** 帧流看门狗：MONITORING+游戏前台却持续无帧 = VirtualDisplay 被夺走
@@ -441,6 +465,7 @@ class SubstitutionTimerService : Service() {
     /** 放弃投影通道，切换到无障碍截屏（系统录屏共存模式）。 */
     private fun switchToA11yCapture() {
         suppressCaptureClose = true
+        captureDead = false
         // 先摘掉 onStop 监听——stop() 会触发它，不能误当会话丢失
         projectionCallback?.let { cb ->
             runCatching { projection?.unregisterCallback(cb) }
@@ -494,6 +519,13 @@ class SubstitutionTimerService : Service() {
                 // 不会再发 GameForeground）→ 每轮轮询补发，转移本身是幂等的
                 if (inGame && _uiState.value.state == TimerServiceState.WAITING_FOR_GAME) {
                     SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameForeground)
+                }
+                // 后台期捕获死亡的延迟裁决：回游戏时无障碍已连上就切兜底，
+                // 还没连上就继续挂着等下一轮（投影令牌已死，不急着判死）
+                if (inGame && captureDead && Build.VERSION.SDK_INT >= 34 &&
+                    AgentAccessibilityService.connected != null) {
+                    AgentLog.i(TAG) { "dead capture + game foreground → a11y fallback" }
+                    switchToA11yCapture()
                 }
                 if (inGame != _uiState.value.gameInForeground) {
                     AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
