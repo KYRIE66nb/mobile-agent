@@ -47,10 +47,19 @@ class SubstitutionCoreTest {
 
     @Test
     fun `lit bead mixed with dark surround still LIT by pixel ratio`() {
-        // 12/49 亮豆像素（金）+ 其余暗背景：占比表决仍判 LIT——均值池化会稀释失败
-        val pixels = IntArray(49) { i -> if (i < 12) 0xFFF0AA32.toInt() else 0xFF14141A.toInt() }
+        // 30/49 亮豆像素（金）+ 19 暗背景：亮占比占优仍判 LIT——均值池化会稀释失败
+        val pixels = IntArray(49) { i -> if (i < 30) 0xFFF0AA32.toInt() else 0xFF14141A.toInt() }
         val r = DotClassifier().classify(pixels, TimerSide.SELF)
         assertEquals(DotState.LIT, r.state)
+    }
+
+    @Test
+    fun `dim-dominant borderline cell classified EMPTY not LIT`() {
+        // 真机回归：lit 0.12/dim 0.47 的边界豆曾先撞亮阈值被误判 LIT，
+        // 导致豆数 3↔2 狂抖——必须 dim 占优才 EMPTY，亮暗须分胜负
+        val pixels = IntArray(49) { i -> if (i < 6) 0xFFF0AA32.toInt() else 0xFF14141A.toInt() }
+        val r = DotClassifier().classify(pixels, TimerSide.SELF)
+        assertEquals(DotState.EMPTY, r.state)
     }
 
     @Test

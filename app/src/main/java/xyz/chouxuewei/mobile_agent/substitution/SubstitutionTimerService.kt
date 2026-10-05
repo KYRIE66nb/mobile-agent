@@ -18,6 +18,7 @@ import android.os.IBinder
 import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.WindowManager
+import java.io.File
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -153,7 +154,9 @@ class SubstitutionTimerService : Service() {
                 // 官方要求：创建捕获前先注册停止回调
                 val cb = object : android.media.projection.MediaProjection.Callback() {
                     override fun onStop() {
-                        onSessionLost("系统已停止屏幕共享")
+                        // 统一走裁决链：先无障碍兜底、后台则挂起回前台再判——
+                        // 系统收回投影≠会话终结（录屏抢占/息屏都会触发）
+                        onCaptureClosed("系统已停止屏幕共享")
                     }
                 }
                 projectionCallback = cb
@@ -292,13 +295,7 @@ class SubstitutionTimerService : Service() {
         val classifier = classifierOf(cfg)
         val cellDiag = AgentLog.enabled && now - lastObservedLogAt > 2000
         fun countDots(side: TimerSide): Int? {
-            // 槽位与身份解耦：实战我方可能分到右侧——swapSides 时我方读右槽
-            // 豆只能沿固定屏幕方向点亮：左槽从左填满、右槽从右填满
-            val onLeft = (side == TimerSide.SELF) != cfg.swapSides
-            val cells = cfg.layout.dotCells(
-                if (onLeft) TimerSide.SELF else TimerSide.ENEMY,
-                access.width, access.height,
-            )
+            val cells = physicalCells(cfg, side, access.width, access.height)
             val states = ArrayList<DotState>(cells.size)
             val marks = StringBuilder()
             val inset = (1f - cfg.tuning.cellInnerFraction) / 2f
@@ -372,7 +369,54 @@ class SubstitutionTimerService : Service() {
                 else -> Unit
             }
         }
-        if (events.isNotEmpty()) publishTimers()
+        if (events.isNotEmpty()) {
+            publishTimers()
+            dumpEventFrame(access, events)
+        }
+    }
+
+    private var dumpedFrames = 0
+
+    /** 事件帧取证：候选/确认/撤销时刻的原始画面落盘，"替身没算"纠纷时
+     *  能直接回看分类器当时的输入，而不是靠口述对时间。 */
+    private fun dumpEventFrame(access: FrameAccess, events: List<TimerEvent>) {
+        if (dumpedFrames >= 80) return
+        dumpedFrames++
+        val cfg = config ?: return
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                // 采样格叠画到取证帧：直接看出格子有没有对准豆
+                val bmp = access.snapshot(640)
+                val scale = bmp.width.toFloat() / access.width
+                val canvas = android.graphics.Canvas(bmp)
+                val paint = android.graphics.Paint().apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 2f
+                }
+                for (side in listOf(TimerSide.SELF, TimerSide.ENEMY)) {
+                    paint.color = if (side == TimerSide.SELF) 0xFF81C784.toInt() else 0xFFFF7043.toInt()
+                    for (c in physicalCells(cfg, side, access.width, access.height)) {
+                        canvas.drawRect(
+                            c[0] * scale, c[1] * scale, c[2] * scale, c[3] * scale, paint,
+                        )
+                    }
+                }
+                val dir = File(filesDir, "subtimer_frames").apply { mkdirs() }
+                val kind = events.first()::class.simpleName ?: "event"
+                val f = File(dir, "ev_${System.currentTimeMillis()}_$kind.jpg")
+                bmp.compress(Bitmap.CompressFormat.JPEG, 80, f.outputStream())
+                bmp.recycle()
+                AgentLog.i(TAG) { "event frame saved ${f.name} (${events.joinToString { it::class.simpleName!! }})" }
+            }
+        }
+    }
+
+    /** 槽位与身份解耦：实战我方可能分到右侧——swapSides 时我方读右槽。 */
+    private fun physicalCells(cfg: TimerConfig, logical: TimerSide, w: Int, h: Int): List<IntArray> {
+        val onLeft = (logical == TimerSide.SELF) != cfg.swapSides
+        return cfg.layout.dotCells(
+            if (onLeft) TimerSide.SELF else TimerSide.ENEMY, w, h,
+        )
     }
 
     private var classifier: DotClassifier? = null
@@ -609,6 +653,11 @@ class SubstitutionTimerService : Service() {
     }
 
     private fun onSessionLost(reason: String) {
+        AgentLog.e(TAG) {
+            "session lost: $reason (started=$started inGame=${_uiState.value.gameInForeground} " +
+                "a11y=${AgentAccessibilityService.connected != null} a11ySrc=${a11ySource != null} " +
+                "cap=${capture != null})"
+        }
         scope.launch {
             suppressCaptureClose = true
             started = false

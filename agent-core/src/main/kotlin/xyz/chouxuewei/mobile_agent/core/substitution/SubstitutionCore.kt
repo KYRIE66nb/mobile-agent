@@ -132,9 +132,13 @@ class DotClassifier(private val tuning: DetectionTuning = DetectionTuning()) {
         val n = argb.size.toFloat()
         val litRatio = lit / n
         val dimRatio = dim / n
+        // 亮/暗比优势：谁先过线听谁会让边界豆反复横跳（实测 lit0.12/dim0.47
+        // 被判 LIT → 豆数 3↔2 狂抖）。必须占比占优才定性，胶着归 UNKNOWN 丢帧。
         return when {
-            litRatio >= tuning.litPixelMinRatio -> Result(DotState.LIT, litRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
-            dimRatio >= tuning.dimPixelMinRatio -> Result(DotState.EMPTY, dimRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
+            litRatio >= tuning.litPixelMinRatio && litRatio > dimRatio ->
+                Result(DotState.LIT, litRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
+            dimRatio >= tuning.dimPixelMinRatio && dimRatio > litRatio ->
+                Result(DotState.EMPTY, dimRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
             else -> Result(DotState.UNKNOWN, 0f, litRatio, dimRatio)
         }
     }
