@@ -381,32 +381,37 @@ class SubstitutionTimerService : Service() {
      *  能直接回看分类器当时的输入，而不是靠口述对时间。 */
     private fun dumpEventFrame(access: FrameAccess, events: List<TimerEvent>) {
         if (dumpedFrames >= 80) return
-        dumpedFrames++
         val cfg = config ?: return
+        // 像素拷贝必须在回调线程内同步完成：projection 帧的 Image 在 onFrame
+        // 返回即 close、无障碍帧的 Bitmap 同步 recycle——协程里再读就是死内存
+        val bmp = runCatching { access.snapshot(640) }.onFailure {
+            AgentLog.e(TAG, it) { "event frame snapshot failed" }
+        }.getOrNull() ?: return
+        dumpedFrames++
+        // 采样格叠画到取证帧：直接看出格子有没有对准豆
+        val scale = bmp.width.toFloat() / access.width
+        val canvas = android.graphics.Canvas(bmp)
+        val paint = android.graphics.Paint().apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 2f
+        }
+        for (side in listOf(TimerSide.SELF, TimerSide.ENEMY)) {
+            paint.color = if (side == TimerSide.SELF) 0xFF81C784.toInt() else 0xFFFF7043.toInt()
+            for (c in physicalCells(cfg, side, access.width, access.height)) {
+                canvas.drawRect(c[0] * scale, c[1] * scale, c[2] * scale, c[3] * scale, paint)
+            }
+        }
         scope.launch(Dispatchers.IO) {
             runCatching {
-                // 采样格叠画到取证帧：直接看出格子有没有对准豆
-                val bmp = access.snapshot(640)
-                val scale = bmp.width.toFloat() / access.width
-                val canvas = android.graphics.Canvas(bmp)
-                val paint = android.graphics.Paint().apply {
-                    style = android.graphics.Paint.Style.STROKE
-                    strokeWidth = 2f
-                }
-                for (side in listOf(TimerSide.SELF, TimerSide.ENEMY)) {
-                    paint.color = if (side == TimerSide.SELF) 0xFF81C784.toInt() else 0xFFFF7043.toInt()
-                    for (c in physicalCells(cfg, side, access.width, access.height)) {
-                        canvas.drawRect(
-                            c[0] * scale, c[1] * scale, c[2] * scale, c[3] * scale, paint,
-                        )
-                    }
-                }
                 val dir = File(filesDir, "subtimer_frames").apply { mkdirs() }
                 val kind = events.first()::class.simpleName ?: "event"
                 val f = File(dir, "ev_${System.currentTimeMillis()}_$kind.jpg")
-                bmp.compress(Bitmap.CompressFormat.JPEG, 80, f.outputStream())
+                f.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 80, it) }
                 bmp.recycle()
                 AgentLog.i(TAG) { "event frame saved ${f.name} (${events.joinToString { it::class.simpleName!! }})" }
+            }.onFailure {
+                bmp.recycle()
+                AgentLog.e(TAG, it) { "event frame write failed" }
             }
         }
     }
