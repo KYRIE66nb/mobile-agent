@@ -384,23 +384,33 @@ class SubstitutionTimerService : Service() {
         val cfg = config ?: return
         // 像素拷贝必须在回调线程内同步完成：projection 帧的 Image 在 onFrame
         // 返回即 close、无障碍帧的 Bitmap 同步 recycle——协程里再读就是死内存
-        val bmp = runCatching { access.snapshot(640) }.onFailure {
+        val raw = runCatching { access.snapshot(640) }.onFailure {
             AgentLog.e(TAG, it) { "event frame snapshot failed" }
         }.getOrNull() ?: return
+        // createBitmap(IntArray,..) 产不可变位图，Canvas 需要可变副本
+        val bmp = runCatching {
+            if (raw.isMutable) raw else raw.copy(Bitmap.Config.ARGB_8888, true)
+        }.getOrNull()
+        if (bmp == null) {
+            raw.recycle()
+            return
+        }
         dumpedFrames++
         // 采样格叠画到取证帧：直接看出格子有没有对准豆
-        val scale = bmp.width.toFloat() / access.width
-        val canvas = android.graphics.Canvas(bmp)
-        val paint = android.graphics.Paint().apply {
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 2f
-        }
-        for (side in listOf(TimerSide.SELF, TimerSide.ENEMY)) {
-            paint.color = if (side == TimerSide.SELF) 0xFF81C784.toInt() else 0xFFFF7043.toInt()
-            for (c in physicalCells(cfg, side, access.width, access.height)) {
-                canvas.drawRect(c[0] * scale, c[1] * scale, c[2] * scale, c[3] * scale, paint)
+        runCatching {
+            val scale = bmp.width.toFloat() / access.width
+            val canvas = android.graphics.Canvas(bmp)
+            val paint = android.graphics.Paint().apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = 2f
             }
-        }
+            for (side in listOf(TimerSide.SELF, TimerSide.ENEMY)) {
+                paint.color = if (side == TimerSide.SELF) 0xFF81C784.toInt() else 0xFFFF7043.toInt()
+                for (c in physicalCells(cfg, side, access.width, access.height)) {
+                    canvas.drawRect(c[0] * scale, c[1] * scale, c[2] * scale, c[3] * scale, paint)
+                }
+            }
+        }.onFailure { AgentLog.e(TAG, it) { "event frame overlay draw failed" } }
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val dir = File(filesDir, "subtimer_frames").apply { mkdirs() }
