@@ -34,12 +34,14 @@ import xyz.chouxuewei.mobile_agent.core.AgentLog
 import xyz.chouxuewei.mobile_agent.core.substitution.DotClassifier
 import xyz.chouxuewei.mobile_agent.core.substitution.DotState
 import xyz.chouxuewei.mobile_agent.core.substitution.LaunchEvent
+import xyz.chouxuewei.mobile_agent.core.substitution.SceneVerdict
 import xyz.chouxuewei.mobile_agent.core.substitution.SideTimer
 import xyz.chouxuewei.mobile_agent.core.substitution.SubstitutionEngine
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerConfig
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerEvent
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerServiceState
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerSide
+import xyz.chouxuewei.mobile_agent.core.substitution.evaluateScene
 import xyz.chouxuewei.mobile_agent.device.accessibility.AgentAccessibilityService
 import xyz.chouxuewei.mobile_agent.device.capture.AccessibilityFrameSource
 import xyz.chouxuewei.mobile_agent.device.capture.FrameAccess
@@ -59,6 +61,8 @@ class SubstitutionTimerService : Service() {
         val enemyTimer: SideTimer = SideTimer(TimerSide.ENEMY),
         val selfDots: Int = -1,
         val enemyDots: Int = -1,
+        /** 帧流存活（最近有帧到达）与 HUD 有效是两个独立状态，不能混成一个看门狗条件。 */
+        val captureAlive: Boolean = false,
         val hudValid: Boolean = false,
         val gameInForeground: Boolean = false,
         val showSelf: Boolean = true,
@@ -76,8 +80,19 @@ class SubstitutionTimerService : Service() {
     private var captureRestarts = 0
     private var captureRestartWindowStart = 0L
     private var projection: android.media.projection.MediaProjection? = null
-    private var engine: SubstitutionEngine? = null
+    /** 引擎非线程安全：帧观察/暂停/重置/换边/重建统一走 engineLock 串行执行。 */
+    @Volatile private var engine: SubstitutionEngine? = null
+    private val engineLock = Any()
     private var config: TimerConfig? = null
+    /** VirtualDisplay 参数（onCapturedContentResize 重建用）。 */
+    private var captureDpi = 0
+    /** 当前帧源通道标识（诊断记录用）：projection | a11y。 */
+    @Volatile private var captureChannel = "projection"
+    /** 帧几何版本：尺寸变化说明通道/旋转/内容尺寸变了——旧布局证据作废。 */
+    private var lastFrameW = 0
+    private var lastFrameH = 0
+    /** 本地诊断记录器：仅在用户开启 diagnosticsEnabled 时创建。 */
+    private var diag: DiagnosticRecorder? = null
     private var overlay: SubstitutionOverlay? = null
     private var foregroundWatch: Job? = null
     private var ticker: Job? = null
@@ -91,18 +106,31 @@ class SubstitutionTimerService : Service() {
             ACTION_PAUSE -> pauseSession()
             ACTION_RESUME -> resumeSession()
             ACTION_RESET -> {
-                AgentLog.i(TAG) { "manual reset engine=${engine != null} started=$started paused=${engine?.paused}" }
-                // 重置=修正语义：暂停态也一并解除，否则基线永不重建看起来像"不再计算"
-                if (engine?.paused == true) {
-                    engine?.resume()
-                    SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Resume)
-                    updateNotification()
+                AgentLog.i(TAG) { "manual reset engine=${engine != null} started=$started" }
+                synchronized(engineLock) {
+                    // 重置=修正语义：暂停态也一并解除，否则基线永不重建看起来像"不再计算"
+                    if (engine?.paused == true) {
+                        engine?.resume()
+                        SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Resume)
+                        updateNotification()
+                    }
+                    engine?.cancelTimer(TimerSide.SELF)
+                    engine?.cancelTimer(TimerSide.ENEMY)
+                    engine?.resetBaseline("manual_reset")
                 }
-                engine?.cancelTimer(TimerSide.SELF)
-                engine?.cancelTimer(TimerSide.ENEMY)
-                engine?.resetBaseline("manual_reset")
                 pushState(detail = "已重置计时，重新建立基线")
                 publishTimers()
+            }
+            ACTION_DIAG_MARK -> {
+                val kind = intent?.getStringExtra(EXTRA_DIAG_MARK) ?: "mark"
+                AgentLog.i(TAG) { "diag mark=$kind diag=${diag != null}" }
+                diag?.record(
+                    atMs = SystemClock.elapsedRealtime(), clock = "elapsedRealtime",
+                    channel = captureChannel, geoW = lastFrameW, geoH = lastFrameH,
+                    scene = "", battle = false,
+                    selfCount = null, enemyCount = null, mark = kind,
+                )
+                pushState(detail = if (kind == "missed") "已标记：刚才漏了" else "已标记：刚才错了")
             }
             ACTION_SWAP -> {
                 val cfg = config
@@ -158,10 +186,28 @@ class SubstitutionTimerService : Service() {
                         // 系统收回投影≠会话终结（录屏抢占/息屏都会触发）
                         onCaptureClosed("系统已停止屏幕共享")
                     }
+                    override fun onCapturedContentResize(width: Int, height: Int) {
+                        // 内容尺寸变化（旋转/分辨率切换）：resize 存活 VD，不重复消费一次性授权
+                        AgentLog.i(TAG) { "captured content resized ${width}x$height" }
+                        capture?.resize(width, height, captureDpi)
+                    }
+                    override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+                        // 内容不可见（息屏/受保护页面）：帧流会静默——记录供帧流看门狗裁决
+                        AgentLog.i(TAG) { "captured content visible=$isVisible" }
+                    }
                 }
                 projectionCallback = cb
                 proj.registerCallback(cb, null)
-                engine = SubstitutionEngine(cfg, clock = SystemClock::elapsedRealtime)
+                synchronized(engineLock) {
+                    engine = SubstitutionEngine(cfg, clock = SystemClock::elapsedRealtime)
+                }
+                diag = if (cfg.diagnosticsEnabled) {
+                    DiagnosticRecorder(
+                        File(filesDir, "subtimer_diag"),
+                        io = { block -> scope.launch(Dispatchers.IO) { block() } },
+                    )
+                } else null
+                if (diag != null) AgentLog.i(TAG) { "diagnostics enabled: local records only" }
                 SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.PermissionGranted)
                 if (cfg.calibrated) {
                     SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Calibrated)
@@ -200,16 +246,30 @@ class SubstitutionTimerService : Service() {
                         }
                         if (old != null && old.swapSides != newCfg.swapSides) {
                             // 换边：身份归属翻转，旧计时/基线全部作废重建
-                            engine?.cancelTimer(TimerSide.SELF)
-                            engine?.cancelTimer(TimerSide.ENEMY)
-                            engine?.resetBaseline("side_swap")
+                            synchronized(engineLock) {
+                                engine?.cancelTimer(TimerSide.SELF)
+                                engine?.cancelTimer(TimerSide.ENEMY)
+                                engine?.resetBaseline("side_swap")
+                            }
                             publishTimers()
                         }
                         if (old == null || old.layout != newCfg.layout ||
                             old.tuning != newCfg.tuning || old.cooldownMs != newCfg.cooldownMs
                         ) {
-                            engine = SubstitutionEngine(newCfg, clock = SystemClock::elapsedRealtime)
+                            synchronized(engineLock) {
+                                engine = SubstitutionEngine(newCfg, clock = SystemClock::elapsedRealtime)
+                            }
                             publishTimers()
+                        }
+                        if (old == null || old.diagnosticsEnabled != newCfg.diagnosticsEnabled) {
+                            diag = if (newCfg.diagnosticsEnabled && diag == null) {
+                                DiagnosticRecorder(
+                                    File(filesDir, "subtimer_diag"),
+                                    io = { block -> scope.launch(Dispatchers.IO) { block() } },
+                                )
+                            } else if (!newCfg.diagnosticsEnabled) {
+                                diag?.close(); null
+                            } else diag
                         }
                     }
                 }
@@ -232,6 +292,8 @@ class SubstitutionTimerService : Service() {
             @Suppress("DEPRECATION") wm.defaultDisplay.getRealMetrics(metrics)
         }
         lastFrameAt = SystemClock.elapsedRealtime()
+        captureDpi = metrics.densityDpi
+        captureChannel = "projection"
         capture = ProjectionCapture().also { c ->
             c.start(
                 proj,
@@ -276,7 +338,8 @@ class SubstitutionTimerService : Service() {
         lastFrameAt = SystemClock.elapsedRealtime()
         val cfg = config ?: return
         val eng = engine ?: return
-        val monitoring = !eng.paused && uiState.value.state == TimerServiceState.MONITORING
+        val monitoring = synchronized(engineLock) { !eng.paused } &&
+            uiState.value.state == TimerServiceState.MONITORING
         val inGame = _uiState.value.gameInForeground
 
         // 预览帧只在"游戏在前台"时产出：离开游戏即冻结，保住最后一帧游戏画面供校准；
@@ -292,76 +355,84 @@ class SubstitutionTimerService : Service() {
         if (now - lastSampleAt < cfg.frameIntervalMs) return
         lastSampleAt = now
 
+        // 几何版本检查：帧尺寸变化 = 通道切换/旋转/内容尺寸变了——
+        // 旧布局证据作废，先重建基线再喂新帧（旧帧不会污染新状态）
+        if (access.width != lastFrameW || access.height != lastFrameH) {
+            AgentLog.i(TAG) {
+                "geometry changed ${lastFrameW}x$lastFrameH -> ${access.width}x${access.height} ($captureChannel)"
+            }
+            if (lastFrameW != 0) {
+                synchronized(engineLock) { eng.resetBaseline("geometry_changed") }
+            }
+            lastFrameW = access.width; lastFrameH = access.height
+        }
+
         val classifier = classifierOf(cfg)
         val cellDiag = AgentLog.enabled && now - lastObservedLogAt > 2000
+        val diagOn = diag != null
         fun countDots(side: TimerSide): Int? {
-            val cells = physicalCells(cfg, side, access.width, access.height)
-            val states = ArrayList<DotState>(cells.size)
             val marks = StringBuilder()
-            val inset = (1f - cfg.tuning.cellInnerFraction) / 2f
-            for (cell in cells) {
-                // 只采样格子中心区：避开豆间分隔线与 HUD 边缘混入的背景
-                val w = cell[2] - cell[0]; val h = cell[3] - cell[1]
-                val l = (cell[0] + w * inset).toInt()
-                val t = (cell[1] + h * inset).toInt()
-                val r = (cell[2] - w * inset).toInt()
-                val b = (cell[3] - h * inset).toInt()
-                val pixels = access.sample(l, t, r, b, cfg.tuning.sampleGrid)
-                val result = classifier.classify(pixels, side)
-                if (cellDiag) marks.append(
-                    when (result.state) {
-                        DotState.LIT -> 'L'; DotState.EMPTY -> 'E'; DotState.UNKNOWN -> 'U'
-                    } + "(%.2f/%.2f)".format(result.litRatio, result.dimRatio),
-                ).append(' ')
-                states += result.state
+            val states = if (diagOn) ArrayList<String>() else null
+            val count = DotRowCounting.count(
+                access, physicalCells(cfg, side, access.width, access.height),
+                classifier, side, cfg.tuning.sampleGrid, cfg.tuning.cellInnerFraction,
+            ) { result ->
+                val c = when (result.state) {
+                    DotState.LIT -> 'L'; DotState.EMPTY -> 'E'; DotState.UNKNOWN -> 'U'
+                }
+                if (cellDiag) {
+                    marks.append(c + "(%.2f/%.2f)".format(result.litRatio, result.dimRatio)).append(' ')
+                }
+                states?.add(c.toString())
             }
-            if (cellDiag) {
-                AgentLog.d(TAG) { "cells $side=${marks.trim()}" }
-            }
-            // 规范豆型校验：点亮的豆必须连续且锚定某一端——左锚右锚都算合法。
-            // 实测同一物理槽位的锚定方向随分边翻转（训练场自方在左读 L L L E，
-            // 实战敌方分到左槽读 E L L L）——方向假设写死必然有一侧瞎。
-            // 含 UNKNOWN、洞形（暗-亮-暗）、居中块的帧整帧丢弃，不产状态变化。
-            val firstLit = states.indexOfFirst { it == DotState.LIT }
-            val lastLit = states.indexOfLast { it == DotState.LIT }
-            val anchored = firstLit == 0 || lastLit == states.size - 1
-            val contiguous = firstLit >= 0 &&
-                (firstLit..lastLit).all { states[it] == DotState.LIT }
-            val canonical = states.none { it == DotState.UNKNOWN } &&
-                (firstLit < 0 || (anchored && contiguous))
-            // 非规范 → null：引擎侧整帧忽略，稳定计数跨过噪声期继续持有
-            if (!canonical) return null
-            return states.count { it == DotState.LIT }
+            if (cellDiag) AgentLog.d(TAG) { "cells $side=${marks.trim()}" }
+            cellStates[side] = states
+            return count
         }
 
         val selfCount = countDots(TimerSide.SELF)
         val enemyCount = countDots(TimerSide.ENEMY)
-        // 双零跳帧：两侧"全灭"同时出现 = 回合间/转场豆槽整排消失（暗背景命中
-        // 暗盒读出的伪 0），不是真实零豆状态——整帧忽略，计数跨过转场保持。
-        // 单侧 0 照常喂（最后一颗豆的替身仍能触发）。
-        val bothDark = selfCount == 0 && enemyCount == 0
-        val events = eng.onFrame(
-            if (bothDark) null else selfCount,
-            if (bothDark) null else enemyCount,
-            now,
-        )
+        // 战斗场景门控：豆色之外的 HUD 锚点证据裁决；锚点未标定时
+        // 两侧"全灭"弱信号兜底（转场豆槽整排消失），配置锚点后双零不再参与门控。
+        val anchorSamples = cfg.layout.hudAnchors.map { a ->
+            val r = a.rect.toPixel(0, 0, access.width, access.height)
+            access.sample(r[0], r[1], r[2], r[3], cfg.tuning.sampleGrid)
+        }
+        val scene = evaluateScene(cfg.layout.hudAnchors, anchorSamples, selfCount, enemyCount)
+        val battle = scene != SceneVerdict.NOT_BATTLE
+        val events = synchronized(engineLock) { eng.onFrame(selfCount, enemyCount, now, battle) }
         _uiState.update {
             it.copy(
                 selfDots = selfCount ?: -1,
                 enemyDots = enemyCount ?: -1,
-                hudValid = selfCount != null && enemyCount != null,
+                // 锚点配置后 hudValid 只反映真实 HUD 证据；
+                // 未标定时沿用"至少一侧计数有效"的弱信号并在状态文案明示未验证
+                hudValid = when (scene) {
+                    SceneVerdict.BATTLE -> true
+                    SceneVerdict.NOT_BATTLE -> false
+                    SceneVerdict.UNVERIFIED -> selfCount != null || enemyCount != null
+                },
             )
         }
+        diag?.record(
+            atMs = now, clock = "elapsedRealtime", channel = captureChannel,
+            geoW = access.width, geoH = access.height,
+            scene = scene.name, battle = battle,
+            selfCount = selfCount, enemyCount = enemyCount,
+            selfCells = cellStates[TimerSide.SELF],
+            enemyCells = cellStates[TimerSide.ENEMY],
+            events = events.map { it.toString() },
+        )
         // 诊断节流：每 ~2s 记一次观测计数（只记数字，不记画面）
         if (now - lastObservedLogAt > 2000) {
             lastObservedLogAt = now
-            AgentLog.d(TAG) { "observe self=$selfCount enemy=$enemyCount" }
+            AgentLog.d(TAG) { "observe self=$selfCount enemy=$enemyCount scene=$scene" }
         }
         for (e in events) {
             AgentLog.i(TAG) { "event $e" }
             when (e) {
                 is TimerEvent.AmbiguousDrop ->
-                    _uiState.update { it.copy(detail = "疑似多豆变化，未自动计时") }
+                    _uiState.update { it.copy(detail = "疑似豆数变化（触发时刻不可知），未自动计时") }
                 is TimerEvent.CandidateCancelled ->
                     _uiState.update { it.copy(detail = "候选已撤销（豆数回弹，非替身）") }
                 is TimerEvent.WobbleIgnored ->
@@ -372,7 +443,24 @@ class SubstitutionTimerService : Service() {
         if (events.isNotEmpty()) {
             publishTimers()
             dumpEventFrame(access, events)
+            // 诊断小块取证：只存豆槽/HUD 区域无损像素，不存整屏
+            diag?.dumpCrops("ev", now, diagCrops(access, cfg))
         }
+    }
+
+    /** 每格分类结果（诊断开启时填充）——键为逻辑侧。 */
+    private val cellStates = HashMap<TimerSide, List<String>?>(2)
+
+    /** 诊断取证小块：双方豆槽区域的 1:1 像素副本（必须在本回调线程内同步完成）。 */
+    private fun diagCrops(access: FrameAccess, cfg: TimerConfig): List<Pair<String, Bitmap>> {
+        val out = ArrayList<Pair<String, Bitmap>>(4)
+        for (side in listOf(TimerSide.SELF, TimerSide.ENEMY)) {
+            for ((i, cell) in physicalCells(cfg, side, access.width, access.height).withIndex()) {
+                access.crop(cell[0], cell[1], cell[2], cell[3])
+                    ?.let { out += "${side.name.lowercase()}$i" to it }
+            }
+        }
+        return out
     }
 
     private var dumpedFrames = 0
@@ -449,9 +537,12 @@ class SubstitutionTimerService : Service() {
     private fun publishTimers() {
         val eng = engine ?: return
         val now = SystemClock.elapsedRealtime()
-        val (selfTimer, enemyTimer) = eng.timers(now)
+        val (selfTimer, enemyTimer) = synchronized(engineLock) { eng.timers(now) }
         _uiState.update {
-            it.copy(selfTimer = selfTimer, enemyTimer = enemyTimer)
+            it.copy(
+                selfTimer = selfTimer, enemyTimer = enemyTimer,
+                captureAlive = now - lastFrameAt < 1500,
+            )
         }
         val showSelf = config?.showSelfTimer ?: true
         val st = _uiState.value
@@ -459,9 +550,10 @@ class SubstitutionTimerService : Service() {
         scope.launch {
             overlay?.updateTimers(
                 selfTimer, enemyTimer, showSelf,
-                paused = eng.paused,
+                paused = synchronized(engineLock) { eng.paused },
                 monitoring = st.state == TimerServiceState.MONITORING,
                 selfDots = st.selfDots, enemyDots = st.enemyDots,
+                captureAlive = st.captureAlive, hudOk = st.hudValid,
             )
         }
     }
@@ -540,6 +632,7 @@ class SubstitutionTimerService : Service() {
         val cfg = config ?: return
         val metrics = resources.displayMetrics
         lastFrameAt = SystemClock.elapsedRealtime()
+        captureChannel = "a11y"
         a11ySource = AccessibilityFrameSource(
             svc, android.view.Display.DEFAULT_DISPLAY, cfg.gamePackage,
             metrics.widthPixels, metrics.heightPixels,
@@ -594,7 +687,7 @@ class SubstitutionTimerService : Service() {
                     )
                     if (inGame) {
                         // 进游戏：重建基线，首组稳定帧只建基线不计时
-                        engine?.resetBaseline("game_foreground")
+                        synchronized(engineLock) { engine?.resetBaseline("game_foreground") }
                         // 校准完成才挂计时悬浮窗，未校准期间不显示"监视中"误导
                         if (config?.calibrated == true) scope.launch { overlay?.show() }
                         // 未校准不进 MONITORING——不能伪装成"识别中"；预览帧照产供校准用
@@ -605,7 +698,7 @@ class SubstitutionTimerService : Service() {
                         }
                     } else {
                         scope.launch { overlay?.hide() }
-                        engine?.resetBaseline("game_left")
+                        synchronized(engineLock) { engine?.resetBaseline("game_left") }
                         if (_uiState.value.state == TimerServiceState.MONITORING) {
                             pushState(detail = "已离开游戏")
                         }
@@ -634,14 +727,14 @@ class SubstitutionTimerService : Service() {
     }
 
     private fun pauseSession() {
-        engine?.pause()
+        synchronized(engineLock) { engine?.pause() }
         pushState(detail = "已暂停本次（倒计时仍按截止时间计）")
         SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Pause)
         updateNotification()
     }
 
     private fun resumeSession() {
-        engine?.resume()
+        synchronized(engineLock) { engine?.resume() }
         pushState(detail = "")
         SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Resume)
         // Resume 只会回到 WAITING_FOR_GAME——人还在游戏里时立刻补发 GameForeground
@@ -659,6 +752,7 @@ class SubstitutionTimerService : Service() {
         a11ySource?.stop(); a11ySource = null
         capture?.stop(); capture = null
         overlay?.destroy(); overlay = null
+        diag?.close(); diag = null
         projection = null
         pushState(detail = "")
         if (userInitiated) SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.Stop)
@@ -680,6 +774,7 @@ class SubstitutionTimerService : Service() {
             a11ySource?.stop(); a11ySource = null
             capture?.stop(); capture = null
             overlay?.destroy(); overlay = null
+            diag?.close(); diag = null
             pushState(detail = "$reason，返回 App 重新授权")
             SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.SessionLost)
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -772,6 +867,7 @@ class SubstitutionTimerService : Service() {
         a11ySource?.stop(); a11ySource = null
         capture?.stop()
         overlay?.destroy()
+        diag?.close(); diag = null
         _uiState.value = UiState()
         super.onDestroy()
     }
@@ -783,6 +879,8 @@ class SubstitutionTimerService : Service() {
         const val ACTION_RESET = "xyz.chouxuewei.mobile_agent.substitution.RESET"
         const val ACTION_SWAP = "xyz.chouxuewei.mobile_agent.substitution.SWAP"
         const val EXTRA_SELF_LEFT = "xyz.chouxuewei.mobile_agent.substitution.SELF_LEFT"
+        const val ACTION_DIAG_MARK = "xyz.chouxuewei.mobile_agent.substitution.DIAG_MARK"
+        const val EXTRA_DIAG_MARK = "xyz.chouxuewei.mobile_agent.substitution.DIAG_MARK_KIND"
         const val ACTION_STOP = "xyz.chouxuewei.mobile_agent.substitution.STOP"
         const val ACTION_OPEN_SETTINGS = "xyz.chouxuewei.mobile_agent.substitution.OPEN_SETTINGS"
         const val EXTRA_RESULT_CODE = "result_code"

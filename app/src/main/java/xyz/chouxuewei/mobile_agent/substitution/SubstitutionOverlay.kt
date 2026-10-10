@@ -41,7 +41,10 @@ class SubstitutionOverlay(
     private var sideLeftBtn: TextView? = null
     private var sideRightBtn: TextView? = null
     private var pauseBtn: TextView? = null
+    private var markMissedBtn: TextView? = null
+    private var markWrongBtn: TextView? = null
     private var swapSides = false
+    private var diagEnabled = false
     private var paused = false
     private var shown = false
     private var savedX: Int? = null
@@ -51,7 +54,9 @@ class SubstitutionOverlay(
         scope.launch { repo.config.collect {
             savedX = it.overlayX; savedY = it.overlayY
             swapSides = it.swapSides
+            diagEnabled = it.diagnosticsEnabled
             updateSideButtons()
+            updateDiagButtons()
         } }
     }
 
@@ -92,6 +97,7 @@ class SubstitutionOverlay(
                 view = null; params = null
                 enemyText = null; selfText = null; statusText = null
                 sideLeftBtn = null; sideRightBtn = null; pauseBtn = null
+                markMissedBtn = null; markWrongBtn = null
                 xyz.chouxuewei.mobile_agent.core.AgentLog.e("SubTimer", t) {
                     "overlay attach failed"
                 }
@@ -105,11 +111,13 @@ class SubstitutionOverlay(
         view = null; params = null
         enemyText = null; selfText = null; statusText = null
         sideLeftBtn = null; sideRightBtn = null; pauseBtn = null
+        markMissedBtn = null; markWrongBtn = null
     }
 
     fun updateTimers(
         self: SideTimer, enemy: SideTimer, showSelf: Boolean,
         paused: Boolean, monitoring: Boolean, selfDots: Int, enemyDots: Int,
+        captureAlive: Boolean = true, hudOk: Boolean = true,
     ) {
         val now = SystemClock.elapsedRealtime()
         this.paused = paused
@@ -119,11 +127,14 @@ class SubstitutionOverlay(
             text = timerText("我方", self, now)
         }
         // 状态行带实时读数：豆|两侧各是多少一眼可见——数字跟着画面动
-        // 就是"正在识别"的证据，比任何状态文案都直观
+        // 就是"正在识别"的证据，比任何状态文案都直观。
+        // "没有帧"与"有帧但识别无效"是两个独立状态，不混成一个条件。
         fun dots(c: Int) = if (c < 0) "-" else "$c"
         statusText?.text = when {
             paused -> "已暂停 · 点「开启」恢复"
             !monitoring -> "等待进入游戏"
+            !captureAlive -> "画面中断，等待恢复"
+            !hudOk -> "识别不稳定/等待战斗画面"
             enemy.conflict || self.conflict -> "⚠ 候选冲突"
             enemy.pending || self.pending -> "推断中…"
             else -> "监视中 · 豆${dots(selfDots)}|${dots(enemyDots)}"
@@ -193,6 +204,17 @@ class SubstitutionOverlay(
             addView(smallButton("重置") {
                 SubstitutionTimerCoordinator.resetTimers()
             })
+            // 诊断标记（仅开启诊断模式时显示）："刚才漏了"/"刚才错了"——
+            // 保存最近观察上下文供离线回放，本地留存不上传
+            markMissedBtn = smallButton("漏了") {
+                SubstitutionTimerCoordinator.markDiag("missed")
+            } as TextView
+            markWrongBtn = smallButton("错了") {
+                SubstitutionTimerCoordinator.markDiag("wrong")
+            } as TextView
+            addView(markMissedBtn)
+            addView(markWrongBtn)
+            updateDiagButtons()
         }
         updateSideButtons()
         root.addView(enemyText)
@@ -261,6 +283,12 @@ class SubstitutionOverlay(
         // swapSides=true 表示我方读右槽——高亮跟随配置
         sideLeftBtn.style(!swapSides)
         sideRightBtn.style(swapSides)
+    }
+
+    private fun updateDiagButtons() {
+        val vis = if (diagEnabled) View.VISIBLE else View.GONE
+        markMissedBtn?.visibility = vis
+        markWrongBtn?.visibility = vis
     }
 
     private fun dp(v: Int) = (v * context.resources.displayMetrics.density).toInt()
