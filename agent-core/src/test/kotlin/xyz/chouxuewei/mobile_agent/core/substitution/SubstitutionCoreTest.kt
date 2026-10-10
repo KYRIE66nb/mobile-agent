@@ -197,19 +197,21 @@ class SubstitutionCoreTest {
     }
 
     @Test
-    fun `active cooldown second drop flagged conflict`() {
+    fun `active cooldown second drop flagged conflict but timer untouched`() {
         var t = 0L
         val e = engine(now = { t })
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
-        // 悬置候选期内的再次掉豆会被视为级联消耗——先等验证窗(2500ms)结束确认
+        // 悬置候选期内的再次掉豆会被视为级联消耗——先等验证窗结束确认
         repeat(30) { t += 100; e.onFrame(4, 3, t) }
+        val acceptedEnd = e.timers(t).second.endAtMs
         assertFalse(e.timers(t).second.pending)
-        // 已确认计时仍在冷却前半段 → 第二次掉豆标记 conflict
+        // 已确认计时仍在冷却前半段 → 第二次掉豆标记 conflict，但不得覆盖正式计时
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
         val c = events.filterIsInstance<TimerEvent.SubstitutionCandidate>().single()
         assertTrue(c.conflict)
+        assertEquals(acceptedEnd, e.timers(t).second.endAtMs)
     }
 
     @Test
@@ -241,38 +243,40 @@ class SubstitutionCoreTest {
     }
 
     @Test
-    fun `pause keeps countdown, resume rebuilds baseline`() {
+    fun `pause keeps accepted countdown, resume rebuilds baseline`() {
         var t = 0L
         val e = engine(now = { t })
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
         repeat(3) { t += 100; e.onFrame(4, 3, t) }
+        // 先让候选完成验证成为已接受计时
+        repeat(16) { t += 100; e.onFrame(4, 3, t) }
+        val endAt = e.timers(t).second.endAtMs
+        assertTrue(e.timers(t).second.active && !e.timers(t).second.pending)
         e.pause()
-        val anchorAt = t - 200 // 掉豆首见帧（确认帧前 200ms）
         repeat(5) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
         // 暂停期间倒计时仍按绝对截止计算
-        assertEquals(15_000 - (t - anchorAt), e.timers(t).second.remaining(t))
+        assertEquals(endAt - t, e.timers(t).second.remaining(t))
         e.resume()
-        // 恢复后重建基线：计时保留（悬置候选在重置时按确认处理），无撤单事件
+        // 恢复后重建基线：已接受计时保留，无撤单事件
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 4, t) }
         assertTrue(events.none { it is TimerEvent.CandidateCancelled })
         assertTrue(e.timers(t).second.active)
-        assertFalse(e.timers(t).second.pending)
+        assertEquals(endAt, e.timers(t).second.endAtMs)
     }
 
     @Test
-    fun `prolonged invalid frames keep baseline so next drop still detects`() {
+    fun `prolonged invalid frames reset baseline and rebuild cleanly`() {
         var t = 0L
         val e = engine(now = { t })
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
-        // 非规范豆型/无效帧（KO 画面、转场、特效遮挡）不重置基线——
-        // 稳定计数跨过噪声期继续持有（开源实现：非规范豆型不产任何变更）。
+        // 无效帧超过 invalidBaselineTimeoutMs(默认2s) → 旧基线作废
         var sawReset = false
         repeat(26) { t += 100; if (e.onFrame(4, null, t).any { it is TimerEvent.BaselineReset }) sawReset = true }
-        assertFalse(sawReset)
-        // 噪声期结束回到原计数：无事件
+        assertTrue(sawReset)
+        // 无效期结束回到原计数：静默重建基线，无事件
         repeat(3) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
-        // 关键：之后真替身照常检测——噪声没丢基线
+        // 新基线建立后真实替身照常检测
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
         val c = events.filterIsInstance<TimerEvent.SubstitutionCandidate>().single()
@@ -280,17 +284,19 @@ class SubstitutionCoreTest {
     }
 
     @Test
-    fun `drop during noise window still detects when valid frames return`() {
+    fun `drop inside blind window is ambiguous not a precise cooldown`() {
         var t = 0L
         val e = engine(now = { t })
         repeat(3) { t += 100; e.onFrame(4, 4, t) }
-        // 替身发生在满屏特效中：2.5s 全是非规范帧，特效散去时已剩 3 颗
+        // 替身可能发生在满屏特效中：>2s 全是非规范帧，旧基线已作废
         repeat(26) { t += 100; e.onFrame(4, null, t) }
+        // 特效散去豆数 4→3：盲窗内疑似消耗只报歧义（触发时刻不可知），
+        // 不得补发"恢复画面时刻起算"的精确满额冷却
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
-        // 基线未丢 → 4→3 差值正常产候选（等价于原盲窗补发，但无需特判）
-        assertTrue(events.any { it is TimerEvent.SubstitutionCandidate })
-        assertTrue(e.timers(t).second.active)
+        assertTrue(events.any { it is TimerEvent.AmbiguousDrop })
+        assertTrue(events.none { it is TimerEvent.SubstitutionCandidate })
+        assertFalse(e.timers(t).second.active)
     }
 
     @Test
@@ -396,16 +402,15 @@ class SubstitutionCoreTest {
         assertFalse(e.timers(t).second.active)
     }
 
-    // ---- 盲窗重建检测（真机复盘：挨揍特效 → 帧无效 → 基线重置 → 替身被吞） ----
+    // ---- 盲窗处理：短盲窗保留上下文，长盲窗使旧基线失效 ----
 
     @Test
-    fun `blind window net drop by one still emits substitution candidate`() {
+    fun `short blind window keeps baseline and later drop still detects`() {
         var t = 0L
         val e = engine(now = { t })
         repeat(20) { t += 100; e.onFrame(4, 4, t) }
-        // 满屏特效 → 连续 >2s 无效帧 → 基线作废
-        repeat(26) { t += 100; e.onFrame(4, null, t) }
-        // 特效散去豆数 4→3：盲窗内发生了替身——补发候选（仍走悬置验证）
+        // 短暂特效/遮挡 1s（< invalidBaselineTimeoutMs）→ 基线保留
+        repeat(10) { t += 100; e.onFrame(4, null, t) }
         var events: List<TimerEvent> = emptyList()
         repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
         val c = events.filterIsInstance<TimerEvent.SubstitutionCandidate>().single()
@@ -463,6 +468,278 @@ class SubstitutionCoreTest {
         repeat(26) { t += 100; e.onFrame(4, null, t) }
         // 盲窗内涨豆 3→4：不产任何事件
         repeat(5) { t += 100; assertTrue(e.onFrame(4, 4, t).isEmpty()) }
+    }
+
+    // ---- 候选与正式计时分离（真机复盘：新候选覆盖并连坐清空正式计时） ----
+
+    @Test
+    fun `rejected candidate preserves existing cooldown`() {
+        val e = SubstitutionEngine(TimerConfig(), clock = { 0L })
+
+        fun feed(count: Int, start: Long) {
+            repeat(3) { i ->
+                e.onFrame(4, count, start + i * 100L)
+            }
+        }
+
+        feed(4, 100)
+        feed(3, 400)
+        e.onFrame(4, 3, 2200)
+        val originalEnd = e.timers(2200).second.endAtMs
+
+        feed(2, 3000)
+        feed(3, 3300)
+
+        val actual = e.timers(3500).second
+        assertTrue(actual.active)
+        assertEquals(originalEnd, actual.endAtMs)
+    }
+
+    @Test
+    fun `drop during second half of cooldown does not overwrite timer`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) } // 候选 4→3
+        repeat(16) { t += 100; e.onFrame(4, 3, t) } // 验证窗后确认 → endAt=15400
+        val endAt = e.timers(t).second.endAtMs
+        assertTrue(e.timers(t).second.active)
+        // 帧持续推进到冷却后半段（remaining < 50%）再掉豆
+        repeat(68) { t += 100; e.onFrame(4, 3, t) } // t≈9000
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
+        assertTrue(events.any { (it as? TimerEvent.SubstitutionCandidate)?.conflict == true })
+        // 后半段的冲突掉豆同样不得重启/延长正式计时
+        assertEquals(endAt, e.timers(t).second.endAtMs)
+        // 冲突候选持续存在也不替代原计时
+        repeat(20) { t += 100; e.onFrame(4, 2, t) }
+        assertEquals(endAt, e.timers(t).second.endAtMs)
+        assertTrue(e.timers(t).second.remaining(t) > 0)
+    }
+
+    @Test
+    fun `candidate accepts next substitution after cooldown expiry`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) }
+        repeat(16) { t += 100; e.onFrame(4, 3, t) } // 确认 → endAt=15400
+        // 帧持续到达并跨过冷却到期（remaining=0 但 active 标志仍为 true——不能凭标志判定冷却中）
+        repeat(140) { t += 100; e.onFrame(4, 3, t) } // t≈16200 > 15400
+        var events: List<TimerEvent> = emptyList()
+        val dropAt = t + 100 // 掉豆首见帧
+        repeat(3) { t += 100; events = e.onFrame(4, 2, t) }
+        val c = events.filterIsInstance<TimerEvent.SubstitutionCandidate>().single()
+        assertFalse(c.conflict) // 已到期 → 不是冲突候选
+        // 验证期保持低位 → 确认后成为新的正式计时
+        repeat(16) { t += 100; e.onFrame(4, 2, t) }
+        val timer = e.timers(t).second
+        assertTrue(timer.active)
+        assertFalse(timer.pending)
+        assertEquals(dropAt + 15_000, timer.endAtMs)
+    }
+
+    // ---- 证据门控：没有新的有效观察不能靠等待确认候选 ----
+
+    @Test
+    fun `candidate never confirms on unknown frames alone`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) } // 悬置候选，验证窗 1.5s
+        assertTrue(e.timers(t).second.pending)
+        // 之后全是 UNKNOWN：纯时间流逝不得把候选变成已确认
+        var confirmed = false
+        var cancelled = false
+        repeat(30) { t += 100
+            for (ev in e.onFrame(4, null, t)) {
+                if (ev is TimerEvent.CandidateConfirmed) confirmed = true
+                if (ev is TimerEvent.CandidateCancelled) cancelled = true
+            }
+        }
+        assertFalse(confirmed)
+        // 长盲窗后候选被撤销（不可验证）而非升级，不留正式计时
+        assertTrue(cancelled)
+        assertFalse(e.timers(t).second.active)
+    }
+
+    @Test
+    fun `resume does not promote pending candidate`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) } // 悬置候选
+        assertTrue(e.timers(t).second.pending)
+        e.pause()
+        t += 500
+        e.resume()
+        // 恢复不得把未验证候选隐式升级为已接受计时
+        assertFalse(e.diagnostics().any { it.contains("CandidateConfirmed") })
+        val timer = e.timers(t).second
+        assertFalse(timer.pending)
+        assertFalse(timer.active)
+    }
+
+    @Test
+    fun `cancelled then reset leaves no residual state`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(20) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) } // 悬置候选
+        assertTrue(e.timers(t).second.pending)
+        e.cancelTimer(TimerSide.ENEMY)
+        // 手动撤销必须同时清掉候选——不能只清正式计时让候选"复活"
+        assertFalse(e.timers(t).second.pending)
+        assertFalse(e.timers(t).second.active)
+        e.resetBaseline("manual")
+        // 重建基线后新替身照常计（dedupe/候选无残留）
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
+        assertTrue(events.any { it is TimerEvent.SubstitutionCandidate })
+        assertTrue(e.timers(t).second.pending)
+    }
+
+    // ---- 观察窗口的时间连续性 ----
+
+    @Test
+    fun `sparse observations do not form a stable window`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) } // 基线 4
+        // 三次相隔 5s 的相同读数不是"连续稳定"——不得产候选
+        var fired = false
+        repeat(3) { t += 5_000; if (e.onFrame(4, 3, t).any { it is TimerEvent.SubstitutionCandidate }) fired = true }
+        assertFalse(fired)
+    }
+
+    @Test
+    fun `stale and replayed frames are ignored`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) } // 基线 4，lastFrame=300
+        // 同时间戳重放三帧不得凑成连续稳定
+        repeat(3) { assertTrue(e.onFrame(4, 3, 400).isEmpty()) }
+        // 倒序旧帧不得触发
+        assertTrue(e.onFrame(4, 2, 200).isEmpty())
+        assertFalse(e.timers(500).second.active)
+        // 之后正常帧仍可用
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t) }
+        assertTrue(events.any { it is TimerEvent.SubstitutionCandidate })
+    }
+
+    // ---- 场景门控：非战斗画面不参与替身判定 ----
+
+    @Test
+    fun `non battle scene frames produce no candidates`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        // 加载/菜单画面里豆槽"读数"跳变不得产候选
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(4, 3, t, battle = false) }
+        assertTrue(events.isEmpty())
+        assertFalse(e.timers(t).second.active)
+    }
+
+    @Test
+    fun `non battle scene does not confirm pending candidate`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        repeat(3) { t += 100; e.onFrame(4, 3, t) } // 悬置候选
+        var confirmed = false
+        repeat(30) { t += 100; if (e.onFrame(4, 3, t, battle = false).any { it is TimerEvent.CandidateConfirmed }) confirmed = true }
+        assertFalse(confirmed)
+        assertFalse(e.timers(t).second.active)
+    }
+
+    // ---- HUD 门控 ----
+
+    @Test
+    fun `hud gate unverified when no anchors configured`() {
+        assertEquals(SceneVerdict.UNVERIFIED, HudGate(emptyList()).verdict(emptyList()))
+    }
+
+    @Test
+    fun `scene evaluation falls back to weak signal only without anchors`() {
+        // 锚点未标定：双零→非战斗兜底；单侧有效→未验证（不是"豆数算得出=HUD 有效"）
+        assertEquals(SceneVerdict.NOT_BATTLE, evaluateScene(emptyList(), emptyList(), 0, 0))
+        assertEquals(SceneVerdict.UNVERIFIED, evaluateScene(emptyList(), emptyList(), 4, null))
+        // 锚点已标定：真实 HUD 证据下双零是合法观察，不再被门控吞掉
+        val blood = RgbBox(0, 120, 0, 80, 255, 80)
+        val anchors = listOf(HudAnchor(NormalizedRect(0f, 0f, 0.4f, 0.05f), blood, 0.5f))
+        val green = IntArray(16) { 0xFF28C84B.toInt() }
+        assertEquals(SceneVerdict.BATTLE, evaluateScene(anchors, listOf(green), 0, 0))
+        val dark = IntArray(16) { 0xFF101014.toInt() }
+        assertEquals(SceneVerdict.NOT_BATTLE, evaluateScene(anchors, listOf(dark), 4, 4))
+    }
+
+    @Test
+    fun `hud gate requires anchor hits independent of dot color`() {
+        // 血条绿色盒——与豆点亮色完全不同的证据源
+        val blood = RgbBox(0, 120, 0, 80, 255, 80)
+        val anchors = listOf(
+            HudAnchor(NormalizedRect(0f, 0f, 0.4f, 0.05f), blood, 0.5f),
+            HudAnchor(NormalizedRect(0.6f, 0f, 1f, 0.05f), blood, 0.5f),
+        )
+        val gate = HudGate(anchors)
+        val green = IntArray(16) { 0xFF28C84B.toInt() }
+        val dark = IntArray(16) { 0xFF101014.toInt() }
+        assertEquals(SceneVerdict.BATTLE, gate.verdict(listOf(green, green)))
+        assertEquals(SceneVerdict.NOT_BATTLE, gate.verdict(listOf(green, dark)))
+        assertEquals(SceneVerdict.NOT_BATTLE, gate.verdict(listOf(dark, dark)))
+    }
+
+    // ---- 诊断回放闭环：记录→读取→回放→结果比较 ----
+
+    @Test
+    fun `recorded observations replay to identical events`() {
+        // 构造一段观察序列（合成样本）：基线→替身→确认→盲窗→恢复
+        val records = buildList {
+            var t = 0L; var seq = 0
+            fun rec(self: Int?, enemy: Int?, dt: Long, battle: Boolean = true): ObservationRecord {
+                t += dt
+                return ObservationRecord(
+                    seq = seq++, atMs = t, clock = "test", channel = "replay",
+                    geoW = 1920, geoH = 1080, scene = "BATTLE", battle = battle,
+                    selfCount = self, enemyCount = enemy,
+                )
+            }
+            repeat(3) { add(rec(4, 4, 100)) }
+            repeat(3) { add(rec(4, 3, 100)) }
+            repeat(20) { add(rec(4, 3, 100)) }
+            repeat(30) { add(rec(null, null, 100)) }  // 长盲窗
+            repeat(3) { add(rec(4, 2, 100)) }          // 盲窗恢复净掉豆 → 歧义
+            repeat(3) { add(rec(4, 3, 100, battle = false)) } // 非战斗画面
+        }
+        // 序列化→读取闭环：解码后与原始记录一致
+        val parsed = records.map(DiagJson::encode).map(DiagJson::decode)
+        assertEquals(records, parsed)
+        // 回放比较：同一批观察与实时送入产出相同事件序列
+        val live = SubstitutionEngine(TimerConfig(), clock = { 0L })
+        val expected = records.map { live.onFrame(it.selfCount, it.enemyCount, it.atMs, it.battle) }
+        val replayed = SubstitutionEngine(TimerConfig(), clock = { 0L }).replay(parsed)
+        assertEquals(expected, replayed)
+        val flat = replayed.flatten()
+        assertTrue(flat.any { it is TimerEvent.SubstitutionCandidate })
+        assertTrue(flat.any { it is TimerEvent.CandidateConfirmed })
+        assertTrue(flat.any { it is TimerEvent.AmbiguousDrop })
+        assertTrue(flat.none { it is TimerEvent.CandidateCancelled && it.reason == "window_end" })
+    }
+
+    // ---- 双侧独立 ----
+
+    @Test
+    fun `unknown frames on one side never block the other`() {
+        var t = 0L
+        val e = engine(now = { t })
+        repeat(3) { t += 100; e.onFrame(4, 4, t) }
+        var events: List<TimerEvent> = emptyList()
+        repeat(3) { t += 100; events = e.onFrame(null, 3, t) }
+        assertTrue(events.any { it is TimerEvent.SubstitutionCandidate && it.side == TimerSide.ENEMY })
+        assertTrue(e.timers(t).second.pending)
     }
 }
 

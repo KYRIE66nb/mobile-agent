@@ -92,12 +92,12 @@ data class DetectionTuning(
     val confirmFrames: Int = 3,
     /** 稳定计数窗口内允许的 UNKNOWN 帧比例；超过则整个估计为 null。 */
     val maxUnknownRatio: Float = 0.5f,
-    /** 无效 HUD/丢帧超过该时长重建基线。 */
+    /** 距上次有效观察超过该时长 → 旧基线失效（盲窗：无效帧/无帧/非战斗画面同等待遇）。 */
     val invalidBaselineTimeoutMs: Long = 2000,
     /** 同一候选去重窗：同一侧两次 n→n−1 间隔小于该值视为同一事件。 */
     val dedupeMs: Long = 800,
-    /** 倒计时进行中又出现新候选 → 标记冲突而非静默覆盖。 */
-    val conflictWindowFraction: Float = 0.5f,
+    /** 相邻两次观察的最大间隔：超过则稳定计数连续证据断裂，候选重新累计。 */
+    val maxObservationGapMs: Long = 500,
     /**
      * 掉落前的"高位计数"须已稳定该时长才接受为替身候选；
      * 涨豆动画/闪光造成的高位驻留 + 落回原值在该窗内被判为抖动而非替身。
@@ -168,6 +168,62 @@ data class NormalizedRect(val left: Float, val top: Float, val right: Float, val
 }
 
 /**
+ * HUD 锚点：与豆色独立的战斗画面证据（血条边框、头像框、对局计时区域等）。
+ * rect 为帧归一化矩形；rect 内命中 box 的像素占比 ≥ minRatio 记一次命中。
+ * 默认空——真实 HUD/非 HUD 样本标定后才可配置，未配置时场景判定降级为弱启发式。
+ */
+data class HudAnchor(
+    val rect: NormalizedRect,
+    val box: RgbBox,
+    val minRatio: Float,
+)
+
+/** 战斗场景判定：BATTLE 参与推断；NOT_BATTLE 全部按无效观察；UNVERIFIED 表示证据未配置。 */
+enum class SceneVerdict { BATTLE, NOT_BATTLE, UNVERIFIED }
+
+/**
+ * HUD 门控：只用豆色之外的锚点证据判定"当前是不是战斗画面"——
+ * 不能用"豆数算得出来"反推 HUD 有效（加载页也可能在豆槽位置读出暗色块）。
+ */
+class HudGate(
+    private val anchors: List<HudAnchor>,
+    minHits: Int? = null,
+) {
+    private val needed = (minHits ?: anchors.size).coerceAtLeast(1)
+
+    /** 逐锚点采样：返回各锚点命中占比。anchorSamples[i] 对应 anchors[i] 的 ROI 像素。 */
+    fun hitRatios(anchorSamples: List<IntArray>): List<Float> =
+        anchors.mapIndexed { i, a ->
+            val px = anchorSamples.getOrNull(i) ?: intArrayOf()
+            if (px.isEmpty()) 0f else px.count { a.box.contains(it) }.toFloat() / px.size
+        }
+
+    fun verdict(anchorSamples: List<IntArray>): SceneVerdict {
+        if (anchors.isEmpty()) return SceneVerdict.UNVERIFIED
+        val hits = hitRatios(anchorSamples).zip(anchors).count { (ratio, a) -> ratio >= a.minRatio }
+        return if (hits >= needed) SceneVerdict.BATTLE else SceneVerdict.NOT_BATTLE
+    }
+}
+
+/**
+ * 战斗场景判定：锚点已标定 → 由独立 HUD 证据裁决；
+ * 锚点未标定 → 弱启发式兜底：两侧"全灭"视作非战斗（转场豆槽整排消失的假零）。
+ * 一旦锚点配置，双零不再参与门控——有效 HUD 下双方零豆是合法观察。
+ */
+fun evaluateScene(
+    anchors: List<HudAnchor>,
+    anchorSamples: List<IntArray>,
+    selfCount: Int?,
+    enemyCount: Int?,
+): SceneVerdict {
+    if (anchors.isEmpty()) {
+        return if (selfCount == 0 && enemyCount == 0) SceneVerdict.NOT_BATTLE
+        else SceneVerdict.UNVERIFIED
+    }
+    return HudGate(anchors).verdict(anchorSamples)
+}
+
+/**
  * 布局配置：contentRect 是帧中"游戏有效内容"区域（处理黑边/刘海/单应用共享偏移），
  * selfDots/enemyDots 是该区域内的归一化豆槽矩形，内部等分 dotsPerSide 个采样点。
  */
@@ -176,6 +232,8 @@ data class TimerLayout(
     val selfDots: NormalizedRect = NormalizedRect(0.03f, 0.13f, 0.22f, 0.20f),
     val enemyDots: NormalizedRect = NormalizedRect(0.78f, 0.13f, 0.97f, 0.20f),
     val dotsPerSide: Int = 4,
+    /** 战斗场景锚点（独立于豆色）：空 = 未标定，场景判定走降级路径。 */
+    val hudAnchors: List<HudAnchor> = emptyList(),
 ) {
     init { require(dotsPerSide in 1..8) { "dotsPerSide 必须在 1..8" } }
 
@@ -208,22 +266,24 @@ data class TimerConfig(
     val tuning: DetectionTuning = DetectionTuning(),
     /** 校准完成后才允许进入识别；默认布局只是校准起点。 */
     val calibrated: Boolean = false,
+    /** 本地诊断模式：用户主动开启后按限额保存事件上下文观察，默认不保存整屏、不上传。 */
+    val diagnosticsEnabled: Boolean = false,
     /** 实战我方可能分到右侧：true 时我方读右槽位（右满豆方向）、敌方读左槽。 */
     val swapSides: Boolean = false,
     val overlayX: Int? = null,
     val overlayY: Int? = null,
 )
 
-/** 单侧计时显示状态。 */
+/** 单侧计时显示状态（UI 消费的是不可变快照）。 */
 data class SideTimer(
     val side: TimerSide,
     val active: Boolean = false,
     val endAtMs: Long = 0,
-    /** 由豆数间接推断 → 一律带"疑似"标记；conflict 表示覆盖过一个未走完的计时。 */
+    /** 由豆数间接推断 → 一律带"疑似"标记；conflict 表示该冷却期内出现过冲突掉豆证据。 */
     val suspected: Boolean = true,
     val conflict: Boolean = false,
     val eventAtMs: Long = 0,
-    /** 候选尚在回弹验证窗内——掉豆被推翻时计时会被撤销。 */
+    /** true 表示这是未决候选的"推断中"展示态，证据可能被推翻——不是已接受计时。 */
     val pending: Boolean = false,
 ) {
     fun remaining(nowMs: Long) = max(0L, endAtMs - nowMs)
