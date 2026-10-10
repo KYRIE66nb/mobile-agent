@@ -13,7 +13,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import xyz.chouxuewei.mobile_agent.core.substitution.DetectionTuning
+import xyz.chouxuewei.mobile_agent.core.substitution.HudAnchor
 import xyz.chouxuewei.mobile_agent.core.substitution.NormalizedRect
+import xyz.chouxuewei.mobile_agent.core.substitution.RgbBox
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerConfig
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerLayout
 
@@ -39,6 +41,7 @@ class SubstitutionTimerRepository(context: Context) {
         val OVERLAY_X = intPreferencesKey("st_overlay_x")
         val OVERLAY_Y = intPreferencesKey("st_overlay_y")
         val SWAP_SIDES = booleanPreferencesKey("st_swap_sides")
+        val DIAGNOSTICS = booleanPreferencesKey("st_diagnostics")
 
         // 检测调参（HSV 阈值三键为旧版残留，新实现用颜色盒，仅保留仍生效的键）
         val LIT_PIXEL_RATIO = floatPreferencesKey("st_lit_pixel_ratio")
@@ -59,6 +62,7 @@ class SubstitutionTimerRepository(context: Context) {
             calibrated = p[Keys.CALIBRATED] ?: false,
             layout = decodeLayout(p[Keys.LAYOUT]),
             swapSides = p[Keys.SWAP_SIDES] ?: false,
+            diagnosticsEnabled = p[Keys.DIAGNOSTICS] ?: false,
             overlayX = p[Keys.OVERLAY_X],
             overlayY = p[Keys.OVERLAY_Y],
             tuning = DetectionTuning(
@@ -79,6 +83,7 @@ class SubstitutionTimerRepository(context: Context) {
     suspend fun setGamePackage(value: String) = edit { it[Keys.GAME_PACKAGE] = value.trim() }
     suspend fun setShowSelf(value: Boolean) = edit { it[Keys.SHOW_SELF] = value }
     suspend fun setSwapSides(value: Boolean) = edit { it[Keys.SWAP_SIDES] = value }
+    suspend fun setDiagnostics(value: Boolean) = edit { it[Keys.DIAGNOSTICS] = value }
 
     suspend fun setCooldownMs(value: Long) =
         edit { it[Keys.COOLDOWN_MS] = value.coerceIn(1_000, 120_000) }
@@ -102,11 +107,23 @@ class SubstitutionTimerRepository(context: Context) {
         store.edit(block)
     }
 
-    /** 矩形编码：l,t,r,b;l,t,r,b;l,t,r,dots（content;self;enemy;dotsPerSide） */
-    private fun encodeLayout(l: TimerLayout): String =
-        listOf(l.contentRect, l.selfDots, l.enemyDots)
+    /**
+     * 布局编码：l,t,r,b;l,t,r,b;l,t,r,b;dots[;anchors]
+     * 第 5 段为可选 HUD 锚点（旧配置没有该段 → 解码为空列表，迁移安全）。
+     * 锚点项：rect|box|ratio 即 l,t,r,b|minR,minG,minB,maxR,maxG,maxB|minRatio，逗号分隔多项用 "+" 连接。
+     */
+    private fun encodeLayout(l: TimerLayout): String {
+        val base = listOf(l.contentRect, l.selfDots, l.enemyDots)
             .joinToString(";") { "${it.left},${it.top},${it.right},${it.bottom}" } +
             ";${l.dotsPerSide}"
+        if (l.hudAnchors.isEmpty()) return base
+        val anchors = l.hudAnchors.joinToString("+") { a ->
+            "${a.rect.left},${a.rect.top},${a.rect.right},${a.rect.bottom}|" +
+                "${a.box.minR},${a.box.minG},${a.box.minB}," +
+                "${a.box.maxR},${a.box.maxG},${a.box.maxB}|${a.minRatio}"
+        }
+        return "$base;$anchors"
+    }
 
     private fun decodeLayout(raw: String?): TimerLayout {
         if (raw == null) return TimerLayout()
@@ -117,7 +134,22 @@ class SubstitutionTimerRepository(context: Context) {
             TimerLayout(
                 contentRect = rect(0), selfDots = rect(1), enemyDots = rect(2),
                 dotsPerSide = parts.getOrNull(3)?.toIntOrNull() ?: 4,
+                hudAnchors = decodeAnchors(parts.getOrNull(4)),
             )
         }.getOrDefault(TimerLayout())
+    }
+
+    private fun decodeAnchors(raw: String?): List<HudAnchor> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return raw.split("+").mapNotNull { spec ->
+            runCatching {
+                val segs = spec.split("|")
+                val rect = segs[0].split(",").map(String::toFloat)
+                    .let { NormalizedRect.of(it[0], it[1], it[2], it[3]) }
+                val box = segs[1].split(",").map(String::toInt)
+                    .let { RgbBox(it[0], it[1], it[2], it[3], it[4], it[5]) }
+                HudAnchor(rect, box, segs[2].toFloat())
+            }.getOrNull()
+        }
     }
 }

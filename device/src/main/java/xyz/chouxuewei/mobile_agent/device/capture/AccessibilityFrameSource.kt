@@ -94,13 +94,17 @@ class AccessibilityFrameSource(
         override val width = screenW
         override val height = screenH
 
+        override fun contains(l: Int, t: Int, r: Int, b: Int): Boolean =
+            l >= bounds.left && t >= bounds.top && r <= bounds.right && b <= bounds.bottom &&
+                r > l && b > t
+
         override fun sample(l: Int, t: Int, r: Int, b: Int, grid: Int): IntArray {
-            val left = (l - bounds.left).coerceIn(0, bitmap.width - 1)
-            val right = (r - bounds.left).coerceIn(left + 1, bitmap.width)
-            val top = (t - bounds.top).coerceIn(0, bitmap.height - 1)
-            val bottom = (b - bounds.top).coerceIn(top + 1, bitmap.height)
-            val w = right - left
-            val h = bottom - top
+            // 越界 ROI 不得夹边当有效豆槽——返回空数组，分类器判 UNKNOWN 丢帧
+            if (!contains(l, t, r, b)) return IntArray(0)
+            val left = l - bounds.left
+            val top = t - bounds.top
+            val w = r - l
+            val h = b - t
             val gx = maxOf(1, minOf(grid, w))
             val gy = maxOf(1, minOf(grid, h))
             val out = IntArray(gx * gy)
@@ -112,6 +116,11 @@ class AccessibilityFrameSource(
                 }
             }
             return out
+        }
+
+        override fun crop(l: Int, t: Int, r: Int, b: Int): Bitmap? {
+            if (!contains(l, t, r, b)) return null
+            return Bitmap.createBitmap(bitmap, l - bounds.left, t - bounds.top, r - l, b - t)
         }
 
         override fun snapshot(targetWidth: Int): Bitmap {

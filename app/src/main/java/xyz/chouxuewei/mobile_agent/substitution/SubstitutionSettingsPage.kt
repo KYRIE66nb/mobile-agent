@@ -51,10 +51,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
+import xyz.chouxuewei.mobile_agent.core.substitution.DotClassifier
+import xyz.chouxuewei.mobile_agent.core.substitution.DotState
 import xyz.chouxuewei.mobile_agent.core.substitution.NormalizedRect
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerConfig
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerLayout
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerServiceState
+import xyz.chouxuewei.mobile_agent.core.substitution.TimerSide
 import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
 
 /** 替身计时器设置页：开关、游戏选择、参数、校准与状态说明。 */
@@ -100,6 +103,16 @@ fun SubstitutionSettingsPage(app: PrototypeApplication) {
         }
         SettingSwitch("我方在右侧（实战分边互换）", config.swapSides) {
             scope.launch { app.substitutionSettings.setSwapSides(it) }
+        }
+        SettingSwitch("本地诊断记录（事件上下文，仅存本机）", config.diagnosticsEnabled) {
+            scope.launch { app.substitutionSettings.setDiagnostics(it) }
+        }
+        if (config.diagnosticsEnabled) {
+            Text(
+                "诊断开启时记录观察序列与豆槽小块像素（不上传、限额滚动）；悬浮窗出现「漏了/错了」标记按钮",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
 
         HorizontalDivider()
@@ -264,6 +277,15 @@ private fun CalibrationPanel(config: TimerConfig, app: PrototypeApplication) {
         return
     }
     val bmp = frame!!
+    // 每颗豆的实际采样小区域 + 亮/暗判定：直接在校准预览上跑同一套分类器
+    val classifier = remember(config.tuning) { DotClassifier(config.tuning) }
+    fun cellPixels(l: Int, t: Int, r: Int, b: Int, grid: Int): IntArray {
+        val w = (r - l).coerceAtLeast(1); val h = (b - t).coerceAtLeast(1)
+        val gx = minOf(grid, w); val gy = minOf(grid, h)
+        return IntArray(gx * gy) { i ->
+            bmp.getPixel(l + (i % gx) * w / gx, t + (i / gx) * h / gy)
+        }
+    }
     Box(
         Modifier
             .fillMaxWidth()
@@ -271,16 +293,43 @@ private fun CalibrationPanel(config: TimerConfig, app: PrototypeApplication) {
     ) {
         Image(bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
         Canvas(Modifier.fillMaxSize()) {
-            fun drawRect(r: NormalizedRect, color: Color) {
+            fun drawRect(r: NormalizedRect, color: Color, w: Float = 3f) {
                 drawRect(
                     color = color,
                     topLeft = Offset(r.left * size.width, r.top * size.height),
                     size = Size((r.right - r.left) * size.width, (r.bottom - r.top) * size.height),
-                    style = Stroke(width = 3f),
+                    style = Stroke(width = w),
                 )
             }
             drawRect(self, Color(0xFF81C784))
             drawRect(enemy, Color(0xFFFF7043))
+            // 每格内缩采样区 + 分类结果着色：绿=亮、灰=灭、黄=未知——校准所见即识别所得
+            val previewLayout = config.layout.copy(selfDots = self, enemyDots = enemy)
+            val sx = size.width / bmp.width; val sy = size.height / bmp.height
+            for (side in listOf(TimerSide.SELF, TimerSide.ENEMY)) {
+                for (cell in previewLayout.dotCells(side, bmp.width, bmp.height)) {
+                    val wpx = cell[2] - cell[0]; val hpx = cell[3] - cell[1]
+                    val inset = (1f - config.tuning.cellInnerFraction) / 2f
+                    val l = (cell[0] + wpx * inset).toInt()
+                    val t = (cell[1] + hpx * inset).toInt()
+                    val r = (cell[2] - wpx * inset).toInt()
+                    val b = (cell[3] - hpx * inset).toInt()
+                    val result = classifier.classify(
+                        cellPixels(l, t, r, b, config.tuning.sampleGrid), side,
+                    )
+                    val color = when (result.state) {
+                        DotState.LIT -> Color(0xFF64DD17)
+                        DotState.EMPTY -> Color(0xFF78909C)
+                        DotState.UNKNOWN -> Color(0xFFFFD600)
+                    }
+                    drawRect(
+                        color = color,
+                        topLeft = Offset(l * sx, t * sy),
+                        size = Size((r - l) * sx, (b - t) * sy),
+                        style = Stroke(width = 2f),
+                    )
+                }
+            }
         }
     }
     RectSliders("我方豆槽（绿框）", self) { self = it }

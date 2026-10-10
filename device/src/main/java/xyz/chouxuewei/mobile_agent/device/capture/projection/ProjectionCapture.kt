@@ -80,25 +80,26 @@ class ProjectionCapture {
             override val width = image.width
             override val height = image.height
 
+            override fun contains(l: Int, t: Int, r: Int, b: Int): Boolean =
+                l >= 0 && t >= 0 && r <= image.width && b <= image.height && r > l && b > t
+
             override fun sample(l: Int, t: Int, r: Int, b: Int, grid: Int): IntArray {
+                // 越界 ROI 不得夹边当有效豆槽——返回空数组，分类器判 UNKNOWN 丢帧
+                if (!contains(l, t, r, b)) return IntArray(0)
                 val plane = image.planes[0]
                 val buffer = plane.buffer
                 val rowStride = plane.rowStride
                 val pixelStride = plane.pixelStride
-                val left = l.coerceIn(0, image.width - 1)
-                val right = r.coerceIn(left + 1, image.width)
-                val top = t.coerceIn(0, image.height - 1)
-                val bottom = b.coerceIn(top + 1, image.height)
-                val w = right - left
-                val hgt = bottom - top
+                val w = r - l
+                val hgt = b - t
                 val gx = maxOf(1, minOf(grid, w))
                 val gy = maxOf(1, minOf(grid, hgt))
                 val out = IntArray(gx * gy)
                 var i = 0
                 for (y in 0 until gy) {
-                    val rowOffset = (top + y * hgt / gy) * rowStride
+                    val rowOffset = (t + y * hgt / gy) * rowStride
                     for (x in 0 until gx) {
-                        val o = rowOffset + (left + x * w / gx) * pixelStride
+                        val o = rowOffset + (l + x * w / gx) * pixelStride
                         out[i++] = (0xFF shl 24) or
                             ((buffer.get(o).toInt() and 0xFF) shl 16) or
                             ((buffer.get(o + 1).toInt() and 0xFF) shl 8) or
@@ -106,6 +107,30 @@ class ProjectionCapture {
                     }
                 }
                 return out
+            }
+
+            override fun crop(l: Int, t: Int, r: Int, b: Int): android.graphics.Bitmap? {
+                if (!contains(l, t, r, b)) return null
+                val w = r - l
+                val hgt = b - t
+                val pixels = IntArray(w * hgt)
+                val plane = image.planes[0]
+                val buffer = plane.buffer
+                val rowStride = plane.rowStride
+                val pixelStride = plane.pixelStride
+                for (y in 0 until hgt) {
+                    val rowOffset = (t + y) * rowStride
+                    for (x in 0 until w) {
+                        val o = rowOffset + (l + x) * pixelStride
+                        pixels[y * w + x] = (0xFF shl 24) or
+                            ((buffer.get(o).toInt() and 0xFF) shl 16) or
+                            ((buffer.get(o + 1).toInt() and 0xFF) shl 8) or
+                            (buffer.get(o + 2).toInt() and 0xFF)
+                    }
+                }
+                return android.graphics.Bitmap.createBitmap(
+                    pixels, w, hgt, android.graphics.Bitmap.Config.ARGB_8888,
+                )
             }
 
             override fun snapshot(targetWidth: Int): android.graphics.Bitmap {
@@ -142,10 +167,19 @@ class ProjectionCapture {
         if (!running.get()) onClosed?.invoke("stopped")
     }
 
-    /** VirtualDisplay 被系统夺走（如第三方录屏抢投影）时原地重建：复用同一
-     *  MediaProjection 令牌，reader+VD 全部换新；重建失败走 onClosed。 */
+    /**
+     * VirtualDisplay 被系统夺走（如第三方录屏抢投影）时的恢复策略：
+     * - API < 34：复用同一 MediaProjection 令牌重建 reader+VD，失败走 onClosed；
+     * - API ≥ 34：同一 MediaProjection 只允许一次 createVirtualDisplay——
+     *   重建必然抛异常，直接上报关闭，由调用方走降级通道或重新授权。
+     */
     fun restart() {
         if (!running.get()) return
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            android.util.Log.w(TAG, "VD restart unsupported on API34+ (single-use projection)")
+            onClosed?.invoke("projection_vd_single_use")
+            return
+        }
         val p = projection ?: return
         val h = handler ?: return
         h.post {
@@ -171,11 +205,16 @@ class ProjectionCapture {
         val vd = display ?: return
         val h = handler ?: return
         h.post {
-            pending?.close(); pending = null
-            reader?.close()
-            reader = newReader(width, height, h)
-            vd.surface = reader!!.surface
-            vd.resize(width, height, dpi)
+            try {
+                pending?.close(); pending = null
+                reader?.close()
+                reader = newReader(width, height, h)
+                vd.surface = reader!!.surface
+                vd.resize(width, height, dpi)
+            } catch (t: Throwable) {
+                android.util.Log.e(TAG, "capture resize failed", t)
+                onClosed?.invoke("resize_failed:${t.message}")
+            }
         }
     }
 

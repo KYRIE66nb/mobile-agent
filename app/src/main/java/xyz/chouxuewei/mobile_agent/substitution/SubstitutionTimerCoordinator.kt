@@ -196,6 +196,11 @@ object SubstitutionTimerCoordinator {
         putExtra(SubstitutionTimerService.EXTRA_SELF_LEFT, selfOnLeft)
     }
 
+    /** 诊断手动标记："missed"=刚才漏了 / "wrong"=刚才错了。 */
+    fun markDiag(kind: String) = serviceAction(SubstitutionTimerService.ACTION_DIAG_MARK) {
+        putExtra(SubstitutionTimerService.EXTRA_DIAG_MARK, kind)
+    }
+
     private fun serviceAction(action: String, extras: Intent.() -> Unit = {}) {
         val ctx = app ?: return
         // 服务已死时后台 startService 会抛 IllegalStateException——手动操作绝不允许崩进程
