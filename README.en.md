@@ -123,7 +123,7 @@ Real captures from a physical device — no mockups. The dark floating pill on s
 
 ### Naruto substitution timer — real match footage
 
-https://github.com/user-attachments/assets/85936c9f-b971-43ba-98e9-bf004bf29ebd
+<video src="https://github.com/KYRIE66nb/mobile-agent/raw/main/docs/assets/substitution-timer-demo.mp4" controls muted playsinline width="100%"></video>
 
 Arena footage: enemy substitution "estimated recovered", own suspected substitution counting down at 7.0s — all inferred from pixels on-device, no model call, no network.
 
