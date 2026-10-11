@@ -212,6 +212,14 @@ ContextManager 是运行时中的独立职责，通过模型接口请求摘要�
 
 不依赖 Root 的系统能力按剪贴板、通知和系统功能三个独立能力组注册。剪贴板支持受授权的读取、写入和清空；通知依赖 Android 通知使用权，支持读取、打开、按钮操作和清除，验证码与账户安全通知会隐藏内容并禁止自动按钮或清除；系统功能通过类型化参数打开深链接/系统面板、分享文字、读取和调整音量，并在 Android 授予“修改系统设置”后调整亮度与旋转。文件工具可对当前对话内已有文件打开系统分享面板。以上接口不接受任意 Shell、任意文件路径或未在当前对话中的文件引用。
 
+### 6.1 桌面控制桥（Android Use Bridge）
+
+`device/bridge/` 把设备控制能力经一条受控 HTTP 通道暴露给电脑端 Agent。`BridgeService` 为前台服务、不可导出（`exported=false`），在 `127.0.0.1:17325` 上提供手写 loopback HTTP/1.1 服务；`BridgeController` 路由 `/status`、`/session`、`/observe`、`/inspect`、`/action`、`/apps`、`/screen` 与暂停/恢复，全部转发给现有 `DeviceGateway`——桌面端与 App 内 Agent 复用同一条无障碍/Root 通道，不另起控制栈。新增 `AccessibilityDeviceGateway` 以无障碍通道驱动主屏：Android 11+ `takeScreenshot` 采集显示帧（硬件位图解码为可编码 Bitmap）、`dispatchGesture` 坐标点按/长按、全局动作（Home/Back/Recents）与音量键。
+
+安全边界：所有请求须带 `Bearer` 配对 token（`/screen` 预览允许 `?token=` 等价凭据以兼容浏览器 `<img>`，并处理 CORS/OPTIONS）；token 仅经 `BridgePairingProvider` 对 `SHELL_UID` 的 `content call` 发放，本机其他应用调用抛 SecurityException；开关仅存应用私有 SharedPreferences（`desktop_bridge`），`PrototypeApplication` 启动时按开关恢复桥；桥会话排他，重复打开返回 `session_busy`。
+
+桌面侧 `desktop/server/` 为零依赖 Python：`adb_client.py` 持久 HTTP 客户端（只读可重试、动作不盲重放，`action_uncertain` 结构化暴露不确定性）；`adb_controller.py` 选择器解析（文本/描述/id/类型/正则/索引）、截图兜底、字素安全分段续传、滚动锚点校验、批量预检；`adb_setup.py` 经 adb 完成 discover→configure→enable_accessibility→pair→forward→ready 装配；`adb_screen.py` 维护单条 `/screen` MJPEG 流并缓存最新帧供 `aua_screen*` 与 `phone_preview.html` 预览；`android_use.py` 以 MCP stdio JSON-RPC 暴露 19 个 `aua_*` 工具，串行执行设备操作并以 `operation.lock` 防多实例并发。MIUI 等 ROM 会拦截非导出组件的 `am start-foreground-service` 及后台 FGS 启动，故开启桥的权威路径是 App 前台状态下的设置页开关；部分 ROM 在 force-stop 后撤销经 adb 授予的无障碍服务，需重新 `enable_accessibility`。
+
 ## 7. 主题与展示层
 
 ### 7.1 统一主题解析
