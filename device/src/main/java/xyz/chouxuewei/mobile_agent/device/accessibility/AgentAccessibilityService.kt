@@ -159,21 +159,79 @@ class AgentAccessibilityService : AccessibilityService() {
         }
         val buffer = result.hardwareBuffer
         return try {
-            val bitmap = withContext(Dispatchers.Default) {
-                val hardwareBitmap = checkNotNull(Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)) {
-                    localizedText("系统返回的窗口截图格式不受支持", "The window screenshot format returned by the system is unsupported.")
-                }
-                try {
-                    checkNotNull(hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)) {
-                        localizedText("窗口截图无法转换为可编码图片", "The window screenshot could not be converted to an encodable image.")
-                    }
-                } finally {
-                    hardwareBitmap.recycle()
-                }
-            }
-            AccessibilityWindowCapture(bitmap, target)
+            AccessibilityWindowCapture(decodeHardwareBuffer(result), target)
         } finally {
             buffer.close()
+        }
+    }
+
+    /** Android 11 起可截取整块显示，包含状态栏与悬浮层；系统对同一窗口/显示有最短间隔限制。 */
+    suspend fun captureDisplay(displayId: Int): Bitmap {
+        check(Build.VERSION.SDK_INT >= 30) { localizedText("屏幕截图需要 Android 11 或更高版本", "Display screenshots require Android 11 or later.") }
+        val result = suspendCancellableCoroutine<ScreenshotResult> { continuation ->
+            takeScreenshot(displayId, mainExecutor, object : TakeScreenshotCallback {
+                override fun onSuccess(screenshot: ScreenshotResult) {
+                    if (continuation.isActive) continuation.resume(screenshot)
+                    else screenshot.hardwareBuffer.close()
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(AccessibilityScreenshotException(errorCode))
+                    }
+                }
+            })
+        }
+        val buffer = result.hardwareBuffer
+        return try {
+            decodeHardwareBuffer(result)
+        } finally {
+            buffer.close()
+        }
+    }
+
+    private suspend fun decodeHardwareBuffer(result: ScreenshotResult): Bitmap =
+        withContext(Dispatchers.Default) {
+            val hardwareBitmap = checkNotNull(Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)) {
+                localizedText("系统返回的截图格式不受支持", "The screenshot format returned by the system is unsupported.")
+            }
+            try {
+                checkNotNull(hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)) {
+                    localizedText("截图无法转换为可编码图片", "The screenshot could not be converted to an encodable image.")
+                }
+            } finally {
+                hardwareBitmap.recycle()
+            }
+        }
+
+    /** 全局导航动作（Home/Back/Recents），不依赖坐标和节点。 */
+    fun globalAction(actionId: Int): Boolean = performGlobalAction(actionId)
+
+    /** 退化为单点的轨迹在系统层就是一次按下；durationMs≈60 为点击，更长为长按。 */
+    suspend fun tapAt(displayId: Int, x: Int, y: Int, durationMs: Long) {
+        require(durationMs in 1..10_000) { localizedText("点击时长参数无效", "Invalid tap duration.") }
+        val builder = GestureDescription.Builder()
+        if (Build.VERSION.SDK_INT >= 30) builder.setDisplayId(displayId)
+        val path = Path().apply {
+            moveTo(x.toFloat(), y.toFloat())
+            lineTo(x.toFloat(), y.toFloat())
+        }
+        builder.addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs, false))
+        suspendCancellableCoroutine { continuation ->
+            val accepted = dispatchGesture(builder.build(), object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) continuation.resume(Unit)
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    if (continuation.isActive) {
+                        continuation.resumeWithException(IllegalStateException(localizedText("目标应用取消了点击手势", "The target app cancelled the tap gesture.")))
+                    }
+                }
+            }, null)
+            if (!accepted && continuation.isActive) {
+                continuation.resumeWithException(IllegalStateException(localizedText("系统未接受点击手势", "The system did not accept the tap gesture.")))
+            }
         }
     }
 
