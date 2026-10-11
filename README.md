@@ -178,6 +178,41 @@ https://github.com/user-attachments/assets/2d88800f-3ffe-45b2-bfee-56f474d6c136
 
 **Shizuku 降级通道**：非 Root 设备安装并授权 Shizuku 后，`system_shell` 工具可以 shell(uid 2000) 身份执行白名单管理命令（am/pm/dumpsys/settings/input/content 等，拒绝管道与拼接），用于查应用信息、清缓存、发按键事件——无需抢主屏。
 
+### 电脑控制（USB · Android Use Bridge）
+
+手机上的 Agent 可以自己动手，也可以**把双手借给电脑上的 Agent**：App 内置一个只绑 `127.0.0.1:17325` 的鉴权 HTTP 桥，经 `adb forward` 暴露给桌面端零依赖 Python MCP 服务——Claude Code、Devin 或任何 MCP 客户端像操作一台远程设备一样读屏、点屏、输文字。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/desktop-bridge.dark.png">
+  <img src="docs/assets/desktop-bridge.light.png" alt="桌面 Agent 控制链路" width="100%">
+</picture>
+
+[交互式链路图](docs/assets/desktop-bridge.html)（下载后用浏览器打开，支持缩放 / 路径追踪 / 暗色模式）
+
+- **安全边界是硬设计**：HTTP 只绑 loopback，Bearer token 配对且只能经 `adb shell` 取到；服务不可导出，开关在 App 设置页显式掌控；桥会话排他，桌面端对可能已执行的动作绝不盲重放——断线只会报"不确定成没成"，不会重复点两次。
+- **19 个 `aua_*` 工具**：`observe`（节点树 + 截图）、`find` / `tap` / `long_press` / `swipe` / `type_text` / `press_button` / `launch_app`，以及 `batch`、`scroll_find`、`collect_list`、`apps`、`screen`（MJPEG 实时预览）与 `setup` / `ready` / `doctor` / `metrics` 装配诊断全套。
+- **与 App 内 Agent 同一条网关**：无障碍语义选择器按文本/描述/id/类型/正则命中节点，命中不了回退截图像素坐标——桌面和手机内 Agent 用的是同一套"看屏—决策—执行"原语。
+- **长文本与滚动都验证**：Unicode 文本按字素分段续传（中文、emoji 不断字），滚动用无障碍锚点校验真的动了，批量动作先全量预检再执行。
+
+真机接通路径（红米 Android 16 实测）：
+
+```bash
+python3 desktop/server/android_use.py   # 作为 MCP stdio 服务注册进客户端
+# aua_setup: discover → configure → enable_accessibility → pair → forward → ready
+# 开启桥：设置 → 通用 → 电脑控制（USB）（release 包不可 run-as，开关是唯一权威入口）
+```
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/bridge-settings.png"></td>
+    <td width="50%"><img src="docs/assets/screenshots/desktop-preview.png"></td>
+  </tr>
+  <tr>
+    <td><b>手机侧</b>：设置 → 通用 → 电脑控制（USB），一键开关，状态文案显示监听端口与配对方式。</td>
+    <td><b>桌面侧</b>：`aua_screen` 打开浏览器 MJPEG 预览页，操作前先眼看手机画面；需要登录/解锁时 `aua_screen pause` 立刻断流。</td>
+  </tr>
+</table>
+
 ### 系统清理维护
 
 对 Agent 说"清理一下手机""释放点内存"即可触发，三条路径按权限自动选择：
@@ -335,6 +370,7 @@ cd mobile-agent
 - [x] 能力/授权状态总览页（系统授权 + 高级通道 + 能力组状态 + 一键跳授权）
 - [x] 可插拔的独立决策模型后端（Laya / Jev，`/v1/systemone` 协议；默认关闭、仅交互任务、SHADOW/ENFORCE 双模式）
 - [x] 火影替身计时器（MediaProjection 免 Root 采集，纯本地豆数推断 + 悬浮倒计时，无模型无联网）
+- [x] 桌面 Agent 经 USB 控制手机（loopback 鉴权桥 + adb forward + MCP stdio，19 个 `aua_*` 工具与 MJPEG 实时预览）
 
 ## 权限和数据边界
 
