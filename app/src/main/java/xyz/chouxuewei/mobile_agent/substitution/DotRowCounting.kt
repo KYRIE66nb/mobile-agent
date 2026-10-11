@@ -6,26 +6,34 @@ import xyz.chouxuewei.mobile_agent.core.substitution.TimerSide
 import xyz.chouxuewei.mobile_agent.device.capture.FrameAccess
 
 /**
- * 单侧豆槽逐格计数：格内中心采样 → 逐像素分类 → 规范豆型校验。
- * 任一格不完整落在有效画面内 → 整侧不可信返回 null（越界 ROI 不得夹边当豆槽）。
- * 抽离成无服务依赖的纯逻辑，便于离线测试。
+ * 豆排逐格读取：只回答"每个采样格此刻亮/灭/未知"，不做行级裁决——
+ * 规范豆形校验与格级记忆在 agent-core 的 BeadRowTracker。
+ * 任一格落在有效帧外 → 整侧返回 null；被本应用悬浮窗遮挡的格子直接记
+ * UNKNOWN 且不采样（投影帧会截到自家悬浮窗；无障碍通道截游戏窗口不含它）。
  */
 internal object DotRowCounting {
 
-    fun count(
+    /**
+     * @param cells 物理像素格列表（左→右），由 TimerLayout.dotCells 给出
+     * @param masked 返回 true 的格子视为被悬浮窗遮挡：记 UNKNOWN 且不采样
+     * @param onCell 诊断回调：每格分类结果（含 lit/dim 占比）
+     * @return 逐格状态；任一格无效（越界）→ null
+     */
+    fun readCells(
         access: FrameAccess,
         cells: List<IntArray>,
         classifier: DotClassifier,
         side: TimerSide,
         grid: Int,
         cellInnerFraction: Float,
+        masked: (IntArray) -> Boolean = { false },
         onCell: ((DotClassifier.Result) -> Unit)? = null,
-    ): Int? {
+    ): List<DotState>? {
         val states = ArrayList<DotState>(cells.size)
         val inset = (1f - cellInnerFraction) / 2f
         for (cell in cells) {
             if (!access.contains(cell[0], cell[1], cell[2], cell[3])) return null
-            // 只采样格子中心区：避开豆间分隔线与 HUD 边缘混入的背景
+            if (masked(cell)) { states += DotState.UNKNOWN; continue }
             val w = cell[2] - cell[0]; val h = cell[3] - cell[1]
             val l = (cell[0] + w * inset).toInt()
             val t = (cell[1] + h * inset).toInt()
@@ -35,18 +43,6 @@ internal object DotRowCounting {
             onCell?.invoke(result)
             states += result.state
         }
-        // 规范豆型校验：点亮的豆必须连续且锚定某一端——左锚右锚都算合法。
-        // 实测同一物理槽位的锚定方向随分边翻转（训练场自方在左读 L L L E，
-        // 实战敌方分到左槽读 E L L L）——方向假设写死必然有一侧瞎。
-        // 含 UNKNOWN、洞形（暗-亮-暗）、居中块的帧整帧丢弃，不产状态变化。
-        val firstLit = states.indexOfFirst { it == DotState.LIT }
-        val lastLit = states.indexOfLast { it == DotState.LIT }
-        val anchored = firstLit == 0 || lastLit == states.size - 1
-        val contiguous = firstLit >= 0 &&
-            (firstLit..lastLit).all { states[it] == DotState.LIT }
-        val canonical = states.none { it == DotState.UNKNOWN } &&
-            (firstLit < 0 || (anchored && contiguous))
-        // 非规范 → null：引擎侧整帧忽略，计数跨过噪声期继续持有
-        return if (canonical) states.count { it == DotState.LIT } else null
+        return states
     }
 }

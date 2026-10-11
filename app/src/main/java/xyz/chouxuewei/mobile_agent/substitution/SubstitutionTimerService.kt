@@ -370,10 +370,10 @@ class SubstitutionTimerService : Service() {
         val classifier = classifierOf(cfg)
         val cellDiag = AgentLog.enabled && now - lastObservedLogAt > 2000
         val diagOn = diag != null
-        fun countDots(side: TimerSide): Int? {
+        fun readSide(side: TimerSide): List<DotState>? {
             val marks = StringBuilder()
             val states = if (diagOn) ArrayList<String>() else null
-            val count = DotRowCounting.count(
+            val cells = DotRowCounting.readCells(
                 access, physicalCells(cfg, side, access.width, access.height),
                 classifier, side, cfg.tuning.sampleGrid, cfg.tuning.cellInnerFraction,
             ) { result ->
@@ -387,11 +387,11 @@ class SubstitutionTimerService : Service() {
             }
             if (cellDiag) AgentLog.d(TAG) { "cells $side=${marks.trim()}" }
             cellStates[side] = states
-            return count
+            return cells
         }
 
-        val selfCount = countDots(TimerSide.SELF)
-        val enemyCount = countDots(TimerSide.ENEMY)
+        val selfCells = readSide(TimerSide.SELF)
+        val enemyCells = readSide(TimerSide.ENEMY)
         // 战斗场景门控：只信豆色之外的 HUD 锚点证据；锚点未标定 → UNVERIFIED
         // 不否决（转场整排消失由引擎 collapse 规则兜底）。
         val anchorSamples = cfg.layout.hudAnchors.map { a ->
@@ -400,7 +400,10 @@ class SubstitutionTimerService : Service() {
         }
         val scene = evaluateScene(cfg.layout.hudAnchors, anchorSamples)
         val battle = scene != SceneVerdict.NOT_BATTLE
-        val events = synchronized(engineLock) { eng.onFrame(selfCount, enemyCount, now, battle) }
+        val result = synchronized(engineLock) { eng.onCells(selfCells, enemyCells, now, battle) }
+        val events = result.events
+        val selfCount = result.counts[TimerSide.SELF]
+        val enemyCount = result.counts[TimerSide.ENEMY]
         _uiState.update {
             it.copy(
                 selfDots = selfCount ?: -1,
