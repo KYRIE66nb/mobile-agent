@@ -593,6 +593,8 @@ class AndroidDeviceGateway(
         DeviceKey.DPAD_DOWN -> KeyEvent.KEYCODE_DPAD_DOWN
         DeviceKey.DPAD_LEFT -> KeyEvent.KEYCODE_DPAD_LEFT
         DeviceKey.DPAD_RIGHT -> KeyEvent.KEYCODE_DPAD_RIGHT
+        DeviceKey.VOLUME_UP -> KeyEvent.KEYCODE_VOLUME_UP
+        DeviceKey.VOLUME_DOWN -> KeyEvent.KEYCODE_VOLUME_DOWN
     }
 
     private suspend fun <T> withoutMainDisplayOverlay(

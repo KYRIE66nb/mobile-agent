@@ -100,6 +100,8 @@ enum class DeviceKey {
     DPAD_DOWN,
     DPAD_LEFT,
     DPAD_RIGHT,
+    VOLUME_UP,
+    VOLUME_DOWN,
 }
 
 enum class NodeActionKind {
