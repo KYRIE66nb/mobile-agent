@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Android Use — 屏幕预览</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0b0e12; color: #d7dee8; font: 14px/1.5 -apple-system, "PingFang SC", sans-serif;
+         display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+  header { width: 100%; max-width: 520px; display: flex; align-items: center; gap: 10px;
+           padding: 12px 16px; box-sizing: border-box; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #34c759; }
+  .dot.off { background: #8e8e93; }
+  .buttons { display: flex; gap: 8px; }
+  button { background: #1c2330; color: #d7dee8; border: 1px solid #2b3547; border-radius: 8px;
+           padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  button:hover { background: #242e40; }
+  .frame { border: 1px solid #2b3547; border-radius: 18px; overflow: hidden; background: #000;
+           max-width: 92vw; }
+  img { display: block; width: auto; max-width: min(92vw, 480px); max-height: 78vh; }
+  footer { padding: 10px 16px; font-size: 12px; color: #7b8698; max-width: 520px; }
+  code { background: #1c2330; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Android Use — 屏幕预览</h1>
+  <div class="buttons">
+    <button id="refresh" title="重连 MJPEG 流">刷新</button>
+    <button id="home" title="发送 Home 键">Home</button>
+    <button id="shot" title="抓取一帧并下载">截图</button>
+  </div>
+</header>
+<div class="frame"><img id="screen" alt="手机屏幕流"></div>
+<footer>
+  MJPEG 预览仅供观看，不代表控制通道就绪；模型操作请走 <code>aua_*</code> 工具。
+  暂停预览：<code>aua_screen pause</code>。
+</footer>
+<script>
+const IMG = document.getElementById("screen");
+const DOT = document.getElementById("dot");
+const BASE = "__AUA_BASE__";
+const TOKEN = "__AUA_TOKEN__";
+const STREAM = "__AUA_SCREEN_URL__";
+let reconnectTimer = null;
+
+function connect() {
+  DOT.classList.add("off");
+  IMG.src = STREAM + (STREAM.includes("?") ? "&" : "?") + "t=" + Date.now();
+}
+IMG.onload  = () => { DOT.classList.remove("off"); };
+IMG.onerror = () => {
+  DOT.classList.add("off");
+  if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 2000);
+};
+document.getElementById("refresh").onclick = () => { clearTimeout(reconnectTimer); reconnectTimer = null; connect(); };
+async function post(path, body) {
+  const r = await fetch(BASE + path, {method: "POST",
+      headers: {"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"},
+      body: JSON.stringify(body || {})});
+  return r.json();
+}
+document.getElementById("home").onclick = async () => {
+  try {
+    const s = await post("/session");
+    await post("/action", {session_id: s.session_id, action: {kind: "press_key", key: "home"}});
+  } catch (_) {}
+};
+document.getElementById("shot").onclick = async () => {
+  try {
+    const s = await post("/session");
+    const obs = await post("/observe", {session_id: s.session_id, mode: "screenshot"});
+    if (!obs.image || !obs.image.base64) return;
+    const a = document.createElement("a");
+    a.href = "data:image/jpeg;base64," + obs.image.base64;
+    a.download = "android-screen-" + Date.now() + ".jpg";
+    a.click();
+  } catch (_) {}
+};
+connect();
+</script>
+</body>
+</html>
