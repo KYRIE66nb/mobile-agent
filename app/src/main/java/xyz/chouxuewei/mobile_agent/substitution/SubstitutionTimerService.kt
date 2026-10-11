@@ -66,6 +66,8 @@ class SubstitutionTimerService : Service() {
         val hudValid: Boolean = false,
         val gameInForeground: Boolean = false,
         val showSelf: Boolean = true,
+        /** 投影通道下自家悬浮窗正压在豆排上——读数可能被遮挡污染。 */
+        val overlayOverlap: Boolean = false,
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -91,6 +93,8 @@ class SubstitutionTimerService : Service() {
     /** 帧几何版本：尺寸变化说明通道/旋转/内容尺寸变了——旧布局证据作废。 */
     private var lastFrameW = 0
     private var lastFrameH = 0
+    /** 最近一次帧访问口（悬浮窗遮挡判定用；帧像素生命周期不跨回调，只读宽高）。 */
+    @Volatile private var lastAccess: FrameAccess? = null
     /** 本地诊断记录器：仅在用户开启 diagnosticsEnabled 时创建。 */
     private var diag: DiagnosticRecorder? = null
     private var overlay: SubstitutionOverlay? = null
@@ -341,6 +345,7 @@ class SubstitutionTimerService : Service() {
 
     private fun onFrame(access: FrameAccess) {
         lastFrameAt = SystemClock.elapsedRealtime()
+        lastAccess = access
         val cfg = config ?: return
         val eng = engine ?: return
         val monitoring = synchronized(engineLock) { !eng.paused } &&
@@ -381,6 +386,7 @@ class SubstitutionTimerService : Service() {
             val cells = DotRowCounting.readCells(
                 access, physicalCells(cfg, side, access.width, access.height),
                 classifier, side, cfg.tuning.sampleGrid, cfg.tuning.cellInnerFraction,
+                masked = overlayMask(access),
             ) { result ->
                 val c = when (result.state) {
                     DotState.LIT -> 'L'; DotState.EMPTY -> 'E'; DotState.UNKNOWN -> 'U'
@@ -532,6 +538,23 @@ class SubstitutionTimerService : Service() {
         )
     }
 
+    /** 投影通道把自家悬浮窗映射成帧坐标 mask；无障碍通道/不可见 → 恒 false。 */
+    private fun overlayMask(access: FrameAccess): (IntArray) -> Boolean {
+        val ov = overlay ?: return { false }
+        val r = ov.screenRect ?: return { false }
+        if (captureChannel != "projection") return { false }
+        val ds = ov.displaySize
+        if (ds[0] == 0 || ds[1] == 0) return { false }
+        val screenLand = ds[0] > ds[1]; val frameLand = access.width > access.height
+        if (screenLand != frameLand) return { false }                     // 方向不一致不臆测映射
+        val sx = access.width.toFloat() / ds[0]; val sy = access.height.toFloat() / ds[1]
+        val fr = intArrayOf(
+            (r.left * sx).toInt(), (r.top * sy).toInt(),
+            (r.right * sx).toInt(), (r.bottom * sy).toInt(),
+        )
+        return { c -> c[0] < fr[2] && c[2] > fr[0] && c[1] < fr[3] && c[3] > fr[1] }
+    }
+
     private var classifier: DotClassifier? = null
     private var classifierConfig = 0
 
@@ -548,10 +571,17 @@ class SubstitutionTimerService : Service() {
         val eng = engine ?: return
         val now = SystemClock.elapsedRealtime()
         val (selfTimer, enemyTimer) = synchronized(engineLock) { eng.timers(now) }
+        // 悬浮窗是否正压着某一侧豆排：投影帧会截进自家悬浮窗，污染被压格的读数
+        val overlap = config?.layout?.let { l ->
+            val mask = overlayMask(lastAccess ?: return@let false)
+            l.dotCells(TimerSide.SELF, lastFrameW, lastFrameH).any(mask) ||
+                l.dotCells(TimerSide.ENEMY, lastFrameW, lastFrameH).any(mask)
+        } ?: false
         _uiState.update {
             it.copy(
                 selfTimer = selfTimer, enemyTimer = enemyTimer,
                 captureAlive = now - lastFrameAt < 1500,
+                overlayOverlap = overlap,
             )
         }
         val showSelf = config?.showSelfTimer ?: true
@@ -564,6 +594,7 @@ class SubstitutionTimerService : Service() {
                 monitoring = st.state == TimerServiceState.MONITORING,
                 selfDots = st.selfDots, enemyDots = st.enemyDots,
                 captureAlive = st.captureAlive, hudOk = st.hudValid,
+                overlayOverlap = overlap,
             )
         }
     }

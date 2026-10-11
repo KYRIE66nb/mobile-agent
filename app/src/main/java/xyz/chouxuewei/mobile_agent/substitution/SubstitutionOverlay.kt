@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.SystemClock
@@ -49,6 +50,12 @@ class SubstitutionOverlay(
     private var shown = false
     private var savedX: Int? = null
     private var savedY: Int? = null
+    /** 悬浮窗当前屏幕矩形（投影帧自遮挡判定用）；隐藏时为 null。 */
+    @Volatile var screenRect: Rect? = null
+        private set
+    /** 发布 screenRect 时的屏幕尺寸（宽、高像素）。 */
+    @Volatile var displaySize = IntArray(2)
+        private set
 
     init {
         scope.launch { repo.config.collect {
@@ -80,14 +87,20 @@ class SubstitutionOverlay(
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = savedX ?: 40
-            y = savedY ?: 120
+            // 默认位置避开左上豆排区：x=16dp、y=屏高 30%
+            // （MediaProjection 会截到自家悬浮窗，压豆排会污染读数）
+            x = savedX ?: dp(16)
+            y = savedY ?: (context.resources.displayMetrics.heightPixels * 0.3f).toInt()
         }
         view = container
         params = p
         shown = true
         runCatching { windows.addView(container, p) }
             .onSuccess {
+                container.post { publishRect() }
+                container.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    container.post { publishRect() }
+                }
                 xyz.chouxuewei.mobile_agent.core.AgentLog.i("SubTimer") {
                     "overlay attached at ${p.x},${p.y}"
                 }
@@ -107,6 +120,7 @@ class SubstitutionOverlay(
     fun hide() {
         if (!shown) return
         shown = false
+        screenRect = null
         view?.let { runCatching { windows.removeView(it) } }
         view = null; params = null
         enemyText = null; selfText = null; statusText = null
@@ -118,6 +132,7 @@ class SubstitutionOverlay(
         self: SideTimer, enemy: SideTimer, showSelf: Boolean,
         paused: Boolean, monitoring: Boolean, selfDots: Int, enemyDots: Int,
         captureAlive: Boolean = true, hudOk: Boolean = true,
+        overlayOverlap: Boolean = false,
     ) {
         val now = SystemClock.elapsedRealtime()
         this.paused = paused
@@ -131,6 +146,7 @@ class SubstitutionOverlay(
         // "没有帧"与"有帧但识别无效"是两个独立状态，不混成一个条件。
         fun dots(c: Int) = if (c < 0) "-" else "$c"
         statusText?.text = when {
+            overlayOverlap -> "悬浮窗遮挡豆排——请拖动移开"
             paused -> "已暂停 · 点「开启」恢复"
             !monitoring -> "等待进入游戏"
             !captureAlive -> "画面中断，等待恢复"
@@ -253,6 +269,7 @@ class SubstitutionOverlay(
                     if (dragging) {
                         scope.launch { repo.saveOverlayPosition(p.x, p.y) }
                     }
+                    publishRect()
                     dragging
                 }
                 else -> false
@@ -295,6 +312,14 @@ class SubstitutionOverlay(
         val vis = if (diagEnabled) View.VISIBLE else View.GONE
         markMissedBtn?.visibility = vis
         markWrongBtn?.visibility = vis
+    }
+
+    /** 发布悬浮窗屏幕矩形与屏尺寸——服务侧用它判断投影帧是否被自家悬浮窗遮挡。 */
+    private fun publishRect() {
+        val v = view ?: return
+        val loc = IntArray(2); v.getLocationOnScreen(loc)
+        screenRect = Rect(loc[0], loc[1], loc[0] + v.width, loc[1] + v.height)
+        v.context.resources.displayMetrics.let { displaySize = intArrayOf(it.widthPixels, it.heightPixels) }
     }
 
     private fun dp(v: Int) = (v * context.resources.displayMetrics.density).toInt()
