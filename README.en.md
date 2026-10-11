@@ -178,6 +178,42 @@ Timeouts or verdict failures degrade to manual confirmation — **never silently
 
 **Shizuku fallback channel**: on non-rooted devices with Shizuku installed and granted, `system_shell` runs allow-listed management commands (am/pm/dumpsys/settings/input/content…; pipes and chaining rejected) as shell(uid 2000) — query app info, clear caches, inject key events without taking over your screen.
 
+### Desktop control (USB · Android Use Bridge)
+
+The on-phone agent can act by itself — or **lend its hands to an agent on your computer**: the app ships an authenticated HTTP bridge bound only to `127.0.0.1:17325`, exposed to a zero-dependency Python MCP stdio server over `adb forward`. Claude Code, Devin, or any MCP client reads the screen, taps, and types as if the phone were a remote device.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/desktop-bridge.dark.png">
+  <img src="docs/assets/desktop-bridge.light.png" alt="Desktop agent control chain" width="100%">
+</picture>
+
+[Interactive diagram](docs/assets/desktop-bridge.html) (download and open in a browser — zoom, path tracing, dark mode)
+
+- **Safety boundaries by design**: HTTP is loopback-only; the Bearer pairing token can only be read through `adb shell`; the service is non-exported and the App settings toggle is authoritative; bridge sessions are exclusive and the desktop client never blind-retries a possibly-executed action — a dropped connection reports "uncertain", never a duplicate tap.
+- **19 `aua_*` tools**: `observe` (node tree + screenshot), `find` / `tap` / `long_press` / `swipe` / `type_text` / `press_button` / `launch_app`, plus `batch`, `scroll_find`, `collect_list`, `apps`, `screen` (MJPEG live preview), and the `setup` / `ready` / `doctor` / `metrics` provisioning suite.
+- **Same gateway as the in-app agent**: semantic selectors resolve nodes by text/description/id/type/regex and fall back to screenshot pixel coordinates — desktop and on-device agents share one "observe → decide → act" primitive set.
+- **Verified typing and scrolling**: Unicode text is split at grapheme boundaries and continued with tokens (no broken CJK or emoji); scrolls are verified against accessibility anchors; batches are fully validated before execution.
+
+Provisioning path (verified on a Redmi, Android 16):
+
+```bash
+python3 desktop/server/android_use.py   # register as an MCP stdio server
+# aua_setup: discover → configure → enable_accessibility → pair → forward → ready
+# Enable the bridge: Settings → General → Desktop control (USB) — on release builds the
+# in-app toggle is the only authority (run-as is unavailable on non-debuggable builds)
+```
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/bridge-settings.png"></td>
+    <td width="50%"><img src="docs/assets/screenshots/desktop-preview.png"></td>
+  </tr>
+  <tr>
+    <td><b>Phone side</b>: Settings → General → Desktop control (USB) — one toggle, status text shows the listening port and pairing path.</td>
+    <td><b>Desktop side</b>: `aua_screen` opens a browser MJPEG preview so you watch the phone while it acts; `aua_screen pause` cuts the stream for sign-in/unlock moments.</td>
+  </tr>
+</table>
+
 ### System cleanup
 
 Say "clean up my phone" or "free some memory" — three paths chosen automatically by permission level:
@@ -335,6 +371,7 @@ Settings → Models → New profile:
 - [x] Capability/authorization overview page (system grants + advanced channels + capability groups + one-tap setup)
 - [x] Pluggable standalone decision-model backend (Laya / Jev over `/v1/systemone`; off by default, interactive tasks only, SHADOW/ENFORCE modes)
 - [x] Naruto substitution timer (root-free MediaProjection capture, fully local dot-count inference + floating cooldown, no model or network)
+- [x] Desktop agent control over USB (authenticated loopback bridge + adb forward + MCP stdio, 19 `aua_*` tools and MJPEG live preview)
 
 ## Permissions and data boundaries
 
