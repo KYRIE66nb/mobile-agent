@@ -19,12 +19,12 @@ No APIs, no web versions — the agent looks at the screen and taps it like a pe
 
 ### Highlights at a glance
 
-- **Any app, no exceptions**: dual-path perception — semantic nodes for standard controls, pixel coordinates for self-drawn UIs (Flutter, games, image grids). There is no "unsupported app".
-- **Safety before execution**: every action with external side effects passes a semantic gate (allow / confirm / block), backed by per-tool switches, allow-once / always grants, and approval dialogs — it asks rather than silently acting.
-- **Foreground or background**: the accessibility service drives the main screen root-free; an optional Root virtual display works on a **background screen** while yours stays free — watch live via the floating overlay.
-- **Runs once, replays forever**: proven flows solidify into deterministic recipes with zero model calls; scheduled/notification triggers run unattended with hard tool-scope boundaries.
-- **Your data stays local**: conversations, artifacts, and verdict records live on-device with full export/import; outbound traffic goes only to the model/speech endpoints you configured.
-- **50+ system-level tools**: file I/O, Office document generation & surgical editing, web fetch, notification quick-reply, clipboard, contacts/calendar, storage cleanup, memory freeing, restricted Root/Shizuku shell — an agent that is also a toolbox.
+- **Any app, no exceptions**: dual-path perception — semantic nodes for standard controls, pixel coordinates for self-drawn UIs (Flutter, games, image grids).
+- **Safety before execution**: external side-effect calls pass a semantic gate (allow / confirm / block) — it asks rather than silently acting.
+- **Foreground or background**: the accessibility service drives the main screen root-free; an optional Root virtual display works in the background while your screen stays yours.
+- **Desktop agents welcome**: an authenticated loopback bridge + adb forward + a zero-dependency MCP server let a computer agent read and drive the phone.
+- **Runs once, replays forever**: proven flows solidify into deterministic recipes; scheduled/notification triggers run unattended with hard tool-scope boundaries.
+- **Your data stays local**: conversations, artifacts, and verdict records live on-device with full export; outbound traffic goes only to the model/speech endpoints you configured.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agent-loop.dark.png">
@@ -161,7 +161,7 @@ Every tool call with **external side effects** (sending messages, changing setti
 
 Timeouts or verdict failures degrade to manual confirmation — **never silently allowed**. Toggleable in settings; read-only tools never enter the gate.
 
-**Optional dedicated decision backend (Laya/Jev)**: Settings → Dedicated decision backend can point at an independent small-model service (the managed TypeSafe Jev API or a self-hosted Laya — see `deploy/laya/`). It supplies verdicts for the safety gate and, optionally, picks among locally built candidates for low-risk navigation. Default is **off** — behavior is identical to before until you opt in; it applies to interactive tasks only, not triggers/unattended runs in this version. Outbound traffic needs explicit consent and carries only the minimal decision context (never full chat history or screenshots); local validation stays authoritative — the service picks candidates, it cannot invent actions. SHADOW mode only records, ENFORCE applies verdicts. Verdict metadata is kept in `decision_records` for 30 days and is viewable in settings.
+**Optional dedicated decision backend (Laya/Jev)**: safety-gate verdicts can be delegated to an independent small-model service (self-hosted Laya or managed TypeSafe Jev — see `deploy/laya/`). Off by default; outbound traffic needs explicit consent and carries only the minimal decision context; local policy stays authoritative — the service picks candidates, it cannot invent actions. SHADOW/ENFORCE modes; verdict records are reviewable in settings.
 
 ### Two device-control engines
 
@@ -191,8 +191,7 @@ The on-phone agent can act by itself — or **lend its hands to an agent on your
 
 - **Safety boundaries by design**: HTTP is loopback-only; the Bearer pairing token can only be read through `adb shell`; the service is non-exported and the App settings toggle is authoritative; bridge sessions are exclusive and the desktop client never blind-retries a possibly-executed action — a dropped connection reports "uncertain", never a duplicate tap.
 - **19 `aua_*` tools**: `observe` (node tree + screenshot), `find` / `tap` / `long_press` / `swipe` / `type_text` / `press_button` / `launch_app`, plus `batch`, `scroll_find`, `collect_list`, `apps`, `screen` (MJPEG live preview), and the `setup` / `ready` / `doctor` / `metrics` provisioning suite.
-- **Same gateway as the in-app agent**: semantic selectors resolve nodes by text/description/id/type/regex and fall back to screenshot pixel coordinates — desktop and on-device agents share one "observe → decide → act" primitive set.
-- **Verified typing and scrolling**: Unicode text is split at grapheme boundaries and continued with tokens (no broken CJK or emoji); scrolls are verified against accessibility anchors; batches are fully validated before execution.
+- **Same gateway as the in-app agent**: selectors resolve accessibility nodes by text/description/id/type/regex and fall back to screenshot pixel coordinates; Unicode text splits at grapheme boundaries, scrolls and batches are verified rather than assumed.
 
 Provisioning path (verified on a Redmi, Android 16):
 
@@ -216,13 +215,7 @@ python3 desktop/server/android_use.py   # register as an MCP stdio server
 
 ### System cleanup
 
-Say "clean up my phone" or "free some memory" — three paths chosen automatically by permission level:
-
-- **Storage stats** `system_storage_stats` — per-app breakdown or a Top-N consumer ranking; querying other apps needs Usage access, and the agent opens the grant page instead of failing blind;
-- **Cache clearing** `system_clear_cache` — no argument cleans this app's caches; a package name + root makes `RootDeviceService` empty that app's `cache/code_cache` dirs and reports freed bytes (**sign-in state and user data untouched**); without root it degrades to opening the app's details page for on-screen clearing;
-- **Memory freeing** `system_free_memory` — `killBackgroundProcesses` for one app or everything launchable, reporting available RAM before and after.
-
-Cleanup calls are `EXTERNAL_WRITE`/`DESTRUCTIVE` — they pass the safety gate and an approval dialog.
+Say "clean up my phone" or "free some memory" — three paths chosen automatically by permission level: `system_storage_stats` (per-app or Top-N; missing Usage access opens the grant page), `system_clear_cache` (root direct-clears `cache/code_cache` and reports freed bytes — sign-in state untouched; without root it degrades to on-screen steps), and `system_free_memory` for background RAM. Cleanup calls pass the safety gate and an approval dialog.
 
 Captured on a real device — the whole run after one "clean up my phone":
 
@@ -241,14 +234,7 @@ Captured on a real device — the whole run after one "clean up my phone":
 
 ### Ad guard
 
-Popups and shake ads flash for only a few seconds — far too fast for a model loop. Blocking runs on a **deterministic rule engine** inside the accessibility event stream (millisecond latency, no model in the loop); the model's job is configuring rules on demand:
-
-- **Skip splash ads** — auto-taps "Skip"-style nodes;
-- **Close ad popups** — taps "× / Close" when the screen carries an ad marker;
-- **Cancel shake-ad jumps** — `auto_back` rules press Back the moment the foreground is thrown from a guarded app to a browser/shop landing page; in-app ad pages (same-package WebView/landing activities) are undone too when `class_pattern` matches their feature class names — rules without a pattern never touch normal same-app navigation;
-- **Agent-programmable** — tell it "this app keeps popping lottery ads" or "one shake throws me into a store", and it writes a rule on the spot via `adguard_add_rule` so the next ad is killed instantly.
-
-Per-rule cooldowns plus a global circuit breaker stop misconfigured loops; every block surfaces a toast, and `adguard_status` replays recent blocks. Requires the accessibility service; toggled in settings, off by default.
+Popups and shake ads flash too briefly for a model loop — blocking runs on a **deterministic rule engine** inside the accessibility event stream (millisecond latency, no model); the model's job is configuring rules on demand. Splash "Skip" auto-taps, ad-marked popups auto-close, and `auto_back` rules undo jumps to landing pages (in-app ad pages are matched by class pattern too). Tell it "this app keeps popping lottery ads" and it writes a rule on the spot via `adguard_add_rule`. Per-rule cooldowns plus a global circuit breaker, block replays via `adguard_status`; toggled in settings, off by default.
 
 Real run — "block Douyin's splash ads", watched live in the floating window:
 
@@ -272,26 +258,17 @@ Real run — "block Douyin's splash ads", watched live in the floating window:
 
 ### Recipes
 
-High-frequency flows should not be re-explored by the model every time. Recipes compile a proven flow into a **deterministic step sequence** — executed without a single model call, fast and repeatable:
-
-- **Built-in templates**: `wechat_send_message` (open WeChat → search contact → type → send) works out of the box;
-- **Agent-solidified**: after the agent drives a UI flow once with generic tools, `recipe_save` stores it as a template — next time `recipe_run` replays it in seconds, parameterized with `{contact}`, `{message}` placeholders;
-- **Graceful degradation**: when a step times out or a node misses, the error carries the **failed step index** and the model continues from the breakpoint via `device_observe` / `device_action` instead of restarting.
-
-Recipes run on the **main display in the foreground** (they drive the target app's UI) and require the accessibility service.
+High-frequency flows should not be re-explored every time — recipes compile a proven flow into a **deterministic step sequence** with zero model calls. `wechat_send_message` works out of the box; flows the agent drove once can be saved via `recipe_save` as parameterized templates (`{contact}`, `{message}`) and replayed by `recipe_run`; a timed-out step returns its **index** so the model resumes at the breakpoint instead of restarting. Recipes run in the foreground and need the accessibility service.
 
 ### Scheduled tasks (Triggers)
 
 Hand "every morning" / "when a notification arrives" automations to triggers — they run **unattended** in the background and deliver results as local notifications:
 
-- **Three kinds**: schedule (one-shot / daily / weekdays / weekly), notification matching (package + title + text regexes, AND), and interval polling (≥15 min); `AlarmManager` RTC_WAKEUP scheduling with automatic rescheduling after boot;
-- **Scope is a hard boundary**: every task carries a `tool_scope` allowlist — the model inside a triggered run **only sees authorized tools** and out-of-scope calls are denied outright; the default scope is read-only (files, notification reads, calendar/contacts queries); external side effects (messaging, cleanup, device control) require explicit authorization at creation time;
-- **Unattended ≠ unconstrained**: in-scope tools run without approval dialogs (nobody would see them anyway); per-trigger cooldown, daily run caps (persisted — a process restart cannot reset them), and a 3-strike circuit breaker auto-disable runaway tasks; the app's own notifications, ongoing notifications, and OTP/account-security notifications **never trigger**; notification bodies are injected as low-trust data, never as instructions;
-- **Isolated history**: each task runs in a dedicated `Trigger·name` conversation (hidden from the main chat list and share targets), separate from day-to-day chats and fully replayable;
-- **Quick replies**: `notifications_reply` sends text straight back to the source app through the notification's own RemoteInput (reply to chat messages without opening the app); it is an external side-effect tool — notification tasks need it explicitly in scope; `notifications_list` output is marked low-trust — notification bodies are third-party-controlled text, reference only, never instructions;
-- **Usage**: tell the agent "read my schedule at 8 every morning" or "alert me when the boss messages me on WeChat" and it assembles the trigger via `trigger_save`; manage them under Settings → General → Scheduled tasks (enable, inspect scope, delete);
-- **Platform limits**: battery savers and OEM background policies may delay firing (no exact-alarm permission is requested); notification matching needs Notification Access granted;
-- **Spoken results**: enable "Speak task results" under Settings → General to have finished tasks read their summary aloud through the system TTS (offline, opt-in).
+- **Three kinds**: schedule (one-shot / daily / weekdays / weekly), notification matching (package + title + text regexes), and interval polling (≥15 min); RTC_WAKEUP scheduling, rescheduled after boot;
+- **Scope is a hard boundary**: each task carries a `tool_scope` allowlist — out-of-scope calls are denied and the default is read-only; unattended runs are approval-free but bounded by cooldowns, daily caps (persisted), and a 3-strike circuit breaker; sensitive notifications never trigger; notification bodies are injected as low-trust data;
+- **Isolated history + quick replies**: each task runs in its own `Trigger·name` conversation away from the main list; `notifications_reply` answers chat messages through the notification's RemoteInput without opening the app (must be in scope explicitly).
+
+Say "read my schedule at 8 every morning" to create one; battery policies may delay firing, and notification matching needs Notification Access. Optional offline TTS can speak results aloud.
 
 ### Substitution timer (Naruto Mobile)
 
@@ -305,14 +282,10 @@ A purely **on-device** inference timer for the Substitution-jutsu cooldown in ar
 
 ### Models and tools
 
-- **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; Zhipu GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
-- **Call resilience**: transient failures (408/429/5xx, connection drops, timeouts) retry with exponential backoff; when the primary profile fails outright before any output, the request can fail over to a chosen backup profile (Settings → General → "Model failover", on by default, with a dropdown to pick the backup model). Content already produced is never replayed, so output cannot duplicate;
-- **50+ built-in tools**: device actions (observe / action / gesture / batch / wait_for), file I/O, document tools (PDF/Word/Excel extract; docx/xlsx generate and surgical edit), webpage fetching, notifications, clipboard, app launching, speech transcription (OpenAI / iFLYTEK-compatible), system maintenance (storage stats / cache clearing / memory freeing / **restricted shell** over Root or Shizuku), ad-guard rule management, recipe execution/saving, scheduled-task management, contacts/calendar queries (runtime-permission gated);
-- **Multi-turn agent loop**: context compression, per-run step caps, instant cancel, every tool call persisted and replayable; read-only tool calls in one round **run in parallel** (writes stay sequential), and screen observations are compactly serialized with precomputed node centers to cut per-round token cost;
-- **Context-overflow self-healing**: in-run compaction degrades gracefully — older tool results fold into references, finished steps collapse, then oversized results truncate to excerpts (full content stays retrievable via `history_read`); when the service explicitly reports a context overflow (context_length_exceeded, HTTP 413, ...) before any output, the runtime compresses and retries the same round once instead of killing the task; the profile's context window / max output fields drive the local budget — set them to the real endpoint limits to trigger fallbacks less often;
-- **Capability overview**: Settings → Capabilities shows every system authorization (accessibility, notification access, usage access, overlay, notifications, microphone), advanced channels (Root/Shizuku), service configuration (model/speech), and each capability group's availability — with one-tap jumps to the matching grant screen;
-- **Optional dedicated decision backend (Laya/Jev)**: safety-gate verdicts and low-risk navigation can be delegated to an independent small-model service (self-hosted Laya or managed TypeSafe Jev over the shared `/v1/systemone` protocol — see `deploy/laya/`); off by default, the two backends are mutually exclusive, outbound data needs explicit consent and carries only the minimal decision context (never full chat history or screenshots), local policy stays authoritative (the service picks candidates, it cannot invent actions), SHADOW only records while ENFORCE applies; keys are Keystore-encrypted and revocable, and verdict metadata is persisted for review;
-- **Data management**: Settings → Data offers conversation export/import (a JSON backup covering conversations, messages, runs, tool calls, and context snapshots; imports merge idempotently without clobbering existing records) plus 30-day artifact pruning.
+- **OpenAI-compatible gateway**: hand-rolled OkHttp + SSE streaming; GLM / OpenAI / DeepSeek / any compatible endpoint, multi-profile switching, `reasoning_effort` passthrough;
+- **Call and run resilience**: transient failures retry with backoff, a failed primary profile can fail over to a chosen backup, produced content is never replayed; context overflow compacts in three stages and retries the round once instead of killing the task;
+- **Multi-turn agent loop**: step caps, instant cancel, every tool call persisted and replayable; read-only calls run in parallel, observations are compactly serialized to cut per-round token cost;
+- **50+ built-in tools**: device actions, file/document I-O and surgical editing, webpage fetching, notifications, clipboard, app launching, speech transcription, system maintenance, ad guard, recipes, scheduled tasks, contacts/calendar — details in the sections above.
 
 ## Architecture
 
@@ -355,23 +328,11 @@ Settings → Models → New profile:
 
 ## Roadmap
 
-- [x] Vision path for screen operation (observe → coordinate-action loop)
-- [x] Semantic action safety gate (allow / confirm / block verdicts)
-- [x] In-app upgrades via GitHub Releases (check → download → installer)
-- [x] Foreground / background virtual-display preference (with auto-fallback)
-- [x] System cleanup (storage stats / cache clearing / memory freeing; root direct-clear with no-root fallback)
-- [x] Ad guard (accessibility rule engine: splash skip / popup close / shake-ad interception, agent-programmable)
-- [x] Recipes for high-frequency app flows (deterministic steps, parameterized, model takes over at breakpoints)
+**Shipped**: vision-coordinate operation, semantic safety gate, in-app upgrades, virtual-display background execution (auto-fallback), system cleanup, ad guard, recipes, triggers, Shizuku fallback shell, Office document I/O and surgical editing, notification quick replies, capability overview, pluggable decision backends, Naruto substitution timer, USB desktop-control bridge.
+
+**In progress**
+
 - [ ] More built-in recipes (Alipay, Meituan — version-adapted flows)
-- [x] Trigger system: scheduled / notification-matched / interval tasks (scoped tools, unattended-safe)
-- [x] Non-root degraded control via Shizuku shell channel (allow-listed commands, user-granted)
-- [x] PDF / Word / Excel reading and generation (fully local, no network)
-- [x] Surgical editing of existing documents (docx paragraph-level / xlsx cell-level; images and styles preserved; XML located by a tolerant segment scanner — quoted attributes, comments, CDATA, and nested same-name elements no longer misparse)
-- [x] Notification RemoteInput quick replies (reply without opening the app; sensitive notifications excluded)
-- [x] Capability/authorization overview page (system grants + advanced channels + capability groups + one-tap setup)
-- [x] Pluggable standalone decision-model backend (Laya / Jev over `/v1/systemone`; off by default, interactive tasks only, SHADOW/ENFORCE modes)
-- [x] Naruto substitution timer (root-free MediaProjection capture, fully local dot-count inference + floating cooldown, no model or network)
-- [x] Desktop agent control over USB (authenticated loopback bridge + adb forward + MCP stdio, 19 `aua_*` tools and MJPEG live preview)
 
 ## Permissions and data boundaries
 
