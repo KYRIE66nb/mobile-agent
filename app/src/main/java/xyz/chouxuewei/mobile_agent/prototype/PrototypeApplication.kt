@@ -323,6 +323,8 @@ class PrototypeApplication : Application() {
                 RecipeEngine.applyPersisted(custom)
             }
         }
+        // 桌面桥：上次开启时随进程恢复监听；未开启不占用端口。
+        xyz.chouxuewei.mobile_agent.device.bridge.BridgeService.restoreIfEnabled(this)
         // 触发器：持久化定义驱动排期与事件匹配，通知监听器在线时把事件喂给引擎。
         triggers.start()
         AgentNotificationListenerService.postedListener = { event ->

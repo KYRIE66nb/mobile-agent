@@ -115,6 +115,8 @@ import xyz.chouxuewei.mobile_agent.data.SpeechSettings
 import xyz.chouxuewei.mobile_agent.device.RootAccessState
 import xyz.chouxuewei.mobile_agent.device.adguard.AdGuardEngine
 import xyz.chouxuewei.mobile_agent.device.accessibility.AgentAccessibilityService
+import xyz.chouxuewei.mobile_agent.device.bridge.BridgeService
+import xyz.chouxuewei.mobile_agent.device.bridge.BridgeSettings
 import xyz.chouxuewei.mobile_agent.device.root.ShizukuShell
 import xyz.chouxuewei.mobile_agent.tools.notifications.AgentNotificationListenerService
 import xyz.chouxuewei.mobile_agent.core.ToolCapability
@@ -287,6 +289,7 @@ fun ChatSettings(
     val triggerSpecs by app.triggers.specs.collectAsState()
     val personalizedInstructions by app.personalization.instructions.collectAsState(initial = "")
     val modelUsage by app.modelUsage.usage.collectAsState(initial = emptyList())
+    val bridgeState by BridgeService.state.collectAsState()
     val speechSettings by app.speechSettings.settings.collectAsState(initial = SpeechSettings())
     val decisionSnapshot by app.decisionSettings.snapshot.collectAsState(
         initial = xyz.chouxuewei.mobile_agent.core.DecisionSettingsSnapshot()
@@ -744,6 +747,8 @@ fun ChatSettings(
                     deviceMode = deviceMode,
                     rootAccess = rootAccess,
                     rootChanging = rootChanging,
+                    bridgeState = bridgeState,
+                    accessibilityConnected = accessibilityConnected,
                     overlayGranted = overlayGranted,
                     persistentOverlay = persistentOverlay,
                     notificationsGranted = notificationsGranted,
@@ -927,6 +932,12 @@ fun ChatSettings(
                                 rootChanging = false
                             }
                         }
+                    },
+                    onBridgeEnabled = { enabled ->
+                        runCatching { BridgeService.setEnabled(context, enabled) }
+                            .onFailure {
+                                feedback = SettingsNotice(localizedText("电脑控制开关未生效，请重试", "Desktop control toggle failed. Please try again."), false)
+                            }
                     },
                     onOverlaySettings = {
                         overlayPermission.launch(
@@ -1409,6 +1420,8 @@ private fun GeneralSettings(
     onTriggerDelete: (String) -> Unit,
     rootAccess: RootAccessState?,
     rootChanging: Boolean,
+    bridgeState: BridgeService.BridgeState,
+    accessibilityConnected: Boolean,
     overlayGranted: Boolean,
     persistentOverlay: Boolean,
     notificationsGranted: Boolean,
@@ -1428,6 +1441,7 @@ private fun GeneralSettings(
     onDeviceMode: (DeviceModePreference) -> Unit,
     onAdGuardEnabled: (Boolean) -> Unit,
     onRootEnabled: (Boolean) -> Unit,
+    onBridgeEnabled: (Boolean) -> Unit,
     onOverlaySettings: () -> Unit,
     onPersistentOverlay: (Boolean) -> Unit,
     onNotificationPermission: () -> Unit,
@@ -1519,6 +1533,11 @@ private fun GeneralSettings(
             state = rootAccess,
             changing = rootChanging,
             onEnabled = onRootEnabled,
+        )
+        BridgeRow(
+            state = bridgeState,
+            accessibilityConnected = accessibilityConnected,
+            onEnabled = onBridgeEnabled,
         )
         Spacer(Modifier.height(24.dp))
     }
@@ -2057,6 +2076,52 @@ private fun RootAccessRow(
             checked = state?.enabled == true,
             onCheckedChange = onEnabled,
             enabled = available && !changing,
+        )
+    }
+}
+
+@Composable
+private fun BridgeRow(
+    state: BridgeService.BridgeState,
+    accessibilityConnected: Boolean,
+    onEnabled: (Boolean) -> Unit,
+) {
+    val colors = LocalChatColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(end = 12.dp)
+        ) {
+            Text(localizedText("电脑控制（USB）", "Desktop control (USB)"), style = MaterialTheme.typography.bodyMedium)
+            Text(
+                when {
+                    state.listening -> localizedText(
+                        "正在监听本机 ${BridgeSettings.DEVICE_PORT} 端口；经 adb forward 与配对码连接",
+                        "Listening on loopback ${BridgeSettings.DEVICE_PORT}; paired desktops connect via adb forward",
+                    )
+                    !accessibilityConnected -> localizedText(
+                        "开启前先启用无障碍服务；开启后电脑可经 USB 读取屏幕并执行操作",
+                        "Enable accessibility first; once on, a paired computer can read the screen and act over USB",
+                    )
+                    else -> localizedText(
+                        "开启后电脑 Agent 可经 USB 读取屏幕并执行操作（需无障碍服务）",
+                        "Once on, a paired computer agent can read the screen and act over USB (accessibility required)",
+                    )
+                },
+                Modifier.padding(top = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.secondary,
+            )
+        }
+        Switch(
+            checked = state.enabled && state.listening,
+            onCheckedChange = onEnabled,
         )
     }
 }
