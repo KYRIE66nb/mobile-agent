@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "android-use",
+  "version": "0.1.0",
+  "description": "让桌面 Agent 通过 adb + 应用内桥操作真实 Android 手机：无障碍节点树、截图、点击、滑动、输入、按键、启动 App、批量步骤与实时屏幕预览。本对话首次使用先 aua_setup status，按需完成配对与转发，再 aua_ready。",
+  "author": {
+    "name": "mobile-agent"
+  },
+  "license": "MIT",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Android Use",
+        "shortDescription": "Let a desktop agent control your Android phone",
+        "longDescription": "通过 AUA（Android Use Agent）读取和操作真实 Android 手机：adb 转发到应用内 HTTP 桥，复用无障碍服务完成点击、滚动、输入和连续任务；实时 MJPEG 屏幕预览；控件定位失败时结合截图选择坐标，核验关键结果。本对话首次使用先 aua_setup status 检查配置，缺失步骤按顺序补齐后 aua_ready。",
+        "developerName": "mobile-agent",
+        "category": "Productivity",
+        "defaultPrompt": [
+          "帮我安装 Android Use，配置我的 Android 手机并验证连接。",
+          "用 Android Use 完成我的手机任务，并核验最终关键结果。"
+        ]
+      }
+    }
+  }
+}
