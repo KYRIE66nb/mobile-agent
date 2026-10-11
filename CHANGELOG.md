@@ -3,6 +3,14 @@
 本项目所有值得记录的变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本。安装包见 [Releases](https://github.com/KYRIE66nb/mobile-agent/releases)。
 
+## [Unreleased]
+
+- **替身计时引擎 v2**：冷却先验（冷却内掉豆不再是替身）+ 首次目击锚点 + 逐格记忆 +
+  短窗证伪回滚（回弹/连扣/双侧同塌）；不可读帧与稀疏帧不再打断证据累计；
+  场景门控改纯 HUD 锚点（未标定不否决）+ 近黑像素过滤黑屏转场；
+  悬浮窗自遮挡屏蔽 + 默认位置移出豆排区；前台抖动去抖 + 设置热更新保留在途计时；
+  校准页新增战斗锚点框选与实时判定预览
+
 ## [0.1.18] - 2026-10-11
 
 - **桌面 Agent 控制手机（Android Use Bridge）**：App 内置只绑 `127.0.0.1:17325` 的鉴权 HTTP 桥（Bearer token 经 `BridgePairingProvider` 仅对 `adb shell` 发放，会话排他），经 `adb forward` 对接桌面端零依赖 Python MCP stdio 服务——19 个 `aua_*` 工具覆盖观察/选择器点击/滑动/字素分段输入/按键/批量/列表采集/应用查询/装配诊断；MJPEG `/screen` 流 + `phone_preview.html` 浏览器实时预览；`AccessibilityDeviceGateway` 新增无障碍截图（Android 11+ `takeScreenshot`）、坐标手势与全局动作；设置 → 通用 → 电脑控制（USB）一键开关，App 启动按开关自恢复

@@ -1,395 +1,379 @@
 package xyz.chouxuewei.mobile_agent.core.substitution
 
-import kotlin.math.max
+import kotlin.math.abs
 
 /**
- * 稳定计数器：连续 confirmFrames 帧一致且相邻观察间隔 ≤ maxGapMs 才确认计数；
- * UNKNOWN 帧与超时断帧都会打断连续证据（三次相隔数秒的相同读数不是"连续稳定"）。
+ * 新计数确认器：把"行计数序列"压成"稳定计数转移"。
+ * 不可读帧（null）不推进也不重置证据；稀疏帧同理；候选计数被其它计数取代时重新累计。
  */
-internal class StabilityTracker(
-    private val confirmFrames: Int,
-    private val maxGapMs: Long,
-) {
-    private var candidateCount: Int = -1
-    private var candidateStreak: Int = 0
-    private var lastObservedAtMs: Long = Long.MIN_VALUE
-    var stable: Int? = null
-        private set
+internal class CountConfirmer(private val confirmFrames: Int) {
+    /** 已确认计数最近一次被读到的帧时刻——转移间隔的旧侧端点。 */
+    var confirmedSeenAtMs = Long.MIN_VALUE; private set
+    /** 当前已确认的稳定计数；null = 尚无基线。 */
+    var confirmed: Int? = null; private set
+    private var candidate: Int? = null
+    private var candidateSeenAtMs = Long.MIN_VALUE
+    private var candidateStreak = 0
+    private var lastFrameAtMs = Long.MIN_VALUE
 
-    /** 当前候选计数首次出现的时间——用于把计时锚定在"豆数实际变化"而非"确认"时刻。 */
-    var firstObservedAtMs: Long = 0
-        private set
+    data class Transition(
+        val from: Int?,
+        val to: Int,
+        /** 新计数首次被读到的帧时刻——常规锚点。 */
+        val firstSeenAtMs: Long,
+        /** 旧计数最后一次被读到的帧时刻——间隔端点。 */
+        val lastOldSeenAtMs: Long,
+        /** 转移可能发生的总时间窗 = firstSeen - lastOldSeen。 */
+        val gapMs: Long,
+    )
 
-    /** 输入本帧观测计数（null = 不可信帧）。返回新确认的稳定计数（含首次基线）。 */
-    fun observe(count: Int?, atMs: Long): Int? {
-        // 相邻观察间隔超窗 → 连续证据断裂，候选重新累计（stable 基线不受影响，
-        // 基线失效由引擎按盲窗时长判定）
-        val gapOk = atMs - lastObservedAtMs <= maxGapMs
-        lastObservedAtMs = atMs
-        if (count == null) {
-            candidateStreak = 0
-            candidateCount = -1
-            return stable
+    fun update(count: Int?, atMs: Long): Transition? {
+        if (atMs <= lastFrameAtMs) return null
+        lastFrameAtMs = atMs
+        if (count == null) return null
+        if (count == confirmed) {
+            confirmedSeenAtMs = atMs
+            candidate = null; candidateStreak = 0
+            return null
         }
-        if (count == stable) {
-            candidateStreak = 0
-            candidateCount = -1
-            return stable
-        }
-        if (!gapOk) {
-            candidateCount = count
-            candidateStreak = 1
-            firstObservedAtMs = atMs
-            return stable
-        }
-        if (count == candidateCount) {
-            candidateStreak++
-        } else {
-            candidateCount = count
-            candidateStreak = 1
-            firstObservedAtMs = atMs
-        }
-        if (candidateStreak >= confirmFrames) {
-            stable = count
-            candidateStreak = 0
-            candidateCount = -1
-        }
-        return stable
+        if (count != candidate) { candidate = count; candidateSeenAtMs = atMs; candidateStreak = 0 }
+        candidateStreak++
+        if (candidateStreak < confirmFrames) return null
+        val t = Transition(
+            from = confirmed, to = count,
+            firstSeenAtMs = candidateSeenAtMs,
+            lastOldSeenAtMs = confirmedSeenAtMs,
+            gapMs = candidateSeenAtMs - confirmedSeenAtMs,
+        )
+        confirmed = count; confirmedSeenAtMs = atMs
+        candidate = null; candidateStreak = 0
+        return t
     }
 
     fun reset() {
-        stable = null
-        candidateStreak = 0
-        candidateCount = -1
-        lastObservedAtMs = Long.MIN_VALUE
+        confirmed = null; confirmedSeenAtMs = Long.MIN_VALUE
+        candidate = null; candidateStreak = 0; lastFrameAtMs = Long.MIN_VALUE
     }
 }
 
 sealed class TimerEvent {
-    /** 某侧稳定豆数 n→n−1：疑似替身候选。conflict=候选落在未走完的冷却内（不接管正式计时）。 */
-    data class SubstitutionCandidate(
+    /** 计数首次稳定确认（建基线）或转移确认。 */
+    data class CountConfirmed(val side: TimerSide, val count: Int) : TimerEvent()
+
+    /** 涨豆确认：只更新基线，永不计时。 */
+    data class GainConfirmed(val side: TimerSide, val fromCount: Int, val toCount: Int) : TimerEvent()
+
+    /** 一次 −1 起算替身冷却。anchorAtMs=证据锚点；uncertain=锚点为中点估计。 */
+    data class SubstitutionStarted(
         val side: TimerSide,
-        val atMs: Long,
+        val anchorAtMs: Long,
+        val endAtMs: Long,
         val fromCount: Int,
         val toCount: Int,
-        val conflict: Boolean,
+        val gapMs: Long,
+        val uncertain: Boolean,
     ) : TimerEvent()
 
-    /**
-     * 一次掉多豆/异常跳变/盲窗后净掉豆——不自动计时，需要人工判断。
-     * 盲窗恢复场景下 fromCount 是盲窗前最后的稳定值，触发时刻不可知。
-     */
-    data class AmbiguousDrop(val side: TimerSide, val fromCount: Int, val toCount: Int) : TimerEvent()
-
-    /** 悬置候选被推翻：豆数回弹/级联消耗/盲窗/重置——只撤销候选，不影响已接受计时。 */
-    data class CandidateCancelled(
+    /** 冷却内 −1：物理先验不可能是替身——记备选截止，原计时不让位。 */
+    data class CooldownDrop(
         val side: TimerSide,
         val fromCount: Int,
         val toCount: Int,
-        val reason: String,
+        val anchorAtMs: Long,
+        val remainingAtDropMs: Long,
     ) : TimerEvent()
 
-    /** 悬置候选证据被接受：回弹窗内豆数未回到原值且验证期有有效观察。 */
-    data class CandidateConfirmed(val side: TimerSide, val count: Int) : TimerEvent()
+    /** 一次多豆或窗口内连扣：奥义/连扣语义，不计时；链内已起计时已回滚。 */
+    data class MultiDrop(val side: TimerSide, val fromCount: Int, val toCount: Int, val anchorAtMs: Long) : TimerEvent()
 
-    /** 高位短驻后落回更早稳定值——判定为闪光误点亮抖动，不产生候选。 */
-    data class WobbleIgnored(val side: TimerSide, val fromCount: Int, val toCount: Int) : TimerEvent()
+    /** 涨豆后短窗内掉豆：奥义清豆/涨豆残影，不计时。 */
+    data class GainFlickerIgnored(val side: TimerSide, val fromCount: Int, val toCount: Int, val anchorAtMs: Long) : TimerEvent()
 
-    /** 基线重建（换局/校准变化/长时间无效帧/暂停恢复）。 */
+    /** 触发时刻不可知的掉豆：reason="gap"（证据空白过长）| "collapse"（双侧同塌）。 */
+    data class AmbiguousDrop(val side: TimerSide, val fromCount: Int, val toCount: Int, val anchorAtMs: Long, val reason: String) : TimerEvent()
+
+    /** 已起计时被短窗证据推翻：reason="rebound"|"cascade"|"collapse"；prevTimer 已恢复。 */
+    data class TimerRetracted(val side: TimerSide, val reason: String, val retractedEndAtMs: Long) : TimerEvent()
+
+    /** 基线重建：reason="hud_lost"（长不可读，计时保留）|"match_end"（持续非战斗，计时清空）| 服务侧原因。 */
     data class BaselineReset(val side: TimerSide?, val reason: String) : TimerEvent()
 }
 
 /**
- * 双侧替身推断引擎。每帧输入两侧的稳定前计数估计（Int?，null=不可信）与战斗场景判定。
- *
- * 每侧三层状态分离：
- * - 观察基线：StabilityTracker 的连续稳定计数；
- * - 未决候选：掉豆证据待回弹验证，可提前向 UI 展示"推断中"，但绝不改写已接受计时；
- * - 已接受计时：单调 endAt 推进，只有证据被接受的候选才能替换，重置/盲窗/撤销不动它。
- *
- * 线程安全：引擎不是线程安全的——帧观察、暂停、重置、换边、配置切换必须由调用方
- * 在同一串行上下文执行（服务侧统一走 engineLock）。
+ * 双侧替身推断引擎 v2。
+ * 核心先验：替身冷却内不可能再次替身——冷却外首个 −1 起算计时，冷却内 −1 只记
+ * 冲突与备选截止，不起算。计时即确认即起算（锚点=首次目击帧），只允许回弹/
+ * 连扣/双侧同塌三种短窗证据证伪回滚；不可读帧不推进也不破坏任何证据。
+ * 线程安全：引擎非线程安全，调用方串行化（服务侧 engineLock）。
  */
 class SubstitutionEngine(
     private val config: TimerConfig,
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val carried: Map<TimerSide, SideTimer> = emptyMap(),
 ) {
-    /** 未决候选：掉豆证据等待回弹验证。验证期需要"新的有效观察"而非纯时间流逝。 */
-    private class PendingCandidate(
-        val fromCount: Int,
-        val toCount: Int,
-        /** 候选计数首次观测帧时刻——确认后作为正式计时锚点。 */
-        val anchorAtMs: Long,
-        /** 候选确认帧时刻——快回弹判定基准。 */
-        val createdAtMs: Long,
-        /** 回弹验证截止（需配合有效证据才确认）。 */
-        val untilMs: Long,
-        /** 创建时已接受计时仍在冷却：冲突候选永不接管正式计时。 */
-        val contested: Boolean,
-    ) {
-        /** 候选创建后是否收到过新的有效观察（确认候选的证据，不是时钟）。 */
-        var evidenceSeen = false
+    /** created=该掉落创建的计时（D4 冷却冲突/MultiDrop 等为 null）——回弹/塌缩只回滚"掉落自己造成的"计时。 */
+    private data class DropMark(val fromCount: Int, val toCount: Int, val anchorMs: Long, val created: SideTimer?)
+
+    private inner class SideState(val side: TimerSide) {
+        val tracker = BeadRowTracker(config.tuning.cellHoldMs)
+        val confirmer = CountConfirmer(config.tuning.confirmFrames)
+        var timer: SideTimer? = carried[side]
+        var prevTimer: SideTimer? = timer?.prevTimer
+        var lastGainAnchorMs: Long? = null
+        val recentDrops = ArrayDeque<DropMark>()
+        /** 最近一次"掉到 0"的首次目击时刻（真实观察时刻，非中点锚点）——塌缩检测用。 */
+        var lastZeroDropFirstSeenMs = Long.MIN_VALUE
+        /** 最近一次掉到 0 所创建的计时（未创建为 null）——塌缩只回滚它。 */
+        var lastZeroDropTimer: SideTimer? = null
     }
 
-    private inner class Side(
-        val side: TimerSide,
-        confirmFrames: Int,
-    ) {
-        val tracker = StabilityTracker(confirmFrames, config.tuning.maxObservationGapMs)
-        /** 已接受计时：只被确认的候选替换、被手动撤销清空。 */
-        var accepted = SideTimer(side)
-        /** 未决候选：独立生命周期——确认升级、撤销消亡，不连坐正式计时。 */
-        var candidate: PendingCandidate? = null
-        var lastCandidateAtMs: Long = Long.MIN_VALUE
-        var baselineEstablished = false
-        /** 当前稳定计数确认的时点——"高位短驻"判抖动用。 */
-        var stableSinceMs: Long = 0
-        /** 上一个稳定计数（before 之前的那一个）——落回它说明是抖动不是替身。 */
-        var prevStable: Int? = null
-        /** 最近一次有效观察时刻（null 帧不算）——盲窗判定用。 */
-        var lastValidAtMs: Long = Long.MIN_VALUE
-        /** 盲窗使基线失效前最后的稳定值——恢复后对比报歧义，不补精确计时。 */
-        var lostBaseline: Int? = null
+    data class FrameResult(
+        val events: List<TimerEvent>,
+        /** 本帧逐格层读数；缺 key = 该侧本帧不可读（供 UI/诊断记录/回放语义）。 */
+        val counts: Map<TimerSide, Int>,
+    )
 
-        /** 展示态：冷却中的正式计时 > 未决候选"推断中" > 已到期计时。 */
-        fun display(nowMs: Long): SideTimer {
-            val c = candidate
-            return when {
-                accepted.remaining(nowMs) > 0 -> accepted
-                c != null -> SideTimer(
-                    side = side, active = true,
-                    endAtMs = c.anchorAtMs + config.cooldownMs,
-                    suspected = true, conflict = c.contested,
-                    eventAtMs = c.anchorAtMs, pending = true,
-                )
-                else -> accepted
-            }
-        }
-    }
-
-    private val self = Side(TimerSide.SELF, config.tuning.confirmFrames)
-    private val enemy = Side(TimerSide.ENEMY, config.tuning.confirmFrames)
+    private val self = SideState(TimerSide.SELF)
+    private val enemy = SideState(TimerSide.ENEMY)
     private val diagnostics = ArrayDeque<String>(200)
-    /** 最近一次接受的帧时刻——重放/乱序帧（旧会话、迟到的旧布局帧）直接丢弃。 */
     private var lastFrameAtMs = Long.MIN_VALUE
+    private var unreadableSinceMs = Long.MIN_VALUE
+    private var nonBattleSinceMs = Long.MIN_VALUE
+    private var matchEnded = false
 
     var paused = false
         private set
 
     fun timers(nowMs: Long = clock()): Pair<SideTimer, SideTimer> =
-        self.display(nowMs) to enemy.display(nowMs)
+        (self.timer ?: SideTimer(TimerSide.SELF)) to (enemy.timer ?: SideTimer(TimerSide.ENEMY))
+
+    /** 热更新/重建时携带的在途计时（含 prevTimer 链）。 */
+    fun carriedTimers(): Map<TimerSide, SideTimer> =
+        listOfNotNull(self.timer?.let { TimerSide.SELF to it }, enemy.timer?.let { TimerSide.ENEMY to it }).toMap()
 
     fun diagnostics(): List<String> = diagnostics.toList()
 
     fun pause() { paused = true }
+
     fun resume() {
         paused = false
-        // 暂停期间漏掉的帧不可信——回来时重建基线而不是沿用旧计数。
+        // 暂停期间的帧不可信——基线重建，计时按单调 endAt 照常推进
         resetBaseline("paused_resume")
     }
 
+    /** 基线重建：清证据与计数状态；计时存活（match_end 之外的复位都不动计时）。 */
     fun resetBaseline(reason: String) {
         for (s in listOf(self, enemy)) {
-            s.tracker.reset()
-            s.baselineEstablished = false
-            s.stableSinceMs = 0
-            s.prevStable = null
-            s.lostBaseline = null
-            // 重置=重新武装：去重窗一并清掉，否则重置后 800ms 内被 dedupe 吞掉
-            s.lastCandidateAtMs = Long.MIN_VALUE
-            // 未决候选一律撤销——重建基线不得把未验证证据升级为已接受计时。
-            // 已接受计时按单调 endAt 持续推进，不受基线重置影响。
-            s.candidate?.let { c ->
-                s.candidate = null
-                if (c.contested) s.accepted = s.accepted.copy(conflict = false)
-                log(TimerEvent.CandidateCancelled(s.side, c.fromCount, c.toCount, "reset:$reason")
-                    .toString(), clock())
-            }
+            s.confirmer.reset(); s.tracker.reset()
+            s.recentDrops.clear(); s.lastGainAnchorMs = null
+            s.lastZeroDropFirstSeenMs = Long.MIN_VALUE; s.lastZeroDropTimer = null
         }
         emit(TimerEvent.BaselineReset(null, reason))
     }
 
-    /** 手动撤销一侧全部推断状态：计时、候选、基线、去重——纠错后从头建立。 */
+    /** 手动撤销一侧全部推断状态：计时、基线、证据——纠错后从头建立。 */
     fun cancelTimer(side: TimerSide) {
         val s = select(side)
-        s.accepted = SideTimer(side)
-        s.candidate = null
-        s.tracker.reset()
-        s.baselineEstablished = false
-        s.stableSinceMs = 0
-        s.prevStable = null
-        s.lostBaseline = null
-        s.lastCandidateAtMs = Long.MIN_VALUE
+        s.timer = null; s.prevTimer = null
+        s.confirmer.reset(); s.tracker.reset()
+        s.recentDrops.clear(); s.lastGainAnchorMs = null
+        s.lastZeroDropFirstSeenMs = Long.MIN_VALUE; s.lastZeroDropTimer = null
     }
 
     /**
-     * 输入一帧两侧观测计数（已分类统计后的数量，null=不可信）。
-     * battle=false 表示帧不是战斗画面（加载/菜单/结算）：两侧都按无效观察处理——
-     * 不产候选、不提供候选确认证据，只推进盲窗时钟。
-     * 返回本帧产生的事件。帧时间用单调时钟 ms，必须单调递增。
+     * 逐格入口：每帧两侧格子状态（null=该侧不可读）。battle=false 整帧按不可读处理，
+     * 只推进"持续非战斗"时钟。返回事件与本帧计数。帧时间必须单调递增。
      */
-    fun onFrame(
-        selfCount: Int?,
-        enemyCount: Int?,
+    fun onCells(
+        selfCells: List<DotState>?,
+        enemyCells: List<DotState>?,
         frameAtMs: Long = clock(),
         battle: Boolean = true,
-    ): List<TimerEvent> {
-        if (paused) return emptyList()
+    ): FrameResult {
+        if (paused) return FrameResult(emptyList(), emptyMap())
         if (frameAtMs <= lastFrameAtMs) {
             log("stale frame dropped @$frameAtMs", frameAtMs)
-            return emptyList()
+            return FrameResult(emptyList(), emptyMap())
         }
         lastFrameAtMs = frameAtMs
+
+        if (!battle) {
+            if (nonBattleSinceMs == Long.MIN_VALUE) nonBattleSinceMs = frameAtMs
+            val events = mutableListOf<TimerEvent>()
+            if (!matchEnded && frameAtMs - nonBattleSinceMs > config.tuning.hudLostResetMs) {
+                matchEnded = true
+                matchEndReset()
+                events += TimerEvent.BaselineReset(null, "match_end")
+            }
+            return FrameResult(events, emptyMap())
+        }
+        nonBattleSinceMs = Long.MIN_VALUE; matchEnded = false
+
         val events = mutableListOf<TimerEvent>()
-        feed(self, if (battle) selfCount else null, frameAtMs, events)
-        feed(enemy, if (battle) enemyCount else null, frameAtMs, events)
+        val selfCount = self.tracker.update(selfCells, frameAtMs)
+        val enemyCount = enemy.tracker.update(enemyCells, frameAtMs)
+        val counts = mutableMapOf<TimerSide, Int>()
+        selfCount?.let { counts[TimerSide.SELF] = it }
+        enemyCount?.let { counts[TimerSide.ENEMY] = it }
+        if (selfCount == null && enemyCount == null) {
+            if (unreadableSinceMs == Long.MIN_VALUE) unreadableSinceMs = frameAtMs
+            if (frameAtMs - unreadableSinceMs > config.tuning.hudLostResetMs) {
+                unreadableSinceMs = Long.MIN_VALUE        // 每个不可读周期至多触发一次
+                resetBaseline("hud_lost")                  // 计时保留
+                events += TimerEvent.BaselineReset(null, "hud_lost")
+            }
+            return FrameResult(events, counts)
+        }
+        unreadableSinceMs = Long.MIN_VALUE
+        feedSide(self, selfCount, frameAtMs, events)
+        feedSide(enemy, enemyCount, frameAtMs, events)
+        return FrameResult(events, counts)
+    }
+
+    /**
+     * 计数口径兼容入口（回放/未改造调用方）：计数合成规范豆形格列后转 onCells。
+     * 返回类型与 v1 保持一致（List<TimerEvent>），服务侧 `eng.onFrame(...)` 调用原样可编译。
+     */
+    fun onFrame(selfCount: Int?, enemyCount: Int?, frameAtMs: Long = clock(), battle: Boolean = true): List<TimerEvent> =
+        onCells(cellsForCount(TimerSide.SELF, selfCount), cellsForCount(TimerSide.ENEMY, enemyCount), frameAtMs, battle).events
+
+    private fun feedSide(s: SideState, count: Int?, atMs: Long, events: MutableList<TimerEvent>) {
+        val t = s.confirmer.update(count, atMs) ?: return
+        if (t.from == null) {                          // 首个稳定计数 = 基线，不是事件
+            events += TimerEvent.CountConfirmed(s.side, t.to)
+            return
+        }
+        events += TimerEvent.CountConfirmed(s.side, t.to)
+        if (t.to > t.from) {                           // 涨豆：先查"弹回"再记增益
+            if (retractIfRebound(s, t, atMs, events)) return
+            s.lastGainAnchorMs = t.firstSeenAtMs
+            events += TimerEvent.GainConfirmed(s.side, t.from, t.to)
+            return
+        }
+        events += evaluateDrop(s, t, atMs)
+    }
+
+    /** 掉豆判定表（§7.2 D0-D5，按顺序短路）。 */
+    private fun evaluateDrop(s: SideState, t: CountConfirmer.Transition, now: Long): List<TimerEvent> {
+        val events = mutableListOf<TimerEvent>()
+        // feedSide 已短路 t.from==null（基线建立非掉落）；守卫仅为让编译器收窄 t.from: Int?→Int
+        if (t.from == null) return events
+        val uncertain = t.gapMs > config.tuning.uncertainGapMs
+        val anchor = if (uncertain) t.lastOldSeenAtMs + t.gapMs / 2 else t.firstSeenAtMs
+        val end = anchor + config.cooldownMs
+
+        if (t.gapMs > config.tuning.maxAnchorGapMs) {                        // D0
+            events += TimerEvent.AmbiguousDrop(s.side, t.from, t.to, anchor, "gap")
+            s.recentDrops.clear(); return events
+        }
+        if (t.to == 0) {                                                      // D1
+            val other = select(if (s.side == TimerSide.SELF) TimerSide.ENEMY else TimerSide.SELF)
+            if (other.lastZeroDropFirstSeenMs != Long.MIN_VALUE &&
+                abs(t.firstSeenAtMs - other.lastZeroDropFirstSeenMs) <= config.tuning.collapseWindowMs) {
+                // 双侧近同时"掉到 0"=豆行整排消失（转场/结算）：
+                // 只回滚对侧"由那次归零创建"的计时（若仍是当前计时），更早的真实计时不连坐。
+                other.lastZeroDropTimer?.takeIf { it === other.timer }?.let { zt ->
+                    other.timer = zt.prevTimer
+                    other.prevTimer = zt.prevTimer?.prevTimer
+                    events += TimerEvent.TimerRetracted(other.side, "collapse", zt.endAtMs)
+                }
+                events += TimerEvent.AmbiguousDrop(s.side, t.from, t.to, anchor, "collapse")
+                s.recentDrops.clear(); return events
+            }
+            s.lastZeroDropFirstSeenMs = t.firstSeenAtMs
+            s.lastZeroDropTimer = null                       // 若 D5 真起了计时再回填
+        }
+        s.lastGainAnchorMs?.let { gainAt ->                                   // D2
+            if (anchor - gainAt <= config.tuning.gainFlickerMs) {
+                events += TimerEvent.GainFlickerIgnored(s.side, t.from, t.to, anchor)
+                s.recentDrops.clear(); return events
+            }
+        }
+        val chainDrops = s.recentDrops.count {                                // D3
+            it.toCount == it.fromCount - 1 && anchor - it.anchorMs <= config.tuning.cascadeWindowMs
+        }
+        val isChainStep = t.to == t.from - 1 && chainDrops >= 1
+        if (t.to < t.from - 1 || isChainStep) {
+            if (isChainStep) {
+                retractTimersInWindow(s, anchor - config.tuning.cascadeWindowMs, now).forEach {
+                    events += TimerEvent.TimerRetracted(s.side, "cascade", it.endAtMs)
+                }
+            }
+            events += TimerEvent.MultiDrop(s.side, t.from, t.to, anchor)
+            s.recentDrops.clear(); return events
+        }
+        var created: SideTimer? = null
+        val tm = s.timer                                                      // D4 冷却先验
+        if (tm != null && tm.remaining(now) > config.tuning.cooldownGraceMs) {
+            tm.altEndAtMs = end; tm.conflict = true
+            events += TimerEvent.CooldownDrop(s.side, t.from, t.to, anchor, tm.remaining(now))
+        } else {                                                              // D5 起算
+            created = startTimer(s, anchor, end, uncertain)
+            if (t.to == 0) s.lastZeroDropTimer = created      // 归零起的计时才纳入塌缩回滚
+            events += TimerEvent.SubstitutionStarted(
+                s.side, anchor, end, t.from, t.to, t.gapMs, uncertain,
+            )
+        }
+        s.recentDrops += DropMark(t.from, t.to, anchor, created)
         return events
     }
 
-    private fun feed(side: Side, count: Int?, atMs: Long, events: MutableList<TimerEvent>) {
-        // 盲窗判定：距上次有效观察超过阈值 → 旧基线与悬置候选不可信。
-        // 覆盖"持续无效帧"、"没收到新帧"与"非战斗画面"三种形态——有效证据缺席时长才是本质。
-        if ((side.baselineEstablished || side.candidate != null) &&
-            atMs - side.lastValidAtMs > config.tuning.invalidBaselineTimeoutMs
-        ) {
-            invalidateBaseline(side, atMs, events)
-        }
-        if (count == null) {
-            side.tracker.observe(null, atMs)
-            return
-        }
-        side.lastValidAtMs = atMs
-        side.candidate?.let { it.evidenceSeen = true }
-        val before = side.tracker.stable
-        val after = side.tracker.observe(count, atMs)
-        if (after == null || after == before) {
-            evaluatePending(side, atMs, events)
-            return
-        }
-        if (!side.baselineEstablished) {
-            side.baselineEstablished = true
-            side.stableSinceMs = atMs
-            side.prevStable = null
-            val lost = side.lostBaseline
-            side.lostBaseline = null
-            log("baseline ${side.side}=$after", atMs)
-            if (lost != null && after < lost) {
-                // 盲窗内疑似消耗：触发时刻不可知——报歧义而非补发"恢复画面时刻"的精确冷却
-                events += TimerEvent.AmbiguousDrop(side.side, lost, after)
-                    .also { log("post_blind $it", atMs) }
-            }
-            evaluatePending(side, atMs, events)
-            return
-        }
-        // priorStable = "before" 之前的稳定值；heldMs = before 已驻留时长
-        val priorStable = side.prevStable
-        val heldMs = atMs - side.stableSinceMs
-        side.prevStable = before
-        side.stableSinceMs = atMs
-        val drop = before!! - after
-        when {
-            drop == 1 -> {
-                if (side.candidate != null) {
-                    // 悬置未决又掉豆 = 级联消耗（奥义逐颗耗尽等）——不是单次替身
-                    cancelPending(side, atMs, events, "cascade_drop")
-                    events += TimerEvent.AmbiguousDrop(side.side, before, after)
-                        .also { log(it.toString(), atMs) }
-                    return
-                }
-                if (heldMs < config.tuning.minStableBeforeDropMs && after == priorStable) {
-                    // 高位短驻后落回原稳定值：闪光误点亮抖动，不是替身
-                    events += TimerEvent.WobbleIgnored(side.side, before, after)
-                        .also { log(it.toString(), atMs) }
-                    return
-                }
-                val dedupe = side.lastCandidateAtMs != Long.MIN_VALUE &&
-                    atMs - side.lastCandidateAtMs < config.tuning.dedupeMs
-                if (dedupe) {
-                    log("dedupe ${side.side} $before->$after", atMs)
-                    return
-                }
-                // 正式计时仍在冷却（按 remaining 判定，不靠归零后仍为 true 的 active 标志）→
-                // 冲突候选：记录证据但默认不重启、不延长原计时
-                val contested = side.accepted.remaining(atMs) > 0
-                if (contested) side.accepted = side.accepted.copy(conflict = true)
-                val anchor = side.tracker.firstObservedAtMs
-                side.lastCandidateAtMs = atMs
-                side.candidate = PendingCandidate(
-                    fromCount = before, toCount = after,
-                    anchorAtMs = anchor, createdAtMs = atMs,
-                    untilMs = atMs + config.tuning.pendingVerifyMs,
-                    contested = contested,
-                )
-                events += TimerEvent.SubstitutionCandidate(side.side, anchor, before, after, contested)
-                    .also { log(it.toString(), atMs) }
-            }
-            drop > 1 -> {
-                if (side.candidate != null) cancelPending(side, atMs, events, "multi_drop")
-                events += TimerEvent.AmbiguousDrop(side.side, before, after)
-                    .also { log(it.toString(), atMs) }
-            }
-            // drop <= 0（涨豆）不产事件
-        }
-        evaluatePending(side, atMs, events)
-    }
-
-    /** 盲窗失效：旧基线作废、悬置候选撤销（证据链已断），已接受计时不动。 */
-    private fun invalidateBaseline(side: Side, atMs: Long, events: MutableList<TimerEvent>) {
-        side.lostBaseline = side.tracker.stable
-        side.tracker.reset()
-        side.baselineEstablished = false
-        side.stableSinceMs = 0
-        side.prevStable = null
-        cancelPending(side, atMs, events, "blind_window")
-        events += TimerEvent.BaselineReset(side.side, "blind_window")
-            .also { log(it.toString(), atMs) }
+    /**
+     * 涨豆落回到"当前计时那次掉落"的原水平且离该掉落锚点 ≤reboundRetractMs → 假掉落，回滚。
+     * 只回滚创建了当前计时的那次掉落；冷却冲突掉豆（created=null）不参与。
+     */
+    private fun retractIfRebound(
+        s: SideState,
+        t: CountConfirmer.Transition,
+        now: Long,
+        events: MutableList<TimerEvent>,
+    ): Boolean {
+        val lastDrop = s.recentDrops.lastOrNull { it.created != null } ?: return false
+        val tm = lastDrop.created!!
+        if (s.timer !== tm || tm.remaining(now) <= 0) return false   // 已换计时/已到期不回滚
+        if (t.firstSeenAtMs - lastDrop.anchorMs > config.tuning.reboundRetractMs) return false
+        if (t.to < lastDrop.fromCount) return false                  // 未弹回掉前水平
+        events += TimerEvent.TimerRetracted(s.side, "rebound", tm.endAtMs)
+        s.timer = tm.prevTimer
+        s.prevTimer = tm.prevTimer?.prevTimer
+        s.recentDrops.clear()
+        return true
     }
 
     /**
-     * 悬置候选验证：快回弹→撤单（遮挡闪烁）；慢回弹→确认（真实涨豆）；
-     * 窗口结束且有新的有效观察→确认。纯时间流逝（UNKNOWN/无帧/非战斗画面）不确认。
+     * 回滚锚点落在 (lo, now] 的连续在途计时，返回被回滚者。
+     * 链上锚点单调递减：只需从链头连续弹出——头部不在窗内则更深者必不在。
+     * 结束后重同步镜像不变量 s.prevTimer = s.timer?.prevTimer（单字段弹出会破坏它）。
      */
-    private fun evaluatePending(side: Side, atMs: Long, events: MutableList<TimerEvent>) {
-        val c = side.candidate ?: return
-        val stable = side.tracker.stable
-        if (stable != null && stable >= c.fromCount) {
-            if (atMs - c.createdAtMs < config.tuning.fastReboundCancelMs) {
-                cancelPending(side, atMs, events, "count_bounced")
-            } else {
-                confirmPending(side, atMs, events, stable, "regain")
-            }
-        } else if (atMs >= c.untilMs && c.evidenceSeen) {
-            confirmPending(side, atMs, events, stable ?: -1, "window_end")
+    private fun retractTimersInWindow(s: SideState, lo: Long, now: Long): List<SideTimer> {
+        val removed = mutableListOf<SideTimer>()
+        while (s.timer?.let { it.anchorAtMs in (lo + 1)..now } == true) {
+            removed += s.timer!!; s.timer = s.timer!!.prevTimer
         }
-        // 证据不足时候选保持悬置：由盲窗失效路径负责兜底撤销，不靠等待升级
+        s.prevTimer = s.timer?.prevTimer
+        return removed
     }
 
-    private fun confirmPending(side: Side, atMs: Long, events: MutableList<TimerEvent>, count: Int, via: String) {
-        val c = side.candidate ?: return
-        side.candidate = null
-        if (!c.contested) {
-            // 证据被接受 → 候选升级为正式计时，锚定豆数首次观测帧
-            side.accepted = SideTimer(
-                side = side.side, active = true,
-                endAtMs = c.anchorAtMs + config.cooldownMs,
-                suspected = true, conflict = false,
-                eventAtMs = c.anchorAtMs, pending = false,
-            )
-        }
-        // contested：正式计时原样推进，conflict 标记已记录——冲突证据不接管冷却
-        events += TimerEvent.CandidateConfirmed(side.side, count)
-            .also { log("$it via=$via", atMs) }
+    private fun startTimer(s: SideState, anchor: Long, end: Long, uncertain: Boolean): SideTimer {
+        val t = SideTimer(
+            side = s.side, active = true, endAtMs = end, suspected = true,
+            anchorAtMs = anchor, eventAtMs = anchor,
+            uncertain = uncertain, prevTimer = s.timer,
+        )
+        s.prevTimer = s.timer
+        s.timer = t
+        return t
     }
 
-    private fun cancelPending(side: Side, atMs: Long, events: MutableList<TimerEvent>, reason: String) {
-        val c = side.candidate ?: return
-        side.candidate = null
-        if (c.contested) {
-            // 冲突候选被推翻 = 该次掉豆证据不足——摘掉冲突标记，正式计时始终不受影响
-            side.accepted = side.accepted.copy(conflict = false)
+    /** 持续非战斗超时：清计时与基线（比赛结束语义），等下一局重新建立。 */
+    private fun matchEndReset() {
+        for (s in listOf(self, enemy)) {
+            s.timer = null; s.prevTimer = null
+            s.confirmer.reset(); s.tracker.reset()
+            s.recentDrops.clear(); s.lastGainAnchorMs = null
+            s.lastZeroDropFirstSeenMs = Long.MIN_VALUE; s.lastZeroDropTimer = null
         }
-        events += TimerEvent.CandidateCancelled(side.side, c.fromCount, c.toCount, reason)
-            .also { log(it.toString(), atMs) }
+        emit(TimerEvent.BaselineReset(null, "match_end"))
     }
 
     private fun select(side: TimerSide) = if (side == TimerSide.SELF) self else enemy
@@ -400,6 +384,18 @@ class SubstitutionEngine(
     }
 
     private fun emit(event: TimerEvent) = log(event.toString(), clock())
+
+    companion object {
+        /** 计数 → 规范豆形格列（SELF 左锚 L..E..、ENEMY 右锚 E..L..）；null→null。 */
+        internal fun cellsForCount(side: TimerSide, count: Int?): List<DotState>? {
+            if (count == null) return null
+            val n = count.coerceIn(0, 4)
+            return when (side) {
+                TimerSide.SELF -> List(4) { if (it < n) DotState.LIT else DotState.EMPTY }
+                TimerSide.ENEMY -> List(4) { if (it >= 4 - n) DotState.LIT else DotState.EMPTY }
+            }
+        }
+    }
 }
 
 /** 服务级运行状态：与每侧计时状态分离。 */

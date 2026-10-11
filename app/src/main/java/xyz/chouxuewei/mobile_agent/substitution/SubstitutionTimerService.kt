@@ -66,6 +66,8 @@ class SubstitutionTimerService : Service() {
         val hudValid: Boolean = false,
         val gameInForeground: Boolean = false,
         val showSelf: Boolean = true,
+        /** 投影通道下自家悬浮窗正压在豆排上——读数可能被遮挡污染。 */
+        val overlayOverlap: Boolean = false,
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -91,6 +93,8 @@ class SubstitutionTimerService : Service() {
     /** 帧几何版本：尺寸变化说明通道/旋转/内容尺寸变了——旧布局证据作废。 */
     private var lastFrameW = 0
     private var lastFrameH = 0
+    /** 最近一次帧访问口（悬浮窗遮挡判定用；帧像素生命周期不跨回调，只读宽高）。 */
+    @Volatile private var lastAccess: FrameAccess? = null
     /** 本地诊断记录器：仅在用户开启 diagnosticsEnabled 时创建。 */
     private var diag: DiagnosticRecorder? = null
     private var overlay: SubstitutionOverlay? = null
@@ -256,8 +260,13 @@ class SubstitutionTimerService : Service() {
                         if (old == null || old.layout != newCfg.layout ||
                             old.tuning != newCfg.tuning || old.cooldownMs != newCfg.cooldownMs
                         ) {
+                            // 重建引擎时结转在途计时（含 prevTimer 链/备选截止）——
+                            // 改校准/调参不再清零计时；clock 必须保持 elapsedRealtime 域
+                            val carried = synchronized(engineLock) { engine?.carriedTimers() ?: emptyMap() }
                             synchronized(engineLock) {
-                                engine = SubstitutionEngine(newCfg, clock = SystemClock::elapsedRealtime)
+                                engine = SubstitutionEngine(
+                                    newCfg, clock = SystemClock::elapsedRealtime, carried = carried,
+                                )
                             }
                             publishTimers()
                         }
@@ -336,6 +345,7 @@ class SubstitutionTimerService : Service() {
 
     private fun onFrame(access: FrameAccess) {
         lastFrameAt = SystemClock.elapsedRealtime()
+        lastAccess = access
         val cfg = config ?: return
         val eng = engine ?: return
         val monitoring = synchronized(engineLock) { !eng.paused } &&
@@ -370,12 +380,13 @@ class SubstitutionTimerService : Service() {
         val classifier = classifierOf(cfg)
         val cellDiag = AgentLog.enabled && now - lastObservedLogAt > 2000
         val diagOn = diag != null
-        fun countDots(side: TimerSide): Int? {
+        fun readSide(side: TimerSide): List<DotState>? {
             val marks = StringBuilder()
             val states = if (diagOn) ArrayList<String>() else null
-            val count = DotRowCounting.count(
+            val cells = DotRowCounting.readCells(
                 access, physicalCells(cfg, side, access.width, access.height),
                 classifier, side, cfg.tuning.sampleGrid, cfg.tuning.cellInnerFraction,
+                masked = overlayMask(access),
             ) { result ->
                 val c = when (result.state) {
                     DotState.LIT -> 'L'; DotState.EMPTY -> 'E'; DotState.UNKNOWN -> 'U'
@@ -387,20 +398,23 @@ class SubstitutionTimerService : Service() {
             }
             if (cellDiag) AgentLog.d(TAG) { "cells $side=${marks.trim()}" }
             cellStates[side] = states
-            return count
+            return cells
         }
 
-        val selfCount = countDots(TimerSide.SELF)
-        val enemyCount = countDots(TimerSide.ENEMY)
-        // 战斗场景门控：豆色之外的 HUD 锚点证据裁决；锚点未标定时
-        // 两侧"全灭"弱信号兜底（转场豆槽整排消失），配置锚点后双零不再参与门控。
+        val selfCells = readSide(TimerSide.SELF)
+        val enemyCells = readSide(TimerSide.ENEMY)
+        // 战斗场景门控：只信豆色之外的 HUD 锚点证据；锚点未标定 → UNVERIFIED
+        // 不否决（转场整排消失由引擎 collapse 规则兜底）。
         val anchorSamples = cfg.layout.hudAnchors.map { a ->
             val r = a.rect.toPixel(0, 0, access.width, access.height)
             access.sample(r[0], r[1], r[2], r[3], cfg.tuning.sampleGrid)
         }
-        val scene = evaluateScene(cfg.layout.hudAnchors, anchorSamples, selfCount, enemyCount)
+        val scene = evaluateScene(cfg.layout.hudAnchors, anchorSamples)
         val battle = scene != SceneVerdict.NOT_BATTLE
-        val events = synchronized(engineLock) { eng.onFrame(selfCount, enemyCount, now, battle) }
+        val result = synchronized(engineLock) { eng.onCells(selfCells, enemyCells, now, battle) }
+        val events = result.events
+        val selfCount = result.counts[TimerSide.SELF]
+        val enemyCount = result.counts[TimerSide.ENEMY]
         _uiState.update {
             it.copy(
                 selfDots = selfCount ?: -1,
@@ -431,12 +445,14 @@ class SubstitutionTimerService : Service() {
         for (e in events) {
             AgentLog.i(TAG) { "event $e" }
             when (e) {
-                is TimerEvent.AmbiguousDrop ->
-                    _uiState.update { it.copy(detail = "疑似豆数变化（触发时刻不可知），未自动计时") }
-                is TimerEvent.CandidateCancelled ->
-                    _uiState.update { it.copy(detail = "候选已撤销（豆数回弹，非替身）") }
-                is TimerEvent.WobbleIgnored ->
-                    _uiState.update { it.copy(detail = "豆数短暂抖动，已忽略") }
+                is TimerEvent.AmbiguousDrop -> _uiState.update {
+                    it.copy(detail = if (e.reason == "collapse") "豆行整排消失（疑似转场），未计时"
+                                     else "疑似豆数变化（触发时刻不可知），未自动计时")
+                }
+                is TimerEvent.MultiDrop -> _uiState.update { it.copy(detail = "一次掉多豆/连续扣豆，未计时") }
+                is TimerEvent.GainFlickerIgnored -> _uiState.update { it.copy(detail = "涨豆后瞬间掉豆（疑似奥义清豆），未计时") }
+                is TimerEvent.CooldownDrop -> _uiState.update { it.copy(detail = "冷却期内出现其他扣豆（已记备选结束点）") }
+                is TimerEvent.TimerRetracted -> _uiState.update { it.copy(detail = "计时被新证据推翻（${e.reason}），已恢复上一计时") }
                 else -> Unit
             }
         }
@@ -522,6 +538,23 @@ class SubstitutionTimerService : Service() {
         )
     }
 
+    /** 投影通道把自家悬浮窗映射成帧坐标 mask；无障碍通道/不可见 → 恒 false。 */
+    private fun overlayMask(access: FrameAccess): (IntArray) -> Boolean {
+        val ov = overlay ?: return { false }
+        val r = ov.screenRect ?: return { false }
+        if (captureChannel != "projection") return { false }
+        val ds = ov.displaySize
+        if (ds[0] == 0 || ds[1] == 0) return { false }
+        val screenLand = ds[0] > ds[1]; val frameLand = access.width > access.height
+        if (screenLand != frameLand) return { false }                     // 方向不一致不臆测映射
+        val sx = access.width.toFloat() / ds[0]; val sy = access.height.toFloat() / ds[1]
+        val fr = intArrayOf(
+            (r.left * sx).toInt(), (r.top * sy).toInt(),
+            (r.right * sx).toInt(), (r.bottom * sy).toInt(),
+        )
+        return { c -> c[0] < fr[2] && c[2] > fr[0] && c[1] < fr[3] && c[3] > fr[1] }
+    }
+
     private var classifier: DotClassifier? = null
     private var classifierConfig = 0
 
@@ -538,10 +571,17 @@ class SubstitutionTimerService : Service() {
         val eng = engine ?: return
         val now = SystemClock.elapsedRealtime()
         val (selfTimer, enemyTimer) = synchronized(engineLock) { eng.timers(now) }
+        // 悬浮窗是否正压着某一侧豆排：投影帧会截进自家悬浮窗，污染被压格的读数
+        val overlap = config?.layout?.let { l ->
+            val mask = overlayMask(lastAccess ?: return@let false)
+            l.dotCells(TimerSide.SELF, lastFrameW, lastFrameH).any(mask) ||
+                l.dotCells(TimerSide.ENEMY, lastFrameW, lastFrameH).any(mask)
+        } ?: false
         _uiState.update {
             it.copy(
                 selfTimer = selfTimer, enemyTimer = enemyTimer,
                 captureAlive = now - lastFrameAt < 1500,
+                overlayOverlap = overlap,
             )
         }
         val showSelf = config?.showSelfTimer ?: true
@@ -554,6 +594,7 @@ class SubstitutionTimerService : Service() {
                 monitoring = st.state == TimerServiceState.MONITORING,
                 selfDots = st.selfDots, enemyDots = st.enemyDots,
                 captureAlive = st.captureAlive, hudOk = st.hudValid,
+                overlayOverlap = overlap,
             )
         }
     }
@@ -660,6 +701,8 @@ class SubstitutionTimerService : Service() {
         }
         foregroundWatch = scope.launch(Dispatchers.IO) {
             var lastKnown: String? = null
+            var lastInGame: Boolean? = null
+            var nonGamePolls = 0
             while (true) {
                 val cfg = config ?: break
                 // 最近窗口无事件时保持上次判定——切换事件只发生在跳转瞬间，
@@ -679,15 +722,14 @@ class SubstitutionTimerService : Service() {
                     AgentLog.i(TAG) { "dead capture + game foreground → a11y fallback" }
                     switchToA11yCapture()
                 }
-                if (inGame != _uiState.value.gameInForeground) {
-                    AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
-                    _uiState.update { it.copy(gameInForeground = inGame) }
-                    SubstitutionTimerCoordinator.onLaunchEvent(
-                        if (inGame) LaunchEvent.GameForeground else LaunchEvent.GameLeft
-                    )
+                if (inGame != lastInGame) {
                     if (inGame) {
+                        nonGamePolls = 0
+                        lastInGame = true
+                        AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
+                        SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameForeground)
                         // 进游戏：重建基线，首组稳定帧只建基线不计时
-                        synchronized(engineLock) { engine?.resetBaseline("game_foreground") }
+                        synchronized(engineLock) { engine?.resetBaseline("foreground_enter") }
                         // 校准完成才挂计时悬浮窗，未校准期间不显示"监视中"误导
                         if (config?.calibrated == true) scope.launch { overlay?.show() }
                         // 未校准不进 MONITORING——不能伪装成"识别中"；预览帧照产供校准用
@@ -696,14 +738,21 @@ class SubstitutionTimerService : Service() {
                         } else if (_uiState.value.state == TimerServiceState.NEEDS_CALIBRATION) {
                             pushState(detail = "已进入游戏——回设置页完成校准后开始识别")
                         }
-                    } else {
+                    } else if (++nonGamePolls >= 2) {
+                        // 连续两次不在前台才算离开：吞掉手势侧栏的瞬时前台抖动
+                        lastInGame = false
+                        AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
+                        SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameLeft)
                         scope.launch { overlay?.hide() }
-                        synchronized(engineLock) { engine?.resetBaseline("game_left") }
+                        synchronized(engineLock) { engine?.resetBaseline("foreground_leave") }
                         if (_uiState.value.state == TimerServiceState.MONITORING) {
                             pushState(detail = "已离开游戏")
                         }
                     }
+                } else {
+                    nonGamePolls = if (inGame) 0 else nonGamePolls + 1
                 }
+                _uiState.update { it.copy(gameInForeground = inGame) }
                 delay(900)
             }
         }

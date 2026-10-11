@@ -46,8 +46,6 @@ class SubstitutionTimerRepository(context: Context) {
         // 检测调参（HSV 阈值三键为旧版残留，新实现用颜色盒，仅保留仍生效的键）
         val LIT_PIXEL_RATIO = floatPreferencesKey("st_lit_pixel_ratio")
         val CONFIRM_FRAMES = intPreferencesKey("st_confirm_frames")
-        val INVALID_TIMEOUT = longPreferencesKey("st_invalid_timeout")
-        val DEDUPE_MS = longPreferencesKey("st_dedupe_ms")
     }
 
     val config: Flow<TimerConfig> = store.data.map { p ->
@@ -58,7 +56,7 @@ class SubstitutionTimerRepository(context: Context) {
             gamePackage = p[Keys.GAME_PACKAGE] ?: "",
             showSelfTimer = p[Keys.SHOW_SELF] ?: true,
             cooldownMs = p[Keys.COOLDOWN_MS] ?: 15_000,
-            frameIntervalMs = (p[Keys.FRAME_INTERVAL_MS] ?: 140).coerceIn(80, 500),
+            frameIntervalMs = (p[Keys.FRAME_INTERVAL_MS] ?: 100).coerceIn(80, 500),
             calibrated = p[Keys.CALIBRATED] ?: false,
             layout = decodeLayout(p[Keys.LAYOUT]),
             swapSides = p[Keys.SWAP_SIDES] ?: false,
@@ -69,9 +67,6 @@ class SubstitutionTimerRepository(context: Context) {
                 litPixelMinRatio = (p[Keys.LIT_PIXEL_RATIO]
                     ?: defaultTuning.litPixelMinRatio).coerceIn(0.05f, 0.8f),
                 confirmFrames = (p[Keys.CONFIRM_FRAMES] ?: defaultTuning.confirmFrames).coerceIn(2, 8),
-                invalidBaselineTimeoutMs = p[Keys.INVALID_TIMEOUT]
-                    ?: defaultTuning.invalidBaselineTimeoutMs,
-                dedupeMs = p[Keys.DEDUPE_MS] ?: defaultTuning.dedupeMs,
             ),
         )
     }.distinctUntilChanged()
