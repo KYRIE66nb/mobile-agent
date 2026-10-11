@@ -72,45 +72,47 @@ data class RgbBox(
     }
 }
 
-/** 分类判定参数。点亮豆逐像素颜色盒 + 格内占比表决。点亮色不分侧而分状态：非满=青蓝、满四颗=金色。 */
+/**
+ * 替身检测调参。颜色盒与比例阈值决定"每格亮/灭"；其余时间窗决定"何时起算/是否证伪"。
+ * 标注"待真机复核"的参数须按 §7.3 与任务 11 验收结果回调。
+ */
 data class DetectionTuning(
-    /** 点亮豆·青蓝盒（未满状态；开源参考的"亮蓝"盒；R 上限排除纯白闪光）。 */
+    /** 点亮豆·青蓝盒（未满状态）。 */
     val litCyanBox: RgbBox = RgbBox(0, 120, 170, 225, 255, 255),
-    /** 点亮豆·金色盒（四颗全亮时整排变金——开源参考的"赤金"盒）。 */
+    /** 点亮豆·金色盒（四颗全亮时整排变金）。 */
     val litGoldBox: RgbBox = RgbBox(179, 19, 1, 255, 255, 206),
-    /** 熄灭豆槽颜色盒（深藏青，放宽以覆盖暗色背景混入）。 */
+    /** 熄灭豆槽颜色盒（深藏青）。 */
     val dimBox: RgbBox = RgbBox(0, 0, 0, 90, 100, 150),
-    /** 格内命中点亮盒的像素占比 ≥ 该值 → LIT。亮豆中心纯色约占格 20-40%。 */
+    /** 近黑下限：max(r,g,b) 不超过该值的像素既不算亮也不算灭（黑屏转场防"假全灭"）。 */
+    val blackFloor: Int = 10,
+    /** 格内命中点亮盒的像素占比 ≥ 该值且占优 → LIT。 */
     val litPixelMinRatio: Float = 0.12f,
-    /** 格内命中熄灭盒的像素占比 ≥ 该值 → EMPTY。 */
+    /** 格内命中熄灭盒的像素占比 ≥ 该值且占优 → EMPTY。 */
     val dimPixelMinRatio: Float = 0.40f,
     /** 每格采样网格（grid×grid 像素）。 */
     val sampleGrid: Int = 7,
     /** 格子内缩比例：只采样中心区域，避开豆间分隔与 HUD 边缘。 */
     val cellInnerFraction: Float = 0.6f,
-    /** 连续一致帧数才确认计数变化。 */
-    val confirmFrames: Int = 3,
-    /** 稳定计数窗口内允许的 UNKNOWN 帧比例；超过则整个估计为 null。 */
-    val maxUnknownRatio: Float = 0.5f,
-    /** 距上次有效观察超过该时长 → 旧基线失效（盲窗：无效帧/无帧/非战斗画面同等待遇）。 */
-    val invalidBaselineTimeoutMs: Long = 2000,
-    /** 同一候选去重窗：同一侧两次 n→n−1 间隔小于该值视为同一事件。 */
-    val dedupeMs: Long = 800,
-    /** 相邻两次观察的最大间隔：超过则稳定计数连续证据断裂，候选重新累计。 */
-    val maxObservationGapMs: Long = 500,
-    /**
-     * 掉落前的"高位计数"须已稳定该时长才接受为替身候选；
-     * 涨豆动画/闪光造成的高位驻留 + 落回原值在该窗内被判为抖动而非替身。
-     * 代价：涨豆后立刻（<窗长）真替身会被吞——窗长是 FP/FN 的权衡点。
-     */
-    val minStableBeforeDropMs: Long = 1200,
-    /** 悬置候选验证窗：窗口内快回弹撤单、慢回弹按真实涨豆确认。 */
-    val pendingVerifyMs: Long = 1500,
-    /**
-     * 悬置期回弹判定分界：候选后 <该值 弹回原值 = 遮挡/闪烁假掉落 → 撤单；
-     * ≥该值 才弹回 = 大概率真实涨豆 → 确认计时（真替身的豆不可能这么快回复）。
-     */
-    val fastReboundCancelMs: Long = 600,
+    /** 新计数需被"可读帧"连续看到该次数才确认；不可读帧不推进也不重置。 */
+    val confirmFrames: Int = 2,
+    /** 单格 UNKNOWN 沿用记忆值的最长时长；超过则整行不可读。 */
+    val cellHoldMs: Long = 400,
+    /** 掉豆后在该窗口内弹回原值 → 闪光假掉落，回滚计时。 */
+    val reboundRetractMs: Long = 500,
+    /** 涨豆后在该窗口内掉豆 → 奥义清豆/涨豆残影，不计时。 */
+    val gainFlickerMs: Long = 350,
+    /** 该窗口内连续两次 −1 → 连扣（奥义逐帧扣豆），回滚链内计时。 */
+    val cascadeWindowMs: Long = 400,
+    /** 证据空白 > 该值 → 锚点取中点且标记 uncertain。 */
+    val uncertainGapMs: Long = 700,
+    /** 证据空白 > 该值 → 触发时刻不可知，报歧义不计时。 */
+    val maxAnchorGapMs: Long = 2500,
+    /** 双侧在该窗口内相继归零 → 转场整排消失，回滚窗内计时。 */
+    val collapseWindowMs: Long = 300,
+    /** 双侧不可读/非战斗持续 > 该值 → 基线重建（hud_lost 保留计时）/比赛结束（match_end 清计时）。 */
+    val hudLostResetMs: Long = 8000,
+    /** 物理先验：冷却剩余 > 该值的掉豆不可能是替身。 */
+    val cooldownGraceMs: Long = 1000,
 )
 
 /**
@@ -127,6 +129,7 @@ class DotClassifier(private val tuning: DetectionTuning = DetectionTuning()) {
         var dim = 0
         for (px in argb) {
             if (tuning.litCyanBox.contains(px) || tuning.litGoldBox.contains(px)) lit++
+            else if (nearBlack(px, tuning.blackFloor)) continue      // 黑屏转场像素不投票
             else if (tuning.dimBox.contains(px)) dim++
         }
         val n = argb.size.toFloat()
@@ -141,6 +144,11 @@ class DotClassifier(private val tuning: DetectionTuning = DetectionTuning()) {
                 Result(DotState.EMPTY, dimRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
             else -> Result(DotState.UNKNOWN, 0f, litRatio, dimRatio)
         }
+    }
+
+    private fun nearBlack(argb: Int, floor: Int): Boolean {
+        val r = argb shr 16 and 0xFF; val g = argb shr 8 and 0xFF; val b = argb and 0xFF
+        return maxOf(r, g, b) <= floor
     }
 }
 
@@ -206,21 +214,32 @@ class HudGate(
 }
 
 /**
- * 战斗场景判定：锚点已标定 → 由独立 HUD 证据裁决；
- * 锚点未标定 → 弱启发式兜底：两侧"全灭"视作非战斗（转场豆槽整排消失的假零）。
- * 一旦锚点配置，双零不再参与门控——有效 HUD 下双方零豆是合法观察。
+ * 战斗场景判定：只信豆色之外的 HUD 锚点证据。
+ * 锚点未标定 → 恒 UNVERIFIED（不做任何否决；转场整排消失由引擎 collapse 规则兜底）；
+ * 已标定 → HudGate 命中数裁决 BATTLE/NOT_BATTLE。
  */
-fun evaluateScene(
-    anchors: List<HudAnchor>,
-    anchorSamples: List<IntArray>,
-    selfCount: Int?,
-    enemyCount: Int?,
-): SceneVerdict {
-    if (anchors.isEmpty()) {
-        return if (selfCount == 0 && enemyCount == 0) SceneVerdict.NOT_BATTLE
-        else SceneVerdict.UNVERIFIED
-    }
+fun evaluateScene(anchors: List<HudAnchor>, anchorSamples: List<IntArray>): SceneVerdict {
+    if (anchors.isEmpty()) return SceneVerdict.UNVERIFIED
     return HudGate(anchors).verdict(anchorSamples)
+}
+
+/**
+ * 从锚点区域采样像素推导颜色盒：各通道取 P10/P90 分位再外扩 tolerance，
+ * 抑制零星噪点。供校准页"框一下常驻 HUD 元素"生成锚点用。
+ */
+fun deriveAnchorBox(pixels: IntArray, tolerance: Int = 30): RgbBox {
+    require(pixels.isNotEmpty()) { "锚点区域无像素" }
+    fun channel(shift: Int): IntArray = IntArray(pixels.size) { (pixels[it] shr shift) and 0xFF }
+    fun pct(sorted: List<Int>, p: Double): Int = sorted[(sorted.size * p).toInt().coerceIn(0, sorted.size - 1)]
+    val r = channel(16).sorted(); val g = channel(8).sorted(); val b = channel(0).sorted()
+    return RgbBox(
+        (pct(r, 0.10) - tolerance).coerceIn(0, 255),
+        (pct(g, 0.10) - tolerance).coerceIn(0, 255),
+        (pct(b, 0.10) - tolerance).coerceIn(0, 255),
+        (pct(r, 0.90) + tolerance).coerceIn(0, 255),
+        (pct(g, 0.90) + tolerance).coerceIn(0, 255),
+        (pct(b, 0.90) + tolerance).coerceIn(0, 255),
+    )
 }
 
 /**
@@ -261,7 +280,7 @@ data class TimerConfig(
     val showSelfTimer: Boolean = true,
     /** 决斗场替身术冷却。开源实现常用经验值 13.5s；如有偏差可在设置页调整。 */
     val cooldownMs: Long = 15_000,
-    val frameIntervalMs: Long = 80,
+    val frameIntervalMs: Long = 100,
     val layout: TimerLayout = TimerLayout(),
     val tuning: DetectionTuning = DetectionTuning(),
     /** 校准完成后才允许进入识别；默认布局只是校准起点。 */
@@ -274,17 +293,24 @@ data class TimerConfig(
     val overlayY: Int? = null,
 )
 
-/** 单侧计时显示状态（UI 消费的是不可变快照）。 */
+/** 单侧计时状态（UI 消费快照；altEndAtMs/conflict 由引擎在冷却冲突时写入）。 */
 data class SideTimer(
     val side: TimerSide,
     val active: Boolean = false,
     val endAtMs: Long = 0,
-    /** 由豆数间接推断 → 一律带"疑似"标记；conflict 表示该冷却期内出现过冲突掉豆证据。 */
+    /** 由豆数间接推断 → 一律带"疑似"标记。 */
     val suspected: Boolean = true,
-    val conflict: Boolean = false,
+    /** 冷却期内又出现 −1：altEndAtMs 记录了那次掉豆的备选截止。 */
+    var conflict: Boolean = false,
+    /** 起算锚点（= eventAtMs，保留后者兼容旧字段名）。 */
+    val anchorAtMs: Long = 0,
     val eventAtMs: Long = 0,
-    /** true 表示这是未决候选的"推断中"展示态，证据可能被推翻——不是已接受计时。 */
-    val pending: Boolean = false,
+    /** 证据空白过大 → 锚点为中点估计，UI 显示 "≈"。 */
+    val uncertain: Boolean = false,
+    /** 冷却冲突时的备选截止（第二落点）。 */
+    var altEndAtMs: Long? = null,
+    /** 被本计时替换的前任计时——回滚时恢复（链式记忆，用于连续证伪）。 */
+    val prevTimer: SideTimer? = null,
 ) {
     fun remaining(nowMs: Long) = max(0L, endAtMs - nowMs)
 }
