@@ -13,5 +13,19 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/agent_accessibility_service" />
         </service>
+        <!-- 桌面桥：非导出，adb shell 仍可用 am start-foreground-service 显式拉起 -->
+        <service
+            android:name=".bridge.BridgeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Loopback HTTP bridge exposing accessibility device control to a paired desktop agent over adb forward" />
+        </service>
+        <!-- 配对 token 只对 adb shell（SHELL_UID）可见，Provider 必须导出但内部校验调用方 -->
+        <provider
+            android:name=".bridge.BridgePairingProvider"
+            android:authorities="${applicationId}.bridge"
+            android:exported="true" />
     </application>
 </manifest>
