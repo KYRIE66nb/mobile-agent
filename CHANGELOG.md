@@ -3,7 +3,7 @@
 本项目所有值得记录的变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本。安装包见 [Releases](https://github.com/KYRIE66nb/mobile-agent/releases)。
 
-## [Unreleased]
+## [0.1.19] - 2026-10-12
 
 - **替身计时引擎 v2**：冷却先验（冷却内掉豆不再是替身）+ 首次目击锚点 + 逐格记忆 +
   短窗证伪回滚（回弹/连扣/双侧同塌）；不可读帧与稀疏帧不再打断证据累计；
