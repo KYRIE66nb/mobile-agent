@@ -136,7 +136,6 @@ class SubstitutionOverlay(
             !captureAlive -> "画面中断，等待恢复"
             !hudOk -> "识别不稳定/等待战斗画面"
             enemy.conflict || self.conflict -> "⚠ 候选冲突"
-            enemy.pending || self.pending -> "推断中…"
             else -> "监视中 · 豆${dots(selfDots)}|${dots(enemyDots)}"
         }
         pauseBtn?.apply {
@@ -145,10 +144,17 @@ class SubstitutionOverlay(
         }
     }
 
-    private fun timerText(label: String, t: SideTimer, now: Long): String = when {
-        !t.active -> "$label 未知"
-        t.remaining(now) <= 0 -> "$label 推测已恢复"
-        else -> "$label %.1fs%s".format(t.remaining(now) / 1000f, if (t.suspected) "?" else "")
+    private fun timerText(label: String, timer: SideTimer, nowMs: Long): String = when {
+        !timer.active -> "$label 未知"
+        timer.remaining(nowMs) <= 0 -> "$label 推测已恢复"
+        else -> "$label " + buildString {
+            if (timer.uncertain) append('≈')
+            append("%.1f".format(timer.remaining(nowMs) / 1000f)).append('s')
+            if (timer.suspected) append('?')
+            timer.altEndAtMs?.let { alt ->
+                append(" (备选 %.1fs)".format((alt - nowMs).coerceAtLeast(0) / 1000f))
+            }
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")

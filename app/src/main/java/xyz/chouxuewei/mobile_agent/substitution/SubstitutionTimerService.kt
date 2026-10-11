@@ -392,13 +392,13 @@ class SubstitutionTimerService : Service() {
 
         val selfCount = countDots(TimerSide.SELF)
         val enemyCount = countDots(TimerSide.ENEMY)
-        // 战斗场景门控：豆色之外的 HUD 锚点证据裁决；锚点未标定时
-        // 两侧"全灭"弱信号兜底（转场豆槽整排消失），配置锚点后双零不再参与门控。
+        // 战斗场景门控：只信豆色之外的 HUD 锚点证据；锚点未标定 → UNVERIFIED
+        // 不否决（转场整排消失由引擎 collapse 规则兜底）。
         val anchorSamples = cfg.layout.hudAnchors.map { a ->
             val r = a.rect.toPixel(0, 0, access.width, access.height)
             access.sample(r[0], r[1], r[2], r[3], cfg.tuning.sampleGrid)
         }
-        val scene = evaluateScene(cfg.layout.hudAnchors, anchorSamples, selfCount, enemyCount)
+        val scene = evaluateScene(cfg.layout.hudAnchors, anchorSamples)
         val battle = scene != SceneVerdict.NOT_BATTLE
         val events = synchronized(engineLock) { eng.onFrame(selfCount, enemyCount, now, battle) }
         _uiState.update {
@@ -431,12 +431,14 @@ class SubstitutionTimerService : Service() {
         for (e in events) {
             AgentLog.i(TAG) { "event $e" }
             when (e) {
-                is TimerEvent.AmbiguousDrop ->
-                    _uiState.update { it.copy(detail = "疑似豆数变化（触发时刻不可知），未自动计时") }
-                is TimerEvent.CandidateCancelled ->
-                    _uiState.update { it.copy(detail = "候选已撤销（豆数回弹，非替身）") }
-                is TimerEvent.WobbleIgnored ->
-                    _uiState.update { it.copy(detail = "豆数短暂抖动，已忽略") }
+                is TimerEvent.AmbiguousDrop -> _uiState.update {
+                    it.copy(detail = if (e.reason == "collapse") "豆行整排消失（疑似转场），未计时"
+                                     else "疑似豆数变化（触发时刻不可知），未自动计时")
+                }
+                is TimerEvent.MultiDrop -> _uiState.update { it.copy(detail = "一次掉多豆/连续扣豆，未计时") }
+                is TimerEvent.GainFlickerIgnored -> _uiState.update { it.copy(detail = "涨豆后瞬间掉豆（疑似奥义清豆），未计时") }
+                is TimerEvent.CooldownDrop -> _uiState.update { it.copy(detail = "冷却期内出现其他扣豆（已记备选结束点）") }
+                is TimerEvent.TimerRetracted -> _uiState.update { it.copy(detail = "计时被新证据推翻（${e.reason}），已恢复上一计时") }
                 else -> Unit
             }
         }
