@@ -256,8 +256,13 @@ class SubstitutionTimerService : Service() {
                         if (old == null || old.layout != newCfg.layout ||
                             old.tuning != newCfg.tuning || old.cooldownMs != newCfg.cooldownMs
                         ) {
+                            // 重建引擎时结转在途计时（含 prevTimer 链/备选截止）——
+                            // 改校准/调参不再清零计时；clock 必须保持 elapsedRealtime 域
+                            val carried = synchronized(engineLock) { engine?.carriedTimers() ?: emptyMap() }
                             synchronized(engineLock) {
-                                engine = SubstitutionEngine(newCfg, clock = SystemClock::elapsedRealtime)
+                                engine = SubstitutionEngine(
+                                    newCfg, clock = SystemClock::elapsedRealtime, carried = carried,
+                                )
                             }
                             publishTimers()
                         }
@@ -665,6 +670,8 @@ class SubstitutionTimerService : Service() {
         }
         foregroundWatch = scope.launch(Dispatchers.IO) {
             var lastKnown: String? = null
+            var lastInGame: Boolean? = null
+            var nonGamePolls = 0
             while (true) {
                 val cfg = config ?: break
                 // 最近窗口无事件时保持上次判定——切换事件只发生在跳转瞬间，
@@ -684,15 +691,14 @@ class SubstitutionTimerService : Service() {
                     AgentLog.i(TAG) { "dead capture + game foreground → a11y fallback" }
                     switchToA11yCapture()
                 }
-                if (inGame != _uiState.value.gameInForeground) {
-                    AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
-                    _uiState.update { it.copy(gameInForeground = inGame) }
-                    SubstitutionTimerCoordinator.onLaunchEvent(
-                        if (inGame) LaunchEvent.GameForeground else LaunchEvent.GameLeft
-                    )
+                if (inGame != lastInGame) {
                     if (inGame) {
+                        nonGamePolls = 0
+                        lastInGame = true
+                        AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
+                        SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameForeground)
                         // 进游戏：重建基线，首组稳定帧只建基线不计时
-                        synchronized(engineLock) { engine?.resetBaseline("game_foreground") }
+                        synchronized(engineLock) { engine?.resetBaseline("foreground_enter") }
                         // 校准完成才挂计时悬浮窗，未校准期间不显示"监视中"误导
                         if (config?.calibrated == true) scope.launch { overlay?.show() }
                         // 未校准不进 MONITORING——不能伪装成"识别中"；预览帧照产供校准用
@@ -701,14 +707,21 @@ class SubstitutionTimerService : Service() {
                         } else if (_uiState.value.state == TimerServiceState.NEEDS_CALIBRATION) {
                             pushState(detail = "已进入游戏——回设置页完成校准后开始识别")
                         }
-                    } else {
+                    } else if (++nonGamePolls >= 2) {
+                        // 连续两次不在前台才算离开：吞掉手势侧栏的瞬时前台抖动
+                        lastInGame = false
+                        AgentLog.i(TAG) { "foreground pkg=$pkg inGame=$inGame" }
+                        SubstitutionTimerCoordinator.onLaunchEvent(LaunchEvent.GameLeft)
                         scope.launch { overlay?.hide() }
-                        synchronized(engineLock) { engine?.resetBaseline("game_left") }
+                        synchronized(engineLock) { engine?.resetBaseline("foreground_leave") }
                         if (_uiState.value.state == TimerServiceState.MONITORING) {
                             pushState(detail = "已离开游戏")
                         }
                     }
+                } else {
+                    nonGamePolls = if (inGame) 0 else nonGamePolls + 1
                 }
+                _uiState.update { it.copy(gameInForeground = inGame) }
                 delay(900)
             }
         }
