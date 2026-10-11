@@ -1,0 +1,66 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "桌面 Agent 控制链路（Android Use Bridge）",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "docs/assets/desktop-bridge.html"
+  },
+  "lanes": [
+    { "id": "desktop", "label": "桌面端" },
+    { "id": "usb", "label": "USB 通道" },
+    { "id": "phone", "label": "手机端 App" },
+    { "id": "android", "label": "Android 系统" }
+  ],
+  "phases": [
+    { "id": "call", "label": "发起调用", "fromCol": 0, "toCol": 1 },
+    { "id": "transport", "label": "鉴权转发", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "act", "label": "设备执行", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "secure_pipe", "label": "鉴权安全通道", "lane": "usb", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "ondevice", "label": "真机执行", "lane": "phone", "fromCol": 3, "toCol": 4, "variant": "dashed" }
+  ],
+  "mainPath": ["agent", "mcp", "forward", "bridge", "gateway", "a11y"],
+  "nodes": [
+    { "id": "agent", "lane": "desktop", "col": 0, "type": "external", "label": "桌面 Agent", "sublabel": "Claude Code / Devin 等", "width": 132 },
+    { "id": "mcp", "lane": "desktop", "col": 1, "type": "backend", "label": "android_use.py", "sublabel": "MCP stdio · 零依赖", "tag": "19 个 aua_* 工具", "width": 140 },
+    { "id": "preview", "lane": "desktop", "col": 4, "type": "frontend", "label": "实时预览", "sublabel": "phone_preview.html · MJPEG", "width": 132 },
+    { "id": "forward", "lane": "usb", "col": 2, "type": "messagebus", "label": "adb forward", "sublabel": "tcp:18301 → tcp:17325", "tag": "仅 loopback", "width": 150 },
+    { "id": "pair", "lane": "usb", "col": 3, "type": "security", "label": "配对 token", "sublabel": "BridgePairingProvider", "tag": "仅 adb shell 可见", "width": 150 },
+    { "id": "bridge", "lane": "phone", "col": 3, "type": "backend", "label": "BridgeService", "sublabel": "loopback HTTP · FGS", "tag": "Bearer 鉴权", "width": 140 },
+    { "id": "gateway", "lane": "phone", "col": 4, "type": "backend", "label": "DeviceGateway", "sublabel": "会话 · 动作调度", "width": 140 },
+    { "id": "a11y", "lane": "android", "col": 5, "type": "backend", "label": "无障碍服务", "sublabel": "节点树 · 截屏 · 手势注入", "tag": "免 Root", "width": 140 },
+    { "id": "screen", "lane": "android", "col": 4, "type": "frontend", "label": "目标 App", "sublabel": "任意前台界面", "width": 132 }
+  ],
+  "edges": [
+    { "id": "e-call", "from": "agent", "to": "mcp", "label": "tools/call" },
+    { "id": "e-http", "from": "mcp", "to": "forward", "label": "HTTP 127.0.0.1", "variant": "emphasis" },
+    { "id": "e-auth", "from": "forward", "to": "bridge", "label": "Bearer 鉴权", "variant": "security" },
+    { "id": "e-route", "from": "bridge", "to": "gateway", "label": "/observe · /action" },
+    { "id": "e-exec", "from": "gateway", "to": "a11y", "label": "手势 / 截屏", "variant": "emphasis" },
+    { "id": "e-target", "from": "a11y", "to": "screen", "variant": "dashed" },
+    { "id": "e-pair", "from": "pair", "to": "bridge", "label": "token 校验", "variant": "security", "role": "error" },
+    { "id": "e-observe", "from": "a11y", "to": "mcp", "label": "节点树 + 截图回传", "variant": "emphasis", "role": "return", "width": 1.2 },
+    { "id": "e-mjpeg", "from": "bridge", "to": "preview", "label": "MJPEG /screen", "variant": "dashed" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "安全边界",
+      "items": [
+        "HTTP 只绑 127.0.0.1，配对 token 仅 adb shell 可取",
+        "App 设置页显式开关；桥会话排他，动作绝不盲重放"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "工具面",
+      "items": [
+        "observe / find / tap / swipe / type_text / press_button",
+        "batch / scroll_find / collect_list / apps / screen 预览"
+      ]
+    }
+  ]
+}
