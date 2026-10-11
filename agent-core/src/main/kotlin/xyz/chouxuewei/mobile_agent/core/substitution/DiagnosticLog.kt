@@ -159,3 +159,22 @@ object DiagJson {
  */
 fun SubstitutionEngine.replay(records: List<ObservationRecord>): List<List<TimerEvent>> =
     records.map { onFrame(it.selfCount, it.enemyCount, it.atMs, it.battle) }
+
+/**
+ * 逐格回放：用记录中的 selfCells/enemyCells（L/E/U）重走 BeadRowTracker→引擎链路；
+ * 缺格信息时退回计数合成豆形（与 onFrame 兼容入口同口径）。
+ * 用于对比"改判定规则前后"同一局的事件差异。
+ */
+fun SubstitutionEngine.replayCells(records: List<ObservationRecord>): List<List<TimerEvent>> =
+    records.map { r ->
+        onCells(parseCells(r.selfCells) ?: SubstitutionEngine.cellsForCount(TimerSide.SELF, r.selfCount),
+            parseCells(r.enemyCells) ?: SubstitutionEngine.cellsForCount(TimerSide.ENEMY, r.enemyCount),
+            r.atMs, r.battle).events
+    }
+
+private fun parseCells(cells: List<String>?): List<DotState>? =
+    cells?.map {
+        when (it) {
+            "L" -> DotState.LIT; "E" -> DotState.EMPTY; else -> DotState.UNKNOWN
+        }
+    }
