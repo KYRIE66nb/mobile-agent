@@ -2,6 +2,7 @@ package xyz.chouxuewei.mobile_agent.substitution
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -53,11 +54,15 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import xyz.chouxuewei.mobile_agent.core.substitution.DotClassifier
 import xyz.chouxuewei.mobile_agent.core.substitution.DotState
+import xyz.chouxuewei.mobile_agent.core.substitution.HudAnchor
 import xyz.chouxuewei.mobile_agent.core.substitution.NormalizedRect
+import xyz.chouxuewei.mobile_agent.core.substitution.SceneVerdict
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerConfig
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerLayout
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerServiceState
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerSide
+import xyz.chouxuewei.mobile_agent.core.substitution.deriveAnchorBox
+import xyz.chouxuewei.mobile_agent.core.substitution.evaluateScene
 import xyz.chouxuewei.mobile_agent.prototype.PrototypeApplication
 
 /** 替身计时器设置页：开关、游戏选择、参数、校准与状态说明。 */
@@ -266,6 +271,16 @@ private fun CalibrationPanel(config: TimerConfig, app: PrototypeApplication) {
     }
     var self by remember(config.layout) { mutableStateOf(config.layout.selfDots) }
     var enemy by remember(config.layout) { mutableStateOf(config.layout.enemyDots) }
+    var anchorEnabled by remember(config.layout) {
+        mutableStateOf(config.layout.hudAnchors.isNotEmpty())
+    }
+    var anchorRect by remember(config.layout) {
+        mutableStateOf(
+            config.layout.hudAnchors.firstOrNull()?.rect
+                ?: NormalizedRect.of(0.955f, 0.02f, 0.99f, 0.075f),
+        )
+    }
+    var anchorWarn by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
     if (frame == null) {
@@ -303,6 +318,7 @@ private fun CalibrationPanel(config: TimerConfig, app: PrototypeApplication) {
             }
             drawRect(self, Color(0xFF81C784))
             drawRect(enemy, Color(0xFFFF7043))
+            if (anchorEnabled) drawRect(anchorRect, Color(0xFF448AFF))
             // 每格内缩采样区 + 分类结果着色：绿=亮、灰=灭、黄=未知——校准所见即识别所得
             val previewLayout = config.layout.copy(selfDots = self, enemyDots = enemy)
             val sx = size.width / bmp.width; val sy = size.height / bmp.height
@@ -334,11 +350,58 @@ private fun CalibrationPanel(config: TimerConfig, app: PrototypeApplication) {
     }
     RectSliders("我方豆槽（绿框）", self) { self = it }
     RectSliders("敌方豆槽（橙框）", enemy) { enemy = it }
+
+    // ---- 战斗 HUD 锚点：豆色之外的"是否战斗中"证据 ----
+    Text(
+        "战斗 HUD 锚点：在战斗中打开本页框选常驻 HUD 元素（推荐暂停键/血条框）；在菜单页标定会导致判反",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    SettingSwitch("启用战斗 HUD 锚点", anchorEnabled) { anchorEnabled = it }
+    if (anchorEnabled) {
+        RectSliders("锚点区域（蓝框）", anchorRect) { anchorRect = it }
+        val px = sampleRectPixels(bmp, anchorRect)
+        // 任一通道 P90−P10 跨度过大 → 区域颜色不均，锚点颜色盒不可靠（警告不阻断保存）
+        fun channel(sh: Int) = IntArray(px.size) { (px[it] shr sh) and 0xFF }.sorted()
+        val spread = listOf(16, 8, 0).maxOf { sh ->
+            channel(sh).let { it[(it.size * 0.9).toInt()] - it[(it.size * 0.1).toInt()] }
+        }
+        anchorWarn = if (spread > 60) "该区域颜色不均，请换纯色区域（如暂停键外框）" else null
+        // 用已保存的锚点颜色盒对当前帧做实时场景判定预览
+        val saved = config.layout.hudAnchors.firstOrNull()
+        val live = if (saved != null) {
+            when (evaluateScene(listOf(saved), listOf(px))) {
+                SceneVerdict.BATTLE -> "当前帧判定：战斗中"
+                SceneVerdict.NOT_BATTLE -> "当前帧判定：非战斗（计时暂停）"
+                SceneVerdict.UNVERIFIED -> "当前帧判定：未配置"
+            }
+        } else {
+            "保存后显示实时判定"
+        }
+        anchorWarn?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(live, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(onClick = {
             scope.launch {
+                val anchorBox = if (anchorEnabled) {
+                    deriveAnchorBox(sampleRectPixels(bmp, anchorRect))
+                } else {
+                    null
+                }
                 app.substitutionSettings.saveLayout(
-                    config.layout.copy(selfDots = self, enemyDots = enemy),
+                    config.layout.copy(
+                        selfDots = self,
+                        enemyDots = enemy,
+                        hudAnchors = if (anchorBox != null) {
+                            listOf(HudAnchor(anchorRect, anchorBox, 0.6f))
+                        } else {
+                            emptyList()
+                        },
+                    ),
                 )
             }
         }) { Text("保存校准") }
@@ -372,3 +435,21 @@ private fun onChangeNorm(
     r: NormalizedRect, l: Float? = null, t: Float? = null,
     rr: Float? = null, b: Float? = null,
 ) = NormalizedRect.of(l ?: r.left, t ?: r.top, rr ?: r.right, b ?: r.bottom)
+
+/** 锚点矩形内 grid×grid 网格采样（返回 ARGB）：供颜色盒推导与实时场景判定用。 */
+private fun sampleRectPixels(bmp: Bitmap, r: NormalizedRect, grid: Int = 8): IntArray {
+    val l = (r.left * bmp.width).toInt().coerceIn(0, bmp.width - 1)
+    val t = (r.top * bmp.height).toInt().coerceIn(0, bmp.height - 1)
+    val rr = (r.right * bmp.width).toInt().coerceIn(l + 1, bmp.width)
+    val bb = (r.bottom * bmp.height).toInt().coerceIn(t + 1, bmp.height)
+    val out = IntArray(grid * grid)
+    var i = 0
+    for (gy in 0 until grid) for (gx in 0 until grid) {
+        // 右/下边可能被夹到整幅边界外一格，采样坐标再收进合法范围
+        out[i++] = bmp.getPixel(
+            (l + (rr - l) * gx / (grid - 1)).coerceIn(0, bmp.width - 1),
+            (t + (bb - t) * gy / (grid - 1)).coerceIn(0, bmp.height - 1),
+        )
+    }
+    return out
+}
