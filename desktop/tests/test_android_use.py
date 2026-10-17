@@ -53,6 +53,7 @@ class FakeBridgeHandler(BaseHTTPRequestHandler):
     nodes = list(NODES)
     field_text = {}       # ref -> typed content, for readback verify
     row_shift = 0         # set nonzero to simulate scrolling rows
+    screen_paused = False
 
     def log_message(self, *args):
         pass
@@ -80,7 +81,9 @@ class FakeBridgeHandler(BaseHTTPRequestHandler):
             return self._reply(401, {"ok": False, "error": {"code": "unauthorized", "message": "bad token"}})
         if path == "/status":
             return self._reply(200, {"ok": True, "version": 1, "accessibility": True,
-                                     "session_open": bool(self.sessions)})
+                                     "session_open": bool(self.sessions),
+                                     "session_id": next(iter(self.sessions), None),
+                                     "screen_paused": self.screen_paused})
         if path == "/apps":
             return self._reply(200, {"ok": True, "apps": [
                 {"label": "微信", "package_name": "com.tencent.mm"},
@@ -112,6 +115,9 @@ class FakeBridgeHandler(BaseHTTPRequestHandler):
             return self._reply(401, {"ok": False, "error": {"code": "unauthorized", "message": "bad token"}})
         path = self.path.split("?", 1)[0]
         body = self._body()
+        if path in ("/screen/pause", "/screen/resume"):
+            type(self).screen_paused = path.endswith("pause")
+            return self._reply(200, {"ok": True, "paused": self.screen_paused})
         if path == "/session":
             type(self).session_seq = getattr(type(self), "session_seq", 0) + 1
             sid = f"sess-{type(self).session_seq}"
@@ -178,11 +184,17 @@ class BridgeFixture(unittest.TestCase):
         FakeBridgeHandler.nodes = [dict(n) for n in NODES]
         FakeBridgeHandler.field_text.clear()
         FakeBridgeHandler.row_shift = 0
+        FakeBridgeHandler.screen_paused = False
         self.client = BridgeClient(base_url=f"http://127.0.0.1:{self.port}", token=TOKEN)
         self.addCleanup(self.client.close)
 
     def controller(self, tmp=None):
-        return AndroidController(self.client, tmp or Path(self.id().replace(".", "_")))
+        if tmp is None:
+            import tempfile
+            directory = tempfile.TemporaryDirectory()
+            self.addCleanup(directory.cleanup)
+            tmp = directory.name
+        return AndroidController(self.client, tmp)
 
 
 class TestClient(BridgeFixture):

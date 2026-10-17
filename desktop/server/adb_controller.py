@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 
 from adb_client import BridgeError
-from adb_text import split_text, request_timeout
+from adb_text import split_text, request_timeout, utf16_length
 
 SELECTOR_FIELDS = {"label", "label_contains", "name", "value", "type", "enabled",
                    "clickable", "editable", "scrollable", "text_regex", "desc_regex", "index"}
@@ -29,8 +29,12 @@ DEFAULT_MAX_NODES = 200
 CANDIDATE_LIMIT = 8
 VIEWPORT_TTL = 5.0
 INPUT_TTL = 120
-TYPING_PIECE = 450          # gateway ACTION_SET_TEXT accepts <=500 chars per piece
-FIELD_TEXT_LIMIT = 2000     # gateway total field cap after appends
+INPUT_READBACK_TIMEOUT = 1.0
+INPUT_READBACK_INTERVAL = 0.05
+INPUT_GEOMETRY_TIMEOUT = 1.0
+INPUT_GEOMETRY_INTERVAL = 0.1
+TYPING_PIECE = 500          # gateway ACTION_SET_TEXT accepts <=500 UTF-16 units per piece
+FIELD_TEXT_LIMIT = 2000     # gateway total field cap after appends (UTF-16 units)
 CALL_BUDGET = 45            # seconds a single tool call may use before handing work back
 SETTLE_SECONDS = 0.35
 LAUNCHER_PACKAGES = {"com.android.launcher", "com.android.launcher2", "com.android.launcher3",
@@ -145,7 +149,9 @@ class AndroidController:
             self.last_observation_id = ident
             self.snapshots[ident] = {"time": time.monotonic(),
                                      "viewport": observation.get("viewport"),
-                                     "app": observation.get("foreground_package")}
+                                     "app": observation.get("foreground_package"),
+                                     "rotation": observation.get("rotation", 0),
+                                     "session_id": observation.get("session_id")}
             while len(self.snapshots) > 32:
                 self.snapshots.popitem(last=False)
             self._last_raw_observations[ident] = observation.get("nodes") or []
@@ -214,8 +220,6 @@ class AndroidController:
         if not old:
             stale("This observation is unknown to the current Runtime. Observe again or use current viewport coordinates.",
                   "unknown_observation")
-        if self.last_app and old["app"] and self.last_app != old["app"]:
-            stale("The foreground app changed. Observe again.", "foreground_changed")
         return old
 
     def guard(self, observation_id=None):
@@ -224,9 +228,14 @@ class AndroidController:
             return
         old = self.snapshot(observation_id)
         fresh = self._inspect()
+        if old["app"] is not None and fresh.get("foreground_package") != old["app"]:
+            stale("The foreground app changed. Observe again.", "foreground_changed")
         if old["viewport"] and fresh.get("viewport") != old["viewport"]:
             stale("Orientation or viewport changed. Observe again before using the earlier coordinates.",
                   "viewport_changed")
+        if old.get("rotation", 0) != fresh.get("rotation", 0):
+            stale("The display rotation changed. Observe again before using the earlier coordinates.",
+                  "rotation_changed")
 
     # ------------------------------------------------------------------ selectors
 
@@ -607,13 +616,18 @@ class AndroidController:
         return {key: rects[0] for key, rects in found.items() if len(rects) == 1}
 
     def scroll_progress(self, before, after, region, direction):
-        old = self._anchors(before, region)
-        new = self._anchors(after, region)
+        old = self._anchors(before, None)
+        new = self._anchors(after, None)
         axis, cross = ("y", "x") if direction in ("up", "down") else ("x", "y")
         ai, ci = (1, 0) if axis == "y" else (0, 1)
         sign = -1 if direction in ("up", "left") else 1
         for key in old.keys() & new.keys():
             a, b = old[key], new[key]
+            if region and not any(
+                    region["x"] <= rect[0] + rect[2] / 2 <= region["x"] + region["width"]
+                    and region["y"] <= rect[1] + rect[3] / 2 <= region["y"] + region["height"]
+                    for rect in (a, b)):
+                continue
             if ((b[ai] - a[ai]) * sign > 2 and abs(b[ci] - a[ci]) <= 3
                     and all(abs(b[k] - a[k]) <= 2 for k in (2, 3))):
                 return True
@@ -693,6 +707,141 @@ class AndroidController:
             return self.resolve(selector, editable=True, nodes=nodes, viewport=viewport)["node"]
         return self.focused_field(nodes)
 
+    def _input_context_error(self, reason, message, **details):
+        """Invalidate a continuation before it can send text to a new target."""
+        self.pending_input = None
+        fail("input_continuation_expired", message, action_executed=False, reason=reason,
+             **details,
+             recovery={"replay_action": False,
+                       "next_step": "Read the field's actual text, then type only the missing remainder with replace=false."})
+
+    def _stabilize_input_target(self, observation_id, nodes, viewport, node):
+        """Wait briefly for the already selected ref's geometry to settle before planning input."""
+        context = self.snapshots.get(observation_id) or {}
+        plan = {"ref": node.get("ref"), "app": context.get("app"),
+                "viewport": context.get("viewport", viewport),
+                "rotation": context.get("rotation", 0),
+                "focused": bool(node.get("focused")),
+                "session_id": getattr(self.client, "session_id", None)}
+        previous_rect = tuple(node.get("rect") or ())
+        deadline = time.monotonic() + INPUT_GEOMETRY_TIMEOUT
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._input_context_error(
+                    "target_changed",
+                    "The original input field did not settle before typing began. Nothing was typed now.")
+            time.sleep(min(INPUT_GEOMETRY_INTERVAL, remaining))
+            fresh_id, fresh_nodes, fresh_viewport = self._fresh_context()
+            fresh_context = self.snapshots.get(fresh_id) or {}
+            if (fresh_context.get("session_id") is not None and plan.get("session_id") is not None
+                    and fresh_context.get("session_id") != plan.get("session_id")):
+                self._input_context_error(
+                    "session_changed",
+                    "The bridge session changed while the input field was settling. Nothing was typed now.")
+            if fresh_context.get("app") != plan.get("app"):
+                self._input_context_error(
+                    "app_changed",
+                    "The foreground app changed while the input field was settling. Nothing was typed now.")
+            if fresh_context.get("viewport") != plan.get("viewport"):
+                self._input_context_error(
+                    "viewport_changed",
+                    "The display viewport changed while the input field was settling. Nothing was typed now.")
+            if fresh_context.get("rotation", 0) != plan.get("rotation", 0):
+                self._input_context_error(
+                    "rotation_changed",
+                    "The display rotation changed while the input field was settling. Nothing was typed now.")
+            matches = [candidate for candidate in fresh_nodes if candidate.get("ref") == plan["ref"]]
+            if not matches:
+                # Do not bind to a replacement ref while the keyboard animation is in flight.
+                continue
+            if len(matches) != 1:
+                self._input_context_error(
+                    "target_changed",
+                    "The original input field is no longer unique while settling. Nothing was typed now.")
+            current = matches[0]
+            if not current.get("editable") or not current.get("enabled", True) or not current.get("visible", True):
+                self._input_context_error(
+                    "target_unusable",
+                    "The original input field is no longer visible, enabled and editable. Nothing was typed now.")
+            if bool(current.get("focused")) != plan["focused"]:
+                self._input_context_error(
+                    "focus_changed",
+                    "The original input field's focus changed while settling. Nothing was typed now.")
+            current_rect = tuple(current.get("rect") or ())
+            if current_rect == previous_rect:
+                return fresh_id, fresh_nodes, fresh_viewport, current
+            previous_rect = current_rect
+
+    def _validate_input_context(self, plan, observation_id, nodes, viewport,
+                                expected_text=None, require_focus=False):
+        """Check every continuation read against the original app, display and node."""
+        if getattr(self.client, "session_id", None) != plan.get("session_id"):
+            self._input_context_error("session_changed",
+                                      "The bridge session changed while text input was in progress. Nothing was typed now.")
+        context = self.snapshots.get(observation_id)
+        if not context:
+            self._input_context_error("observation_unavailable",
+                                      "The original input context is unavailable. Nothing was typed now.")
+        if (context.get("session_id") is not None and plan.get("session_id") is not None
+                and context.get("session_id") != plan.get("session_id")):
+            self._input_context_error("session_changed",
+                                      "The bridge session changed while text input was in progress. Nothing was typed now.")
+        if context.get("app") != plan.get("app"):
+            self._input_context_error("app_changed",
+                                      "The foreground app changed while text input was in progress. Nothing was typed now.")
+        if context.get("viewport") != plan.get("viewport"):
+            self._input_context_error("viewport_changed",
+                                      "The display viewport changed while text input was in progress. Nothing was typed now.")
+        if context.get("rotation", 0) != plan.get("rotation", 0):
+            self._input_context_error("rotation_changed",
+                                      "The display rotation changed while text input was in progress. Nothing was typed now.")
+
+        matches = [node for node in nodes if node.get("ref") == plan.get("ref")]
+        if len(matches) != 1:
+            self._input_context_error("target_changed",
+                                      "The original input field is no longer unique. Nothing was typed now.")
+        node = matches[0]
+        if not node.get("editable") or not node.get("enabled", True) or not node.get("visible", True):
+            self._input_context_error("target_unusable",
+                                      "The original input field is no longer visible, enabled and editable. Nothing was typed now.")
+        planned_focus = plan.get("focused")
+        if planned_focus is not None and bool(node.get("focused")) != planned_focus:
+            self._input_context_error("focus_changed",
+                                      "The original input field's focus changed while text input was in progress. Nothing was typed now.")
+        if expected_text is not None and (node.get("text") or "") != expected_text:
+            self._input_context_error("field_changed",
+                                      "The original field no longer contains the text prefix already written. Nothing was typed now.")
+        if require_focus and not node.get("focused"):
+            self._input_context_error("focus_changed",
+                                      "The original input field is no longer focused. Nothing was submitted.")
+        return node
+
+    def _wait_for_input_text(self, plan, expected_text, require_focus=False, return_last=False):
+        """Poll a read-only field snapshot while preserving the original input context."""
+        deadline = time.monotonic() + INPUT_READBACK_TIMEOUT
+        last = None
+        while True:
+            fresh_id, nodes, viewport = self._fresh_context()
+            current = self._validate_input_context(
+                plan, fresh_id, nodes, viewport, require_focus=require_focus)
+            last = (fresh_id, current, viewport)
+            actual = current.get("text") or ""
+            if actual == expected_text:
+                return last
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                if return_last:
+                    return last
+                self._input_context_error(
+                    "field_changed",
+                    "The original field did not reflect the text just written before the readback deadline. Nothing was typed now.",
+                    expected_length=len(expected_text), actual_length=len(actual),
+                    expected_utf16_units=utf16_length(expected_text),
+                    actual_utf16_units=utf16_length(actual),
+                )
+            time.sleep(min(INPUT_READBACK_INTERVAL, remaining))
+
     def type_text(self, selector=None, text=None, allow_newlines=False, submit=False, replace=True,
                   observe="none", verify=False, expect=None, continue_token=None):
         if continue_token is not None:
@@ -706,6 +855,9 @@ class AndroidController:
             fail("invalid_argument", "type_text needs text, or continue_token alone.", action_executed=False)
         if not isinstance(text, str) or not 1 <= len(text) <= 10000 or "\x00" in text:
             fail("invalid_argument", "text must have 1..10000 characters without NUL.")
+        if any(0xD800 <= ord(character) <= 0xDFFF for character in text):
+            fail("invalid_argument", "text must not contain isolated UTF-16 surrogate code points.",
+                 action_executed=False)
         if ("\n" in text or "\r" in text) and not allow_newlines:
             fail("newline_requires_intent",
                  "This text contains line breaks. Use allow_newlines only for an observed multiline editor.")
@@ -720,11 +872,31 @@ class AndroidController:
             node = self.focused_field_path(selector, nodes, viewport)
         except BridgeError as error:
             raise self._wrap_error(error, typing=True)
-        plan = {"ref": node.get("ref"), "pieces": split_text(text, TYPING_PIECE),
+        fresh_id, nodes, viewport, node = self._stabilize_input_target(
+            fresh_id, nodes, viewport, node)
+        initial_value = node.get("text") or ""
+        expected = text if replace else initial_value + text
+        if utf16_length(expected) > FIELD_TEXT_LIMIT:
+            fail("invalid_argument",
+                 f"The resulting field text cannot exceed {FIELD_TEXT_LIMIT} UTF-16 units.",
+                 action_executed=False, utf16_units=utf16_length(expected),
+                 limit=FIELD_TEXT_LIMIT)
+        try:
+            pieces = split_text(text, TYPING_PIECE)
+        except ValueError as error:
+            fail("invalid_argument", str(error), action_executed=False)
+        context = self.snapshots.get(fresh_id) or {}
+        plan = {"ref": node.get("ref"), "pieces": pieces,
                 "typed": 0, "total": len(text),
-                "expected": text if replace else (node.get("text") or "") + text,
+                "typed_text": "", "total_utf16": utf16_length(text),
+                "initial_value": initial_value, "expected": expected,
                 "replace_first": replace,
-                "verify": verify, "submit": submit, "expect": expect, "observe": observe}
+                "verify": verify, "submit": submit, "expect": expect, "observe": observe,
+                "app": context.get("app"), "viewport": context.get("viewport", viewport),
+                "rotation": context.get("rotation", 0),
+                "focused": bool(node.get("focused")),
+                "session_id": getattr(self.client, "session_id", None),
+                "first_context": (fresh_id, nodes, viewport)}
         return self.type_pieces(plan)
 
     def type_pieces(self, plan):
@@ -733,22 +905,38 @@ class AndroidController:
         if self._deadline is not None:
             deadline = min(deadline, self._deadline)
         sent = 0
+        first_context = plan.pop("first_context", None)
         while plan["pieces"]:
             if sent and time.monotonic() >= deadline:
                 break
             piece = plan["pieces"][0]
-            fresh_id, nodes, viewport = self._fresh_context()
+            prefix = plan["initial_value"] + plan["typed_text"] if not plan["replace_first"] else plan["typed_text"]
+            if plan["typed"]:
+                fresh_id, node, viewport = self._wait_for_input_text(
+                    plan, prefix, require_focus=plan.get("focused", False))
+            elif first_context is not None:
+                fresh_id, nodes, viewport = first_context
+                first_context = None
+                node = self._validate_input_context(plan, fresh_id, nodes, viewport)
+            else:
+                fresh_id, nodes, viewport = self._fresh_context()
+                node = self._validate_input_context(plan, fresh_id, nodes, viewport)
             mode = "replace" if plan["replace_first"] and plan["typed"] == 0 else "append"
             try:
                 self._action({"kind": "input_text", "text": piece,
                               "node_ref": plan["ref"], "mode": mode}, fresh_id,
-                             timeout=request_timeout(len(piece), 30, getattr(self.client, "timeout", 15)))
+                             timeout=request_timeout(utf16_length(piece), 30, getattr(self.client, "timeout", 15)))
             except BridgeError as error:
                 error.details.update(characters_confirmed=plan["typed"], characters_total=plan["total"])
+                error.details.update(utf16_units_confirmed=utf16_length(plan["typed_text"]),
+                                    utf16_units_total=plan["total_utf16"])
                 self.pending_input = None
                 raise
             plan["pieces"].pop(0)
             plan["typed"] += len(piece)
+            plan["typed_text"] += piece
+            prefix = plan["initial_value"] + plan["typed_text"] if not plan["replace_first"] else plan["typed_text"]
+            self._wait_for_input_text(plan, prefix, require_focus=plan.get("focused", False))
             sent += 1
         if plan["pieces"]:
             plan.update(token=uuid.uuid4().hex[:12], mark=self.accepted_actions,
@@ -763,9 +951,10 @@ class AndroidController:
         result = {"action_executed": True, "action_complete": True, "verified": False,
                   "verification_deferred": True, "characters": plan["total"], "submitted": False}
         if plan["verify"]:
-            fresh_id, nodes, _ = self._fresh_context()
-            current = next((n for n in nodes if n.get("ref") == plan["ref"]), None)
-            actual = (current or {}).get("text") or ""
+            _, current, _ = self._wait_for_input_text(plan, plan["expected"],
+                                                       require_focus=plan.get("focused", False),
+                                                       return_last=True)
+            actual = current.get("text") or ""
             expected = plan["expected"]
             if actual != expected:
                 fail("input_mismatch",
@@ -774,7 +963,8 @@ class AndroidController:
             result.update(verified=True, verification_deferred=False, exact_readback=True)
         if plan["submit"]:
             try:
-                self._action({"kind": "press_key", "key": "enter"})
+                fresh_id, _, _ = self._wait_for_input_text(plan, plan["expected"], require_focus=True)
+                self._action({"kind": "press_key", "key": "enter"}, fresh_id)
                 result.update(submitted=True, submission_verified=False,
                               verification_required="Check the final submission result before claiming task completion; do not automatically repeat submission.")
             except BridgeError as error:

@@ -190,8 +190,10 @@ https://github.com/user-attachments/assets/2d88800f-3ffe-45b2-bfee-56f474d6c136
 [交互式链路图](docs/assets/desktop-bridge.html)（下载后用浏览器打开，支持缩放 / 路径追踪 / 暗色模式）
 
 - **安全边界是硬设计**：HTTP 只绑 loopback，Bearer token 配对且只能经 `adb shell` 取到；服务不可导出，开关在 App 设置页显式掌控；桥会话排他，桌面端对可能已执行的动作绝不盲重放——断线只会报"不确定成没成"，不会重复点两次。
-- **19 个 `aua_*` 工具**：`observe`（节点树 + 截图）、`find` / `tap` / `long_press` / `swipe` / `type_text` / `press_button` / `launch_app`，以及 `batch`、`scroll_find`、`collect_list`、`apps`、`screen`（MJPEG 实时预览）与 `setup` / `ready` / `doctor` / `metrics` 装配诊断全套。
+- **21 个 `aua_*` 工具**：`observe`（节点树 + 截图）、`find` / `tap` / `long_press` / `drag` / `swipe` / `type_text` / `press_button` / `launch_app`，`screenshot`（保存系统截图到手机相册），以及 `batch`、`scroll_find`、`collect_list`、`apps`、`screen`（可点按/拖动/滚轮的本地预览）与 `setup` / `ready` / `doctor` / `metrics` 装配诊断全套。
 - **与 App 内 Agent 同一条网关**：选择器按文本/描述/id/类型/正则命中无障碍节点，命中不了回退截图像素坐标；Unicode 文本按字素分段续传，滚动与批量动作都带执行校验。
+
+桌面端 0.2.0 对照 iPhone-use 0.3.15 更新：长文本续传绑定原目标，预览控制复用 Agent 会话，截图/树读取失败不误报就绪。桌面桥要求 Android 11+；[使用说明、更新对照与验证边界](docs/desktop-control.md)。
 
 真机接通路径（红米 Android 16 实测）：
 
@@ -208,7 +210,7 @@ python3 desktop/server/android_use.py   # 作为 MCP stdio 服务注册进客户
   </tr>
   <tr>
     <td><b>手机侧</b>：设置 → 通用 → 电脑控制（USB），一键开关，状态文案显示监听端口与配对方式。</td>
-    <td><b>桌面侧</b>：`aua_screen` 打开浏览器 MJPEG 预览页，操作前先眼看手机画面；需要登录/解锁时 `aua_screen pause` 立刻断流。</td>
+    <td><b>桌面侧</b>：`aua_screen` 打开浏览器实时控制页，可点按、拖动和导航；认证时先暂停并等待确认，保留最后画面并禁用控制。</td>
   </tr>
 </table>
 

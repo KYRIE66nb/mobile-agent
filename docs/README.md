@@ -23,6 +23,7 @@ Mobile Agent 是一个 Android AI 聊天软件。用户通过持续对话与 AI 
 | [技术架构](ARCHITECTURE.md) | 模块接口、会话与执行、工具调用、Root 门控、主题状态和数据 |
 | [实施计划](PLAN.md) | 开发顺序、阶段交付和验收条件 |
 | [验证报告](VALIDATION.md) | 各阶段实际测试、用户验收范围、安装配置、产物和已知限制 |
+| [电脑控制 Android](desktop-control.md) | 桌面桥分析、iPhone-use 更新对照、安装使用、预览接管与验证边界 |
 
 产品行为以 PRODUCT.md 为准；视觉与交互细节以 DESIGN.md 为准；技术实现服务于上述两者。所有文档只记录当前方案，不维护旧方案分支或旧版本归档。
 

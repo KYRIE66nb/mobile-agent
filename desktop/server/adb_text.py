@@ -13,6 +13,17 @@ EMOJI_TAGS = range(0xE0020, 0xE0080)
 ZERO_WIDTH_JOINER = "‍"
 
 
+def utf16_length(text):
+    """Return the Kotlin/Java ``String.length`` of ``text``.
+
+    Android's ``ACTION_SET_TEXT`` limit is expressed in UTF-16 code units while
+    Python's ``len`` counts Unicode code points.  Counting the encoded units keeps
+    astral characters (emoji, many CJK extensions, and similar code points) aligned
+    with the device-side contract.
+    """
+    return len(text.encode("utf-16-le")) // 2
+
+
 def _extends_previous(character):
     """True when this code point belongs to the grapheme started before it."""
     code = ord(character)
@@ -43,23 +54,39 @@ def safe_boundary(text, index):
 
 
 def split_text(text, size):
-    """Split into ordered pieces of about `size` code points that rejoin to `text` exactly."""
+    """Split into ordered pieces of at most `size` UTF-16 units.
+
+    A piece is only cut at a grapheme-safe boundary.  A single grapheme that is
+    larger than the requested limit is rejected instead of sending an over-limit
+    ``ACTION_SET_TEXT`` request.
+    """
     if size < 1:
         raise ValueError("size must be positive")
     pieces, start = [], 0
-    while len(text) - start > size:
-        end = start + size
-        # Prefer a slightly shorter piece over breaking a grapheme. An unbroken run
-        # longer than half a piece is typed as-is rather than shrinking without bound.
-        floor = start + max(1, size // 2)
-        while end > floor and not safe_boundary(text, end):
-            end -= 1
-        if not safe_boundary(text, end):
-            end = start + size
-        pieces.append(text[start:end])
-        start = end
-    if start < len(text):
-        pieces.append(text[start:])
+    while start < len(text):
+        end, units, last_safe = start, 0, start
+        while end < len(text):
+            next_units = 2 if ord(text[end]) > 0xFFFF else 1
+            if units + next_units > size:
+                break
+            end += 1
+            units += next_units
+            if safe_boundary(text, end):
+                last_safe = end
+        if end == len(text):
+            pieces.append(text[start:])
+            break
+        if last_safe == start:
+            # The current grapheme does not fit.  Never split it into a lone
+            # surrogate or an incomplete ZWJ/combining sequence.
+            probe = max(end, start + 1)
+            while probe < len(text) and not safe_boundary(text, probe):
+                probe += 1
+            if probe <= start or utf16_length(text[start:probe]) > size:
+                raise ValueError("a grapheme exceeds the UTF-16 piece limit")
+            last_safe = probe
+        pieces.append(text[start:last_safe])
+        start = last_safe
     return pieces
 
 

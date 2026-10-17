@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 LOCAL_PORT = 18301
 DEVICE_PORT = 17325
+CONNECTION_IDLE_SECONDS = 10.0
 
 
 class BridgeError(Exception):
@@ -70,6 +71,7 @@ class BridgeClient:
         self.host, self.port = parsed.hostname, parsed.port or 80
         self.token, self.serial, self.device_port = token, serial, device_port
         self.timeout, self.connection, self.session_id = timeout, None, None
+        self._last_http_use = None
         self.records = collections.deque(maxlen=2000)
         self._forwarded = False
 
@@ -77,6 +79,7 @@ class BridgeClient:
         if self.connection:
             self.connection.close()
         self.connection = None
+        self._last_http_use = None
 
     @staticmethod
     def is_read(method, path):
@@ -118,6 +121,9 @@ class BridgeClient:
         deadline = started + budget
         status, code, received = None, None, 0
         try:
+            if (self.connection is not None and self._last_http_use is not None
+                    and time.monotonic() - self._last_http_use >= CONNECTION_IDLE_SECONDS):
+                self.close()
             if self.connection is None:
                 self.connection = http.client.HTTPConnection(self.host, self.port, timeout=budget)
             self.connection.timeout = budget
@@ -173,6 +179,8 @@ class BridgeClient:
                        "Bridge connection failed or timed out. Read fresh state before deciding whether to repeat an action.")
             raise BridgeError(code, message, uncertain=not readonly) from exc
         finally:
+            if self.connection is not None:
+                self._last_http_use = time.monotonic()
             endpoint = path.split("?")[0]
             self.records.append({"method": method, "endpoint": endpoint,
                                  "seconds": round(time.monotonic() - started, 4),

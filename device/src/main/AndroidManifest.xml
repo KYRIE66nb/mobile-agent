@@ -13,7 +13,7 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/agent_accessibility_service" />
         </service>
-        <!-- 桌面桥：非导出，adb shell 仍可用 am start-foreground-service 显式拉起 -->
+        <!-- 桌面桥只允许 App 内启动；桌面端激活导出的主 Activity，由 App 按设置恢复。 -->
         <service
             android:name=".bridge.BridgeService"
             android:exported="false"

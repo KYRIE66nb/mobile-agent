@@ -15,12 +15,12 @@ description: 通过 AUA（Android Use Agent）MCP 工具高效操作真实 Andro
 
 本对话首次使用手机时直接调用 `aua_setup(action="status")`：它逐级检查 adb → 设备授权 → App 安装 → 无障碍 → 配对 token → 桥开关 → 转发可达。`ok=false` 时按 `missing`/`next_action` 顺序补齐：`enable_accessibility`（adb 自动开通，通常无需手动进设置）→ `pair`（取回 Bearer token）→ `start_bridge` → `forward`，然后 `aua_ready`。
 
-- `ready=true`/`ok=true`：通道可用。直接复用 READY 的 `observation` 规划下一步，不立即重复 observe。
+- `aua_ready` 返回 `ready=true`：通道可用。直接复用 READY 的 `observation` 规划下一步，不立即重复 observe；setup 的 `ok=true` 只说明该配置步骤成功。
 - `aua_unreachable`：桥不可达是启动分支，不是任务失败——继续 `aua_setup status` 补齐。
 - `accessibility_off`：桥在响应但无障碍未连接，跑 `enable_accessibility` 或让用户在系统设置里开启。
 - `session_busy`/`device_busy`：另一操作进行中，等待而非重试同一动作。
 
-`aua_ready(screenshot=false)` 跳过截图验证，文字任务够用。
+`aua_ready(screenshot=false)` 只跳过截图验证，仍检查树、视口、前台和控制状态。认证暂停期间不能 READY；等待用户完成后先 `aua_screen(action="resume")` 再检查。
 
 ## 按下一步需要选择观察
 
@@ -51,8 +51,10 @@ selector 字段：`label`（text 或 contentDescription 精确）、`label_conta
 
 - `aua_tap`：selector 命中可点击节点时走语义 click（比坐标可靠）；否则坐标 tap。`expect`/`observe` 按需。
 - `aua_long_press`：坐标长按（上下文菜单、拖拽起点）。
+- `aua_drag`：用 `x1/y1/x2/y2` 屏幕像素发送一次拖动；可传 `observation_id` 与 `duration_ms`。方向翻页优先用 `aua_swipe`。
 - `aua_swipe`：一次手势；`verify=true` 检查锚点位移一次，失败回截图，不再发手势。
-- `aua_type_text`：整条发送；超长文本自动分段，`input_complete=false` 时拿 `continue_token` 单独续传。`replace=false` 追加。`submit` 发送 Enter——无障碍通道可能不支持，退回点发送按钮。换行需 `allow_newlines` 显式声明。
+- `aua_type_text`：整条发送；自动按至多 500 UTF-16 单元分片，最终字段含已有前缀最多 2000 单元，超限会在写入前拒绝。`input_complete=false` 时拿 `continue_token` 单独续传，期间不要操作手机。续传绑定原 session/App/视口/输入框/焦点/已写前缀；`input_continuation_expired` 后先读实际文本，只补缺失内容，不能重发全文。`replace=false` 追加。`submit` 发送 Enter——无障碍通道可能不支持，退回点发送按钮。换行需 `allow_newlines` 显式声明。
+- `aua_screenshot`：请求 Android 系统截图，保存到手机相册/Screenshots，用于 App 图片选择器；返回 `screenshot_requested=true` 仅证明请求被接受，仍需查看相册确认。`aua_observe(mode="screenshot")` 只把画面交给电脑，不保存到手机。截图结果不确定时不可重试。
 - `aua_press_button`：home/back/recents/volume/enter/escape/delete/tab/dpad_*；`verify` 只对 home/back/recents 有意义。
 - `aua_launch_app`：先用 `aua_apps` 解析真实包名，不要猜；`verify=true` 轮询前台 5 秒。
 - `aua_batch`：≤20 个已知步骤一次往返；遇错/预算停在 `stopped_at`，从该步继续，不重放已完成步骤。
@@ -61,9 +63,9 @@ selector 字段：`label`（text 或 contentDescription 精确）、`label_conta
 
 ## 屏幕预览
 
-`aua_screen open` 在浏览器打开 MJPEG 实时预览（或写好的 `phone_preview.html` 页面）。预览仅供观看，不证明控制就绪，其画面不能替代模型观察。
+`aua_screen(action="open")` 在浏览器打开本地实时预览。用户可点击、拖动、滚轮翻页，使用返回/主屏幕/最近任务按钮；控件共用 Agent 会话和操作锁。页面可下载当前画面或请求系统截图到手机相册。模型继续使用 `aua_*` 工具及新鲜观察，预览不能替代模型观察或最终核验。
 
-用户需要在手机上输入密码/验证码/支付确认时：`aua_screen(action="pause")` 停止采帧，请用户在真机完成，确认后 `aua_screen(action="resume")`。
+用户需要在手机上输入密码/验证码/支付确认时：先调用 `aua_screen(action="pause")` 并确认成功，再请用户在真机完成。暂停会等待已接受动作结束，保留最后画面并禁止新图像和手机控制；暂停失败时不能声称接管已安全建立。用户确认完成后调用 `aua_screen(action="resume")`，等待新帧后再操作。旧帧、断流、方向变化或锁冲突时不要原样重放坐标。
 
 ## 永不盲重放
 

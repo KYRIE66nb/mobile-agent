@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "android-use",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "让桌面 Agent 通过 adb + 应用内桥操作真实 Android 手机：无障碍节点树、截图、点击、滑动、输入、按键、启动 App、批量步骤与实时屏幕预览。本对话首次使用先 aua_setup status，按需完成配对与转发，再 aua_ready。",
   "author": {
     "name": "mobile-agent"

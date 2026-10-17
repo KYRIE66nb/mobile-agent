@@ -190,8 +190,10 @@ The on-phone agent can act by itself — or **lend its hands to an agent on your
 [Interactive diagram](docs/assets/desktop-bridge.html) (download and open in a browser — zoom, path tracing, dark mode)
 
 - **Safety boundaries by design**: HTTP is loopback-only; the Bearer pairing token can only be read through `adb shell`; the service is non-exported and the App settings toggle is authoritative; bridge sessions are exclusive and the desktop client never blind-retries a possibly-executed action — a dropped connection reports "uncertain", never a duplicate tap.
-- **19 `aua_*` tools**: `observe` (node tree + screenshot), `find` / `tap` / `long_press` / `swipe` / `type_text` / `press_button` / `launch_app`, plus `batch`, `scroll_find`, `collect_list`, `apps`, `screen` (MJPEG live preview), and the `setup` / `ready` / `doctor` / `metrics` provisioning suite.
+- **21 `aua_*` tools**: `observe` (node tree + screenshot), `find` / `tap` / `long_press` / `drag` / `swipe` / `type_text` / `press_button` / `launch_app`, `screenshot` (system capture saved in the phone gallery), plus `batch`, `scroll_find`, `collect_list`, `apps`, `screen` (interactive local preview), and the `setup` / `ready` / `doctor` / `metrics` provisioning suite.
 - **Same gateway as the in-app agent**: selectors resolve accessibility nodes by text/description/id/type/regex and fall back to screenshot pixel coordinates; Unicode text splits at grapheme boundaries, scrolls and batches are verified rather than assumed.
+
+Desktop 0.2.0 adapts iPhone-use 0.3.15: target-bound input continuation, shared-session preview controls, and readiness checks that fail when required observations are missing. The desktop bridge requires Android 11+. See [usage, upstream comparison and validation limits](docs/desktop-control.md).
 
 Provisioning path (verified on a Redmi, Android 16):
 
@@ -209,7 +211,7 @@ python3 desktop/server/android_use.py   # register as an MCP stdio server
   </tr>
   <tr>
     <td><b>Phone side</b>: Settings → General → Desktop control (USB) — one toggle, status text shows the listening port and pairing path.</td>
-    <td><b>Desktop side</b>: `aua_screen` opens a browser MJPEG preview so you watch the phone while it acts; `aua_screen pause` cuts the stream for sign-in/unlock moments.</td>
+    <td><b>Desktop side</b>: `aua_screen` opens a local preview with tap, drag and navigation controls. Pause and wait for confirmation before authentication; the last frame remains visible and controls are disabled.</td>
   </tr>
 </table>
 
