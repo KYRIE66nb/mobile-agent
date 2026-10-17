@@ -110,9 +110,9 @@ class AgentAccessibilityService : AccessibilityService() {
 
     /**
      * 悬浮助手可能暂时取得系统焦点，因此不能只依赖 isFocused。
-     * 先排除自身窗口，再从应用窗口中按“焦点、活动、层级”选择当前操作目标。
+     * 默认排除自身窗口，再按“焦点、活动、层级”选择应用窗口；桌面桥可显式包含本 App。
      */
-    fun focusedApplicationWindow(displayId: Int): AccessibilityWindowTarget? {
+    fun focusedApplicationWindow(displayId: Int, excludeOwnPackage: Boolean = true): AccessibilityWindowTarget? {
         check(Build.VERSION.SDK_INT >= 30 && displayId >= 0) { localizedText("无有效的显示目标", "No valid display target.") }
         val windows = windowsOnAllDisplays.get(displayId).orEmpty()
         return try {
@@ -124,7 +124,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 } finally {
                     root.recycle()
                 }
-                if (targetPackage == packageName) return@mapIndexedNotNull null
+                if (excludeOwnPackage && targetPackage == packageName) return@mapIndexedNotNull null
                 val bounds = Rect().also(window::getBoundsInScreen)
                 if (bounds.isEmpty) return@mapIndexedNotNull null
                 val priority = (if (window.isFocused) 4 else 0) + (if (window.isActive) 2 else 0)
@@ -330,6 +330,10 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     private fun AccessibilityNodeInfo.reference(bounds: Rect = Rect().also(::getBoundsInScreen)): NodeRef {
+        val inputIdentity = if (isEditable) {
+            val platformId = if (Build.VERSION.SDK_INT >= 33) uniqueId?.takeIf { it.isNotBlank() } else null
+            platformId?.let { "platform:$it" } ?: inputPathIdentity()
+        } else null
         return NodeReference.create(
             windowId = windowId,
             viewId = viewIdResourceName,
@@ -339,6 +343,44 @@ class AgentAccessibilityService : AccessibilityService() {
             top = bounds.top,
             right = bounds.right,
             bottom = bounds.bottom,
+            uniqueId = inputIdentity,
         )
+    }
+
+    /** Bind editable nodes to their window's hierarchy when layout growth changes their bounds. */
+    private fun AccessibilityNodeInfo.inputPathIdentity(): String? {
+        val path = ArrayDeque<Int>()
+        var current = this
+        var ownsCurrent = false
+        try {
+            repeat(50) {
+                val parent = current.parent ?: return "path:${path.joinToString("/")}"
+                var index = -1
+                var retainParent = false
+                try {
+                    if (parent.childCount > 2000) return null
+                    for (candidateIndex in 0 until parent.childCount) {
+                        val child = parent.getChild(candidateIndex) ?: continue
+                        try {
+                            if (child == current) {
+                                if (index != -1) return null
+                                index = candidateIndex
+                            }
+                        } finally { child.recycle() }
+                    }
+                    if (index == -1) return null
+                    retainParent = true
+                } finally {
+                    if (!retainParent) parent.recycle()
+                }
+                path.addFirst(index)
+                if (ownsCurrent) current.recycle()
+                current = parent
+                ownsCurrent = true
+            }
+            return null
+        } finally {
+            if (ownsCurrent) current.recycle()
+        }
     }
 }

@@ -30,7 +30,7 @@ from adb_apps import AppCatalog
 from adb_screen import ScreenHub
 
 AUAError = BridgeError
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 SETTLE_SECONDS = 0.35
 
@@ -105,6 +105,10 @@ SCHEMAS = {
                        "duration_ms": {**num(100, 5000, "integer"), "default": 800},
                        "observation_id": string("Optional ID from this Runtime."), "observe": OBS},
                       ("x", "y")),
+    "drag": obj({**{k: num(0, 10000) for k in ("x1", "y1", "x2", "y2")},
+                 "duration_ms": num(100, 5000, "integer"),
+                 "observation_id": string("Context from the displayed frame."), "observe": OBS},
+                ("x1", "y1", "x2", "y2")),
     "swipe": obj({"direction": string("Finger movement; up usually reveals later rows. Default up.", enum=["up", "down", "left", "right"]),
                   "region": REGION,
                   "observation_id": string("Optional ID from this Runtime."),
@@ -113,15 +117,16 @@ SCHEMAS = {
                   "max_attempts": {**num(1, 2, "integer"), "default": 1},
                   "observe": OBS}),
     "type_text": obj({"selector": SEL,
-                      "text": string("Full text to enter. Required unless continue_token is given.", max_length=10000),
+                      "text": string("Full text to enter. Android limits the resulting field to 2000 UTF-16 units, including any existing prefix when appending. Required unless continue_token is given.", max_length=2000),
                       "allow_newlines": BOOL, "submit": BOOL, "replace": BOOL,
-                      "verify": {**VERIFY, "description": "Default false enters the full text once without readback. True checks exact field text and stops before submit on mismatch."},
+                      "verify": {**VERIFY, "description": "Per-chunk readback guards await UI updates without repeating input. True additionally reports the final exact-text verification; mismatches stop before submit."},
                       **EXPECT,
                       "continue_token": string("Token from a result with input_complete=false. Pass it alone to type the rest with the original options.", max_length=64)}),
     "press_button": obj({"name": string(enum=["home", "back", "recents", "volume_up", "volume_down",
                                              "enter", "escape", "delete", "tab",
                                              "dpad_up", "dpad_down", "dpad_left", "dpad_right"]),
                          "verify": VERIFY, **EXPECT}, ("name",)),
+    "screenshot": obj({}),
     "launch_app": obj({"package_name": string("Verified Android package name, e.g. com.tencent.mm.", max_length=200),
                        "verify": VERIFY, **EXPECT}, ("package_name",)),
     "wait": obj({"selector": SEL, "timeout_seconds": num(0, 20)}, ("selector",)),
@@ -156,14 +161,16 @@ SCHEMAS["batch"] = obj({"steps": {"type": "array", "minItems": 1, "maxItems": 20
 DESCRIPTIONS = {
     "doctor": "Diagnose local adb, devices, app installation, accessibility, pairing, bridge and forwarding without changing the phone. Start here for setup.",
     "setup": "First phone use in this chat: call setup(status); if not ok, run its steps in order: enable_accessibility -> pair -> start_bridge -> forward, then aua_ready. discover lists devices, configure selects one. Android setup needs no signing or build.",
-    "ready": "End-to-end readiness: forward up, bridge answers, accessibility connected, session + tree read. Only ready=true permits phone tasks. aua_unreachable requires setup, not task failure. Never replay phone actions.",
+    "ready": "End-to-end readiness: bridge/accessibility connected, session, foreground app, valid viewport and tree readable, plus screenshot by default. Authentication pause is never ready, even with screenshot=false. Only ready=true permits phone tasks; failures need channel recovery without replaying actions.",
     "observe": "Fresh node tree and/or screenshot, with the pixel viewport and an observation_id. Nodes: type is the short class name; rect=[x,y,width,height] in pixels; omitted flags are defaults (enabled/visible true; clickable/editable/etc. false). A listed node is not proven hittable: fixed headers and overlays can cover it. Screenshots are scaled: image pixels x image.pixel_to_point = screen pixels.",
     "find": "Query selector fields against the current tree without returning it all. Returns matches in tree order with index, type, texts and rect; this tool's selector documents the fields every selector accepts.",
     "tap": "Tap the element a selector resolves to after on-screen checks, or tap point coordinates with optional observation_id. If the selector fails, the error returns a screenshot and tap points: tap by x/y instead of trying other selectors. Executes once optimistically; expect opts into a postcondition.",
     "long_press": "Long-press a screen point, e.g. for context menus and drag initiation. Coordinates in pixels; observation_id optional.",
+    "drag": "One drag between explicit screen-pixel endpoints. Uses the shared operation lock and fresh viewport checks. Never replay an uncertain gesture.",
     "swipe": "One gesture; default verify=false/observe=none skips checks. verify=true checks anchor movement once; failure returns a screenshot without another gesture. Inspect it before acting; no progress does not prove list completeness.",
-    "type_text": "Enter the full intended Unicode text into an editable field; no short-text trial. Omit selector to type into the field that already has focus: tap the field by x/y, then type. Long text is sent in bounded pieces; input_complete=false returns a continue_token to pass alone next call. verify=true opts into exact readback before submit; expect opts into a page postcondition. Newlines need explicit intent; submit presses Enter, which the accessibility channel may not support — fall back to tapping the send button. Never replay uncertain input/submission.",
+    "type_text": "Enter the full intended Unicode text into an editable field. Omit selector for the focused field. Long text uses bounded pieces with guarded readback; input_complete=false returns a continue_token to pass alone. Briefly stale UI text is polled without repeating writes. verify=true reports final exact readback; expect checks a page postcondition. Newlines require explicit intent. submit uses Enter, which may be unsupported; inspect before tapping the send button. Never replay uncertain input/submission.",
     "press_button": "System keys once: home/back/recents/volume/enter/escape/delete/tab/dpad. verify polls the foreground app for home/back/recents. Volume effects cannot be semantically verified.",
+    "screenshot": "Request an Android system screenshot saved on the phone (Gallery/Screenshots), for use in a photo picker. This is separate from aua_observe screenshot, which only returns pixels to the computer. Check the saved image before claiming success; never replay an uncertain capture.",
     "launch_app": "Launch once using a verified package name, optimistically by default. verify=true polls foreground up to five seconds; expect checks the intended page. Resolve package names with aua_apps first — do not guess.",
     "wait": "Bounded semantic presence polling for an expected target. Presence is a UI postcondition, not proof of business correctness.",
     "batch": "Up to 20 known steps in one model round trip. Stops on error, failed explicit check, unfinished long input (input_continues) or the per-call time budget (time_budget); continue from stopped_at without repeating completed steps.",
@@ -171,10 +178,10 @@ DESCRIPTIONS = {
     "collect_list": "Collect/deduplicate accessibility rows over bounded pages. Returns evidence and explicit coverage limits; always requires reconciliation before declaring business completeness.",
     "apps": "Resolve a real package name by installed-device inventory or the bundled catalog of common Android apps. Query app name before launch instead of guessing. Catalog metadata does not prove installation; check installed_verified.",
     "metrics": "In-process totals without text, app data or images: bridge HTTP time and bytes, tool time, response bytes per tool, and the wait between each response and the next tool request (host, model and user time). reset=true starts a new window.",
-    "screen": "Open the live screen preview page in a browser, pause frame capture while the user authenticates on the phone, resume after they confirm. Preview is display-only and does not prove control readiness.",
+    "screen": "Open the local live preview with user tap/drag, navigation and image download controls. Pause preserves the last displayed frame and blocks image capture and phone actions during authentication. Resume after the user confirms. Preview alone does not prove control readiness.",
     "screen_frame": "Preview-page poll: latest MJPEG frame once its sequence exceeds after_seq. Never starts sessions or occupies the phone operation lock.",
 }
-READS = {"doctor", "observe", "find", "wait", "metrics", "apps", "screen", "screen_frame"}
+READS = {"doctor", "observe", "find", "wait", "metrics", "apps", "screen_frame"}
 
 TOOLS = [{"name": "aua_" + name, "title": "Aua " + name.replace("_", " "),
           "description": DESCRIPTIONS[name], "inputSchema": schema,
@@ -183,6 +190,9 @@ TOOLS = [{"name": "aua_" + name, "title": "Aua " + name.replace("_", " "),
                           "idempotentHint": name in READS,
                           "openWorldHint": True}}
          for name, schema in SCHEMAS.items()]
+for tool in TOOLS:
+    if tool["name"] in {"aua_screenshot", "aua_screen"}:
+        tool["annotations"]["destructiveHint"] = False
 
 
 def validate(value, schema, path="arguments"):
@@ -211,6 +221,9 @@ def validate(value, schema, path="arguments"):
              "integer": lambda: not isinstance(value, bool) and isinstance(value, int)}
     if kind and not valid[kind]():
         raise AUAError("invalid_argument", f"{path} must be {kind}.")
+    if kind == "string" and any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+        raise AUAError("invalid_argument", f"{path} must contain valid Unicode scalar values.",
+                       details={"action_executed": False})
     if "const" in schema and value != schema["const"]:
         raise AUAError("invalid_argument", f"Invalid {path} operation.")
     if "enum" in schema and value not in schema["enum"]:
@@ -298,14 +311,24 @@ class Runtime:
         self.phone.call_budget = setting("AUA_CALL_BUDGET_SECONDS", CALL_BUDGET, 5, 240)
         self.responses = collections.deque(maxlen=500)
         self._replied_at = None
+        self._operation_lock = threading.Lock()
+        self.preview = None
 
     def _reload_client(self):
         """Setup may have changed serial/token/ports; rebuild bound components."""
+        paused = self.screen.paused()
+        if self.preview:
+            self.preview.stop()
+            self.preview = None
+        self.screen.stop()
+        self.client.close()
         self.client = self.setup_manager.client()
         self.phone.client = self.client
         self.apps.client = self.client
         self.screen = ScreenHub(token=self.client.token or "",
                                 port=self.client.port, device_port=self.client.device_port)
+        self.screen.set_paused(paused)
+        self.phone.reset()
 
     def _dispatch(self, name, args):
         if not isinstance(name, str) or not name.startswith("aua_") or name[4:] not in SCHEMAS:
@@ -317,9 +340,14 @@ class Runtime:
             return self.screen.frame(**args) or {"seq": 0, "timeout": True}
         if op == "screen":
             return self._screen(**args)
+        if not self._operation_lock.acquire(blocking=False):
+            raise AUAError("device_busy", "Another phone operation is running; no action was executed.",
+                           details={"action_executed": False})
         lock_path = self.state_dir / "operation.lock"
-        lock = lock_path.open("a")
+        lock = None
+        accepted_before = self.phone.accepted_actions
         try:
+            lock = lock_path.open("a")
             lock_path.chmod(0o600)
             if fcntl:
                 try:
@@ -327,49 +355,82 @@ class Runtime:
                 except BlockingIOError:
                     raise AUAError("device_busy",
                                    "Another Android Use operation is running. Wait for it to finish before continuing; no action was executed.")
-            return self._call(name, args)
+            result = self._call(name, args)
+            if self.screen.paused() and self._contains_image(result):
+                raise AUAError("preview_paused", "Image delivery interrupted by authentication handoff.",
+                               details={"replay_action": False})
+            return result
+        except AUAError as error:
+            if self.phone.accepted_actions > accepted_before:
+                error.details.update(action_executed=True, action_complete=False, replay_action=False,
+                                     verification_required="An action was accepted. Read current state before deciding what remains; do not replay it automatically.")
+            raise
         finally:
-            if fcntl:
+            if fcntl and lock:
                 fcntl.flock(lock, fcntl.LOCK_UN)
-            lock.close()
+            if lock:
+                lock.close()
+            self._operation_lock.release()
 
     def _screen(self, action="open"):
         if action == "pause":
-            self.screen.stop()
-            try:
-                self.client.request("POST", "/screen/pause", {})
-            except AUAError:
-                pass
+            self.screen.set_paused(True)
+            self._screen_control("pause")
             return {"ok": True, "paused": True}
         if action == "resume":
-            try:
-                self.client.request("POST", "/screen/resume", {})
-            except AUAError:
-                pass
+            self._screen_control("resume")
+            self.screen.set_paused(False)
             self.screen.start()
             return {"ok": True, "paused": False}
-        # open: write the preview page next to the state, then open the live stream URL.
+        # Same-origin local page: the pairing token is never embedded in browser HTML.
+        from adb_preview import PreviewServer
         self.screen.start()
-        page = self.state_dir / "phone_preview.html"
-        try:
-            template = (Path(__file__).resolve().parent / "phone_preview.html").read_text()
-            page.write_text(template.replace("__AUA_SCREEN_URL__", self.screen.url())
-                                    .replace("__AUA_TOKEN__", self.client.token or "")
-                                    .replace("__AUA_BASE__",
-                                             f"http://{self.screen.host}:{self.screen.port}"))
-        except OSError:
-            pass
+        if self.preview is None:
+            self.preview = PreviewServer(self.screen, self._preview_action, self._preview_context)
+        url = self.preview.start()
         import webbrowser
-        webbrowser.open(self.screen.url())
-        return {"ok": True, "stream_url": self.screen.url(),
-                "preview_page": str(page) if page.is_file() else None,
-                "note": "The MJPEG stream is display-only; it does not prove control readiness."}
+        webbrowser.open(url)
+        return {"ok": True, "preview_url": url, "paused": self.screen.paused(),
+                "note": "Preview controls share the Agent session and lock. Seeing pixels alone does not prove readiness."}
+
+    @staticmethod
+    def _contains_image(value):
+        if isinstance(value, dict):
+            return bool(value.get("base64")) or any(Runtime._contains_image(v) for v in value.values())
+        if isinstance(value, list):
+            return any(Runtime._contains_image(v) for v in value)
+        return False
+
+    def _screen_control(self, action):
+        # Handoff must interrupt an operation without sharing its HTTPConnection.
+        host = f"[{self.client.host}]" if ":" in self.client.host else self.client.host
+        control = BridgeClient(base_url=f"http://{host}:{self.client.port}", token=self.client.token,
+                               serial=self.client.serial, device_port=self.client.device_port)
+        try:
+            return control.request("POST", f"/screen/{action}", {})
+        finally:
+            control.close()
+
+    def _preview_action(self, body):
+        if not isinstance(body, dict) or set(body) != {"tool", "arguments"}:
+            raise AUAError("invalid_argument", "Expected tool and arguments.")
+        if body["tool"] not in {"aua_tap", "aua_drag", "aua_swipe", "aua_press_button", "aua_screenshot"}:
+            raise AUAError("invalid_argument", "This tool is unavailable in preview controls.")
+        return self._dispatch(body["tool"], body["arguments"])
+
+    def _preview_context(self):
+        observation = self._dispatch("aua_observe", {"mode": "tree", "max_nodes": 1})
+        return {k: observation.get(k) for k in ("observation_id", "app", "viewport")}
 
     def _call(self, name, args):
         op = name[4:]
         start = time.monotonic()
         error = None
         try:
+            if self.screen.paused() and (op not in READS | {"setup", "ready"}
+                    or (op == "observe" and args.get("mode", "tree") != "tree")):
+                raise AUAError("preview_paused", "Authentication handoff is active. Resume after the user confirms.",
+                               details={"action_executed": False})
             if op == "doctor":
                 return self.setup_manager.status()
             if op == "apps":
@@ -391,7 +452,8 @@ class Runtime:
                 elif action == "stop_bridge":
                     result = self.setup_manager.stop_bridge()
                 elif action == "forward":
-                    result = self.setup_manager.forward()
+                    result = self.setup_manager.forward(local_port=args.get("local_port"),
+                                                        device_port=args.get("device_port"))
                 else:
                     raise AUAError("invalid_argument", f"Unknown setup action {action}.")
                 if action in ("configure", "pair", "forward"):
@@ -402,16 +464,49 @@ class Runtime:
                     self.phone.reset()
                 return result
             if op == "ready":
-                self.screen.start()
                 ready = self.setup_manager.ready()
+                ready["ready"] = False
                 if ready.get("ok"):
                     self.client.session_id = ready.get("session_id")
+                    if ready.get("status", {}).get("screen_paused"):
+                        self.screen.set_paused(True)
                     try:
-                        ready["observation"] = self.phone.observe(
-                            "both" if args.get("screenshot", True) else "tree")
-                    except AUAError:
-                        pass
+                        screenshot = args.get("screenshot", True)
+                        if self.screen.paused():
+                            raise AUAError("preview_paused", "Resume after authentication before checking control readiness.")
+                        observation = self.phone.observe("both" if screenshot else "tree")
+                        viewport = observation.get("viewport") or {}
+                        if not all(isinstance(viewport.get(k), (int, float))
+                                   and not isinstance(viewport[k], bool) and math.isfinite(viewport[k])
+                                   and viewport[k] > 0 for k in ("width", "height")):
+                            raise AUAError("viewport_unavailable", "A usable viewport could not be read.")
+                        if not observation.get("app") or not observation.get("nodes"):
+                            raise AUAError("tree_unavailable", "No foreground application/tree was readable. Inspect the phone for lock or permission screens.")
+                        if screenshot and not observation.get("image", {}).get("base64"):
+                            raise AUAError("screenshot_unavailable", "The requested screenshot could not be read.")
+                        ready.update(ready=True, observation=observation,
+                                     proof={"session_usable": True, "foreground_resolved": True,
+                                            "viewport_readable": True, "tree_readable": True,
+                                            "screenshot_readable": screenshot})
+                    except AUAError as exc:
+                        ready.update(ok=False, ready=False, error=exc.as_dict())
                 return ready
+            if op == "screenshot":
+                self.phone._action({"kind": "press_key", "key": "screenshot"})
+                return {"action_executed": True, "action_complete": True, "verified": False,
+                        "screenshot_requested": True, "destination": "Android Gallery / Screenshots",
+                        "next_step": "Check the saved screenshot in Gallery or the app photo picker. Do not repeat an uncertain capture."}
+            if op == "drag":
+                self.phone.guard(args.get("observation_id"))
+                fresh_id, _, viewport = self.phone._fresh_context()
+                if any(args[k] >= viewport["width" if k.startswith("x") else "height"]
+                       for k in ("x1", "y1", "x2", "y2")):
+                    raise AUAError("invalid_argument", "Drag endpoints must be inside the viewport.")
+                if args["x1"] == args["x2"] and args["y1"] == args["y2"]:
+                    raise AUAError("invalid_argument", "A drag needs movement; use tap for a click.")
+                self.phone._action({"kind": "swipe", **{k: int(args[k]) for k in ("x1", "y1", "x2", "y2")},
+                                    "duration_ms": args.get("duration_ms", 350)}, fresh_id)
+                return self.phone._post_action(observe=args.get("observe", "none"))
             if op == "metrics":
                 result = self.metrics()
                 if args.get("reset"):
@@ -420,7 +515,7 @@ class Runtime:
                     self.responses.clear()
                     self._replied_at = None
                 return result
-            return getattr(self.phone, op)(**args)
+            return self.phone._run(getattr(self.phone, op), typing=op == "type_text", **args)
         except AUAError as exc:
             error = exc.code
             if op in READS:
@@ -474,7 +569,8 @@ class Runtime:
         content = result.get("content", [])
         self.responses.append({
             "tool": name if isinstance(name, str) else "invalid",
-            "text_bytes": sum(len(i["text"].encode()) for i in content if i.get("type") == "text"),
+            "text_bytes": sum(len(i["text"].encode("utf-8", "backslashreplace"))
+                              for i in content if i.get("type") == "text"),
             "image_bytes": sum(len(i["data"]) for i in content if i.get("type") == "image"),
             "wait_seconds": None if self._replied_at is None else max(0.0, arrived - self._replied_at)})
 
@@ -483,6 +579,8 @@ class Runtime:
 
     def close(self):
         try:
+            if self.preview:
+                self.preview.stop()
             self.screen.stop()
             self.client.close()
         except Exception:
@@ -491,8 +589,17 @@ class Runtime:
 
 def result_content(data):
     """One compact JSON text block, plus the screenshot when the result carries one."""
-    content = [{"type": "text",
-                "text": json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":"))}]
+    def metadata(value):
+        if isinstance(value, dict):
+            is_image = str(value.get("mimeType", "")).startswith("image/")
+            return {key: metadata(item) for key, item in value.items()
+                    if not (is_image and key == "base64")}
+        if isinstance(value, list):
+            return [metadata(item) for item in value]
+        return value
+
+    encoded = json.dumps(metadata(data), ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    content = [{"type": "text", "text": encoded.encode("utf-8", "backslashreplace").decode("utf-8")}]
     image = data.get("image") or data.get("observation", {}).get("image")
     if not image and isinstance(data.get("error"), dict):
         image = data["error"].get("observation", {}).get("image")
@@ -532,7 +639,9 @@ INSTRUCTIONS = (
     "Execute routine actions optimistically: observe=none and verify=false are defaults; verified=false/verification_deferred=true is normal. Chain known steps in batch. Send long text whole: when type_text returns input_complete=false, call it again with only continue_token; a batch stopped by input_continues or time_budget continues from stopped_at. "
     "Verify final critical results before reporting completion. Retry or replan only after observing a definite failure; never replay uncertain input/submission or an already executed multi-step operation wholesale. "
     "For passwords or payment screens call aua_screen(action=pause), let the user act on the phone, then aua_screen(action=resume). "
-    "The MJPEG preview (aua_screen open) is display-only; its frames never substitute for a model observation or final verification."
+    "aua_screen open provides a local preview with user tap/drag and navigation controls sharing this session. Its frames do not substitute for model observations or final verification. "
+    "aua_screenshot requests a system screenshot into Android Gallery/Screenshots; aua_observe(mode=screenshot) only returns pixels to the computer. "
+    "Text is limited to 2000 UTF-16 units in the resulting field. Continuations stop if the original session, app, viewport, field, focus or written prefix changes. Read actual text and enter only the missing remainder."
 )
 
 
@@ -541,7 +650,7 @@ def serve(runtime):
     writing = threading.Lock()
 
     def send(response):
-        line = json.dumps(response, ensure_ascii=False, allow_nan=False)
+        line = json.dumps(response, ensure_ascii=True, allow_nan=False)
         with writing:
             print(line, flush=True)
 

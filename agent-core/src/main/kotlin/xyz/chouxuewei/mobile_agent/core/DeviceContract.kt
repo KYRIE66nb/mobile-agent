@@ -102,6 +102,7 @@ enum class DeviceKey {
     DPAD_RIGHT,
     VOLUME_UP,
     VOLUME_DOWN,
+    SCREENSHOT,
 }
 
 enum class NodeActionKind {

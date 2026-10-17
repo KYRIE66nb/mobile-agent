@@ -1,6 +1,8 @@
 package xyz.chouxuewei.mobile_agent.device
 
 import xyz.chouxuewei.mobile_agent.core.localizedText
+import android.app.KeyguardManager
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -393,7 +395,10 @@ class AndroidDeviceGateway(
         val current = active ?: return@withLock ActionResult.SessionExpired(localizedText("会话已关闭", "Session closed."))
         if (current.session.id != sessionId) return@withLock ActionResult.SessionExpired(localizedText("会话标识不匹配", "Session ID mismatch."))
         // open_app 只依赖已校验的包名和活动会话，不需要为了取得识别 ID 额外读取一次屏幕。
-        val observation = if (action is Action.OpenApp) null else {
+        val observation = if (
+            action is Action.OpenApp ||
+            (action is Action.PressKey && action.key == DeviceKey.SCREENSHOT)
+        ) null else {
             val latest = current.latestObservation
                 ?: return@withLock ActionResult.ObservationMismatch(localizedText("执行前必须重新识别界面", "Inspect the screen again before acting."))
             if (latest.id != observationId) {
@@ -454,7 +459,34 @@ class AndroidDeviceGateway(
                     }
                     complexGesture(current, requireNotNull(observation), action.strokes)
                 }
-                is Action.PressKey -> withContext(Dispatchers.IO) {
+                is Action.PressKey -> if (action.key == DeviceKey.SCREENSHOT) {
+                    if (current.session.mode == ExecutionMode.VIRTUAL_DISPLAY) {
+                        return@withLock ActionResult.Unsupported(
+                            localizedText(
+                                "虚拟屏不支持系统截图，以免截取主屏",
+                                "System screenshots are unsupported for virtual displays to avoid capturing the main display.",
+                            )
+                        )
+                    }
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+                        return@withLock ActionResult.Unsupported(
+                            localizedText(
+                                "系统截图需要 Android 9 或更高版本",
+                                "System screenshots require Android 9 or later.",
+                            )
+                        )
+                    }
+                    val service = AgentAccessibilityService.connected
+                        ?: return@withLock ActionResult.Unsupported(
+                            localizedText(
+                                "系统截图需要已连接无障碍服务",
+                                "System screenshots require a connected accessibility service.",
+                            )
+                        )
+                    withContext(Dispatchers.Main.immediate) {
+                        takeSystemScreenshot(service)
+                    }
+                } else withContext(Dispatchers.IO) {
                     bridge.pressKey(current.displayId, action.key.keyCode())
                 }
                 is Action.OpenApp -> withContext(Dispatchers.IO) {
@@ -595,6 +627,24 @@ class AndroidDeviceGateway(
         DeviceKey.DPAD_RIGHT -> KeyEvent.KEYCODE_DPAD_RIGHT
         DeviceKey.VOLUME_UP -> KeyEvent.KEYCODE_VOLUME_UP
         DeviceKey.VOLUME_DOWN -> KeyEvent.KEYCODE_VOLUME_DOWN
+        DeviceKey.SCREENSHOT -> throw IllegalArgumentException(
+            localizedText("系统截图不能通过 Root 按键注入", "System screenshots cannot be injected as Root key events.")
+        )
+    }
+
+    @SuppressLint("InlinedApi")
+    private fun takeSystemScreenshot(service: AgentAccessibilityService) {
+        val keyguard = checkNotNull(appContext.getSystemService(KeyguardManager::class.java)) {
+            localizedText("无法读取锁屏状态", "Could not read the lock-screen state.")
+        }
+        check(!keyguard.isKeyguardLocked &&
+            !keyguard.isDeviceLocked
+        ) {
+            localizedText("锁屏时拒绝系统截图", "System screenshots are rejected while the device is locked.")
+        }
+        check(service.globalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)) {
+            localizedText("系统截图动作被系统拒绝", "The system rejected the screenshot action.")
+        }
     }
 
     private suspend fun <T> withoutMainDisplayOverlay(

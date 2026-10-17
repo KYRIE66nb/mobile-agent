@@ -1,6 +1,8 @@
 package xyz.chouxuewei.mobile_agent.device.accessibility
 
 import xyz.chouxuewei.mobile_agent.core.localizedText
+import android.app.KeyguardManager
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -151,7 +153,11 @@ class AccessibilityDeviceGateway(
         try {
             current.viewport = mainDisplayViewport()
             val screenshot = if (includeScreenshot) captureDisplayWithRetry(service, current.viewport) else null
-            val nodes = withContext(Dispatchers.Main.immediate) { service.snapshot(DISPLAY_ID) }
+            val (nodes, foregroundPackage) = withContext(Dispatchers.Main.immediate) {
+                service.snapshot(DISPLAY_ID) to service.focusedApplicationWindow(
+                    DISPLAY_ID, excludeOwnPackage = false,
+                )?.packageName
+            }
             val observation = Observation(
                 id = UUID.randomUUID().toString(),
                 sessionId = sessionId,
@@ -159,7 +165,7 @@ class AccessibilityDeviceGateway(
                 contentRevision = System.nanoTime(),
                 viewport = current.viewport,
                 rotationDegrees = 0,
-                foregroundPackage = nodes.firstNotNullOfOrNull { it.packageName },
+                foregroundPackage = foregroundPackage,
                 screenshot = screenshot,
                 nodes = nodes,
             )
@@ -207,7 +213,9 @@ class AccessibilityDeviceGateway(
                     service.performNodeAction(DISPLAY_ID, action.node, action.action)
                 }
                 is Action.MultiStrokeGesture -> gesture(observation!!, action.strokes)
-                is Action.PressKey -> pressKey(action.key, service)
+                is Action.PressKey -> withContext(Dispatchers.Main.immediate) {
+                    pressKey(action.key, service)
+                }
                 is Action.OpenApp -> launchApp(action.target.packageName)
                 is Action.Wait -> {
                     require(action.durationMs in 0..5_000) { localizedText("等待时长超出限制", "Wait duration exceeds the limit.") }
@@ -265,9 +273,28 @@ class AccessibilityDeviceGateway(
             DeviceKey.RECENTS -> check(service.globalAction(AccessibilityService.GLOBAL_ACTION_RECENTS)) { localizedText("最近任务动作被系统拒绝", "The Recents action was rejected.") }
             DeviceKey.VOLUME_UP -> adjustVolume(AudioManager.ADJUST_RAISE)
             DeviceKey.VOLUME_DOWN -> adjustVolume(AudioManager.ADJUST_LOWER)
+            DeviceKey.SCREENSHOT -> takeSystemScreenshot(service)
             else -> throw IllegalArgumentException(
                 localizedText("免 Root 通道不支持按键 ${key.name.lowercase()}（仅 home/back/recents/volume_up/volume_down）", "The no-root channel does not support the ${key.name.lowercase()} key (only home/back/recents/volume_up/volume_down).")
             )
+        }
+    }
+
+    @SuppressLint("InlinedApi")
+    private fun takeSystemScreenshot(service: AgentAccessibilityService) {
+        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            localizedText("系统截图需要 Android 9 或更高版本", "System screenshots require Android 9 or later.")
+        }
+        val keyguard = checkNotNull(appContext.getSystemService(KeyguardManager::class.java)) {
+            localizedText("无法读取锁屏状态", "Could not read the lock-screen state.")
+        }
+        check(!keyguard.isKeyguardLocked &&
+            !keyguard.isDeviceLocked
+        ) {
+            localizedText("锁屏时拒绝系统截图", "System screenshots are rejected while the device is locked.")
+        }
+        check(service.globalAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)) {
+            localizedText("系统截图动作被系统拒绝", "The system rejected the screenshot action.")
         }
     }
 

@@ -181,6 +181,7 @@ object BridgeProtocol {
         "dpad_right" -> DeviceKey.DPAD_RIGHT
         "volume_up" -> DeviceKey.VOLUME_UP
         "volume_down" -> DeviceKey.VOLUME_DOWN
+        "screenshot" -> DeviceKey.SCREENSHOT
         else -> throw InvalidRequest("unknown key: $name")
     }
 

@@ -34,6 +34,14 @@ def _valid_package(value):
         re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+", value))
 
 
+def _valid_app_text(value):
+    return isinstance(value, str) and 1 <= len(value.strip()) <= 200
+
+
+def _valid_aliases(value):
+    return isinstance(value, list) and all(_valid_app_text(alias) for alias in value)
+
+
 class AppCatalog:
     def __init__(self, state_dir, client, serial_getter=None):
         self.state_dir = Path(state_dir)
@@ -53,27 +61,75 @@ class AppCatalog:
                          "origin": "catalog", "installed_verified": False})
         return rows
 
+    @staticmethod
+    def _valid_cached_row(row):
+        return (isinstance(row, dict)
+                and _valid_package(row.get("package_name"))
+                and _valid_app_text(row.get("name"))
+                and _valid_aliases(row.get("aliases"))
+                and row.get("origin") == "installed"
+                and row.get("installed_verified") is True
+                and row.get("installation_checked") is True
+                and _valid_app_text(row.get("verified_at")))
+
+    @classmethod
+    def _cached_apps(cls, cache, device_key):
+        if not isinstance(cache, dict) or cache.get("device_key") != device_key:
+            return None
+        fetched_at = cache.get("fetched_at")
+        if (isinstance(fetched_at, bool) or not isinstance(fetched_at, (int, float))
+                or not 0 <= time.time() - fetched_at < INSTALLED_TTL):
+            return None
+        apps = cache.get("apps")
+        if not isinstance(apps, list) or not all(cls._valid_cached_row(row) for row in apps):
+            return None
+        return apps
+
+    @staticmethod
+    def _parse_installed_response(document):
+        if not isinstance(document, dict):
+            return [], False, "Installed-app query returned a non-object response; installation was not verified."
+        if document.get("ok") is False:
+            return [], False, "Installed-app query reported failure; installation was not verified."
+        apps = document.get("apps")
+        if not isinstance(apps, list):
+            return [], False, "Installed-app query returned an invalid apps list; installation was not verified."
+        rows, seen, malformed = [], set(), False
+        for app in apps:
+            if not isinstance(app, dict):
+                malformed = True
+                continue
+            package = app.get("package_name")
+            label = app.get("label")
+            if not _valid_package(package) or not _valid_app_text(label):
+                malformed = True
+                continue
+            if package in seen:
+                continue
+            seen.add(package)
+            rows.append({"name": label[:200], "package_name": package, "aliases": [],
+                         "origin": "installed", "installed_verified": True,
+                         "installation_checked": True,
+                         "verified_at": dt.datetime.now(dt.timezone.utc).isoformat()})
+        if malformed:
+            return rows, False, "Installed-app query contained malformed rows; valid rows are not complete installation proof."
+        return rows, True, None
+
     def _installed(self):
         serial = self.serial_getter() or "default"
         cache_path = self.state_dir / "apps-installed-cache.json"
         key = hashlib.sha256(serial.encode()).hexdigest()
         cache = _read(cache_path, {})
-        if (isinstance(cache, dict) and cache.get("device_key") == key
-                and isinstance(cache.get("fetched_at"), (int, float))
-                and 0 <= time.time() - cache["fetched_at"] < INSTALLED_TTL
-                and isinstance(cache.get("apps"), list)):
-            return cache["apps"], True, None
+        cached = self._cached_apps(cache, key)
+        if cached is not None:
+            return cached, True, None
         try:
             result = self.client.request("GET", "/apps")
         except BridgeError as error:
             return [], False, f"Installed-app query failed ({error.code}): {error}"
-        rows = []
-        for app in result.get("apps", []):
-            if isinstance(app, dict) and _valid_package(app.get("package_name")):
-                rows.append({"name": str(app.get("label") or app["package_name"])[:200],
-                             "package_name": app["package_name"], "aliases": [],
-                             "origin": "installed", "installed_verified": True,
-                             "verified_at": dt.datetime.now(dt.timezone.utc).isoformat()})
+        rows, installation_checked, warning = self._parse_installed_response(result)
+        if not installation_checked:
+            return rows, False, warning
         try:
             cache_path.write_text(json.dumps(
                 {"device_key": key, "fetched_at": time.time(), "apps": rows}, ensure_ascii=False))
@@ -110,6 +166,7 @@ class AppCatalog:
                 row = dict(row)
                 reference = aliases.get(row["package_name"], {})
                 row["aliases"] = [*reference.get("aliases", []), reference.get("name", "")]
+                row["installation_checked"] = installation_checked
                 if self._score(row, query):
                     candidates.append(row)
         if source in {"auto", "catalog"}:
@@ -121,6 +178,8 @@ class AppCatalog:
             row = dict(row)
             package = row["package_name"]
             row["installed_verified"] = installation_checked and package in installed_ids
+            if row.get("origin") == "installed":
+                row["installation_checked"] = installation_checked
             if package not in merged:
                 merged[package] = row
             else:
@@ -133,7 +192,13 @@ class AppCatalog:
         exact = [row for row in ranked if self._score(row, query) == 2]
         if exact:
             ranked = exact
-        return {"ok": True, "query": query, "source": source,
-                "candidates": ranked[:limit], "total_matches": len(ranked),
-                "searched_sources": searched, "warnings": warnings,
-                "next_action": "Choose the matching app, then aua_launch_app with its package_name and verify foreground. Catalog metadata alone does not prove installation."}
+        ok = not (source == "installed" and not installation_checked)
+        result = {"ok": ok, "query": query, "source": source,
+                  "candidates": ranked[:limit], "total_matches": len(ranked),
+                  "searched_sources": searched, "warnings": warnings,
+                  "next_action": "Choose the matching app, then aua_launch_app with its package_name and verify foreground. Catalog metadata alone does not prove installation."}
+        if not ok:
+            result["error"] = {"code": "app_lookup_unavailable",
+                                "message": " ".join(warnings) or "Installed-app query could not be completed.",
+                                "uncertain": False}
+        return result

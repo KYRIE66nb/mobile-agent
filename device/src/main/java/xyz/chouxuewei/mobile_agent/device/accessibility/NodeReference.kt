@@ -5,7 +5,7 @@ import xyz.chouxuewei.mobile_agent.core.NodeRef
 
 /**
  * 节点引用只携带稳定身份指纹，不保存 AccessibilityNodeInfo。
- * 页面结构或控件位置变化后指纹会变化，执行层因而会拒绝旧识别结果里的目标。
+ * 编辑框用平台 ID 或窗口内结构路径维持布局变化前后的身份；其余节点仍绑定窗口与位置。
  */
 internal object NodeReference {
     fun create(
@@ -17,16 +17,22 @@ internal object NodeReference {
         top: Int,
         right: Int,
         bottom: Int,
+        uniqueId: String? = null,
     ): NodeRef {
         val identity = buildString {
             part(windowId.toString())
             part(viewId)
             part(packageName)
             part(className)
-            part(left.toString())
-            part(top.toString())
-            part(right.toString())
-            part(bottom.toString())
+            if (!uniqueId.isNullOrBlank()) {
+                part("unique")
+                part(uniqueId)
+            } else {
+                part(left.toString())
+                part(top.toString())
+                part(right.toString())
+                part(bottom.toString())
+            }
         }
         val digest = MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
         val hex = buildString(32) {

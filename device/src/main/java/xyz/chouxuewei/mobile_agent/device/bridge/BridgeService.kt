@@ -23,8 +23,8 @@ import xyz.chouxuewei.mobile_agent.device.accessibility.AccessibilityDeviceGatew
 
 /**
  * 桌面桥前台服务：启动即在 127.0.0.1:17325 监听，通知栏常驻"电脑控制已开启"可一键停止。
- * adb shell 可直接 `am start-foreground-service -n <pkg>/.bridge.BridgeService`（shell 可启动
- * 非导出组件），与设置页开关走同一条 setEnabled 路径。
+ * 服务不导出。桌面端只能启动导出的主 Activity，由 App 根据设置恢复服务；
+ * 首次启用须在设置页开启，与后续恢复共用 setEnabled 路径。
  */
 class BridgeService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)

@@ -17,10 +17,21 @@ class NodeReferenceTest {
         assertNotEquals(original, reference(left = 101))
     }
 
+    @Test fun explicitUniqueIdentitySurvivesEditorLayoutChanges() {
+        assertEquals(reference(uniqueId = "editor-42"), reference(left = 101, uniqueId = "editor-42"))
+    }
+
+    @Test fun uniqueIdentityStillSeparatesDifferentFieldsAndWindows() {
+        val original = reference(uniqueId = "editor-42")
+        assertNotEquals(original, reference(uniqueId = "editor-43"))
+        assertNotEquals(original, reference(windowId = 8, uniqueId = "editor-42"))
+    }
+
     private fun reference(
         windowId: Int = 7,
         viewId: String? = "query",
         left: Int = 100,
+        uniqueId: String? = null,
     ) = NodeReference.create(
         windowId = windowId,
         viewId = viewId,
@@ -30,5 +41,6 @@ class NodeReferenceTest {
         top = 200,
         right = 800,
         bottom = 320,
+        uniqueId = uniqueId,
     )
 }

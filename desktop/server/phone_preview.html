@@ -3,84 +3,163 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Android Use — 屏幕预览</title>
+<title>Android Use — 手机控制</title>
 <style>
-  :root { color-scheme: dark; }
-  body { margin: 0; background: #0b0e12; color: #d7dee8; font: 14px/1.5 -apple-system, "PingFang SC", sans-serif;
-         display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-  header { width: 100%; max-width: 520px; display: flex; align-items: center; gap: 10px;
-           padding: 12px 16px; box-sizing: border-box; }
-  header h1 { font-size: 15px; font-weight: 600; margin: 0; flex: 1; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #34c759; }
-  .dot.off { background: #8e8e93; }
-  .buttons { display: flex; gap: 8px; }
-  button { background: #1c2330; color: #d7dee8; border: 1px solid #2b3547; border-radius: 8px;
-           padding: 6px 12px; font-size: 13px; cursor: pointer; }
-  button:hover { background: #242e40; }
-  .frame { border: 1px solid #2b3547; border-radius: 18px; overflow: hidden; background: #000;
-           max-width: 92vw; }
-  img { display: block; width: auto; max-width: min(92vw, 480px); max-height: 78vh; }
-  footer { padding: 10px 16px; font-size: 12px; color: #7b8698; max-width: 520px; }
-  code { background: #1c2330; padding: 1px 5px; border-radius: 4px; }
+:root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; background: #0b0e12; color: #e4eaf2; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+main { max-width: 980px; margin: auto; padding: 24px; }
+header { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; }
+h1 { font-size: 20px; margin: 0; font-weight: 600; }
+.badge { display: inline-flex; align-items: center; gap: 7px; color: #9caabd; font-size: 13px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: #78879c; }
+.live .dot { background: #55d6a3; }
+.layout { display: grid; grid-template-columns: minmax(240px, 1fr) 260px; gap: 32px; align-items: start; }
+.stage { display: flex; flex-direction: column; align-items: center; min-height: 320px; }
+.frame { border: 1px solid #354054; border-radius: 20px; overflow: hidden; background: #121721; position: relative; min-width: 220px; min-height: 220px; }
+#screen { display: block; max-width: min(100%, 480px); max-height: 75vh; width: auto; touch-action: none; cursor: crosshair; user-select: none; }
+#screen:not([src]) { width: 280px; height: 500px; }
+#screen:focus-visible, button:focus-visible { outline: 3px solid #8ab8ff; outline-offset: 3px; }
+#pause { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; padding: 28px; text-align: center; background: #080c12bb; font-size: 16px; backdrop-filter: blur(7px); }
+#pause.visible { display: flex; }
+#message { color: #a9b7ca; font-size: 13px; min-height: 40px; padding-top: 12px; max-width: 480px; }
+.panel { background: #131923; border: 1px solid #283347; border-radius: 16px; padding: 20px; }
+h2 { font-size: 14px; margin: 0 0 12px; color: #c0cde0; }
+.group { display: grid; gap: 8px; margin-bottom: 24px; }
+.row { display: flex; gap: 8px; }
+.row button { flex: 1; }
+button { min-height: 44px; border: 1px solid #394960; background: #202c3e; color: #e4eaf2; border-radius: 9px; padding: 9px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+button:hover:enabled { background: #2c3c55; }
+button:disabled { opacity: .45; cursor: default; }
+p, footer { color: #96a5bb; font-size: 13px; line-height: 1.7; margin: 0; }
+footer { margin-top: 16px; font-size: 12px; }
+@media (max-width: 660px) { main { padding: 16px; } .layout { grid-template-columns: 1fr; gap: 16px; } .panel { max-width: 480px; width: 100%; margin: auto; } #screen { max-height: 65vh; max-width: 86vw; } header { flex-wrap: wrap; } }
 </style>
 </head>
 <body>
-<header>
-  <span class="dot" id="dot"></span>
-  <h1>Android Use — 屏幕预览</h1>
-  <div class="buttons">
-    <button id="refresh" title="重连 MJPEG 流">刷新</button>
-    <button id="home" title="发送 Home 键">Home</button>
-    <button id="shot" title="抓取一帧并下载">截图</button>
-  </div>
-</header>
-<div class="frame"><img id="screen" alt="手机屏幕流"></div>
-<footer>
-  MJPEG 预览仅供观看，不代表控制通道就绪；模型操作请走 <code>aua_*</code> 工具。
-  暂停预览：<code>aua_screen pause</code>。
-</footer>
+<main>
+<header><h1>Android Use</h1><span class="badge" id="connection"><span class="dot"></span><span id="status">正在连接手机…</span></span></header>
+<div class="layout">
+<section class="stage" aria-label="手机预览">
+<div class="frame"><img id="screen" alt="手机实时屏幕，可点击或拖动操作" tabindex="0" draggable="false"><div id="pause">画面已暂停<br>请在手机上完成认证</div></div>
+<div id="message" role="status" aria-live="polite">等待第一帧画面。</div>
+</section>
+<aside class="panel" aria-label="手机控制">
+<h2>系统导航</h2>
+<div class="group"><div class="row"><button data-key="back" disabled>返回</button><button data-key="home" disabled>主屏幕</button></div><button data-key="recents" disabled>最近任务</button></div>
+<h2>滚动页面</h2>
+<div class="group"><div class="row"><button data-direction="down" disabled>向前翻</button><button data-direction="up" disabled>向后翻</button></div></div>
+<h2>截图</h2>
+<div class="group"><button id="save" disabled>保存到手机相册</button><button id="download" disabled>下载当前画面</button></div>
+<button id="refresh" style="width:100%">刷新预览</button>
+<footer>点击画面操作，拖动或滚轮翻页。操作后请查看手机上的实际结果。</footer>
+</aside>
+</div>
+<footer>输入密码或验证码前，请让 Agent 暂停预览。认证完成后再恢复；暂停期间控制不可用。</footer>
+</main>
 <script>
-const IMG = document.getElementById("screen");
-const DOT = document.getElementById("dot");
-const BASE = "__AUA_BASE__";
-const TOKEN = "__AUA_TOKEN__";
-const STREAM = "__AUA_SCREEN_URL__";
-let reconnectTimer = null;
-
-function connect() {
-  DOT.classList.add("off");
-  IMG.src = STREAM + (STREAM.includes("?") ? "&" : "?") + "t=" + Date.now();
+const screen = document.getElementById("screen");
+const status = document.getElementById("status");
+const message = document.getElementById("message");
+const connection = document.getElementById("connection");
+const controls = [...document.querySelectorAll("button:not(#refresh)")];
+let seq = 0, received = 0, paused = false, busy = false, pointer = null, wheelTimer = null;
+const api = new URL("./api/", location.href);
+async function request(path, body) {
+  const response = await fetch(new URL(path, api), body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {cache: "no-store"});
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error?.message || "连接失败，请检查手机与 Agent。");
+  return data;
 }
-IMG.onload  = () => { DOT.classList.remove("off"); };
-IMG.onerror = () => {
-  DOT.classList.add("off");
-  if (!reconnectTimer) reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, 2000);
-};
-document.getElementById("refresh").onclick = () => { clearTimeout(reconnectTimer); reconnectTimer = null; connect(); };
-async function post(path, body) {
-  const r = await fetch(BASE + path, {method: "POST",
-      headers: {"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"},
-      body: JSON.stringify(body || {})});
-  return r.json();
+function enabled() { return seq > 0 && Date.now() - received < 2500 && !paused && !busy; }
+function update() {
+  for (const control of controls) control.disabled = !enabled();
+  connection.classList.toggle("live", enabled());
+  document.getElementById("pause").classList.toggle("visible", paused);
+  screen.setAttribute("aria-disabled", String(!enabled()));
+  status.textContent = paused ? "已暂停 · 认证接管" : busy ? "正在发送操作" : enabled() ? "实时连接" : "等待新画面";
+  if (!enabled()) { pointer = null; clearTimeout(wheelTimer); }
 }
-document.getElementById("home").onclick = async () => {
+function point(event) {
+  const rect = screen.getBoundingClientRect();
+  return {x: Math.max(0, Math.min(.99999, (event.clientX - rect.left) / rect.width)),
+          y: Math.max(0, Math.min(.99999, (event.clientY - rect.top) / rect.height))};
+}
+async function context() {
+  const result = await request("context");
+  const viewport = result.viewport;
+  if (!viewport?.width || !viewport?.height || !result.observation_id) throw new Error("无法读取手机尺寸，请检查连接。");
+  if (Math.abs(screen.naturalWidth / screen.naturalHeight - viewport.width / viewport.height) > .03) throw new Error("屏幕方向已变化，请等待新画面再操作。");
+  return result;
+}
+async function send(tool, args, frame = seq) {
+  if (!enabled()) return;
+  busy = true; update();
   try {
-    const s = await post("/session");
-    await post("/action", {session_id: s.session_id, action: {kind: "press_key", key: "home"}});
-  } catch (_) {}
-};
-document.getElementById("shot").onclick = async () => {
+    await request("action", {tool, arguments: args, frame_seq: frame});
+    message.textContent = tool === "aua_screenshot" ? "已请求系统截图，请到手机相册确认。" : "操作已发送，请查看手机结果。";
+  } catch (error) { message.textContent = error.message + " 请查看当前画面后再决定下一步。"; }
+  finally { busy = false; update(); }
+}
+async function scroll(direction) {
+  if (!enabled()) return;
+  try { const c = await context(); await send("aua_swipe", {direction, observation_id: c.observation_id}); }
+  catch (error) { message.textContent = error.message; }
+}
+screen.addEventListener("pointerdown", event => {
+  if (!enabled() || event.button !== 0) return;
+  screen.setPointerCapture(event.pointerId);
+  pointer = {id: event.pointerId, from: point(event), at: Date.now(), seq, context: context()};
+  pointer.context.catch(() => {});
+});
+screen.addEventListener("pointerup", async event => {
+  const gesture = pointer; pointer = null;
+  if (!gesture || gesture.id !== event.pointerId || !enabled()) return;
+  const to = point(event);
   try {
-    const s = await post("/session");
-    const obs = await post("/observe", {session_id: s.session_id, mode: "screenshot"});
-    if (!obs.image || !obs.image.base64) return;
-    const a = document.createElement("a");
-    a.href = "data:image/jpeg;base64," + obs.image.base64;
-    a.download = "android-screen-" + Date.now() + ".jpg";
-    a.click();
-  } catch (_) {}
+    const c = await gesture.context;
+    const args = {observation_id: c.observation_id};
+    const x1 = Math.floor(gesture.from.x * c.viewport.width), y1 = Math.floor(gesture.from.y * c.viewport.height);
+    const x2 = Math.floor(to.x * c.viewport.width), y2 = Math.floor(to.y * c.viewport.height);
+    if (Math.hypot(x2 - x1, y2 - y1) < 10) await send("aua_tap", {...args, x: x1, y: y1}, gesture.seq);
+    else await send("aua_drag", {...args, x1, y1, x2, y2, duration_ms: Math.max(100, Math.min(1500, Date.now() - gesture.at))}, gesture.seq);
+  } catch (error) { message.textContent = error.message; }
+});
+screen.addEventListener("pointercancel", () => { pointer = null; });
+screen.addEventListener("wheel", event => {
+  event.preventDefault();
+  if (!enabled()) return;
+  clearTimeout(wheelTimer);
+  wheelTimer = setTimeout(() => scroll(event.deltaY > 0 ? "up" : "down"), 160);
+}, {passive: false});
+screen.addEventListener("keydown", event => {
+  if (["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); scroll(event.key === "ArrowDown" ? "up" : "down"); }
+});
+for (const button of document.querySelectorAll("[data-key]")) button.onclick = () => send("aua_press_button", {name: button.dataset.key});
+for (const button of document.querySelectorAll("[data-direction]")) button.onclick = () => scroll(button.dataset.direction);
+document.getElementById("save").onclick = () => send("aua_screenshot", {});
+document.getElementById("download").onclick = () => {
+  if (!enabled()) return;
+  const link = document.createElement("a"); link.href = screen.src; link.download = "android-screen-" + Date.now() + ".jpg"; link.click();
 };
-connect();
+document.getElementById("refresh").onclick = () => { seq = 0; received = 0; pointer = null; update(); };
+async function poll() {
+  try {
+    const frame = await request("frame?after_seq=" + seq);
+    paused = frame.paused;
+    if (!paused && frame.jpeg_base64 && !pointer) {
+      const firstFrame = seq === 0;
+      const next = new Image(); next.src = "data:image/jpeg;base64," + frame.jpeg_base64;
+      await next.decode();
+      screen.src = next.src; seq = frame.seq; received = Date.now() - (frame.age_seconds || 0) * 1000;
+      if (firstFrame && !busy) message.textContent = "画面可点击、拖动；也可使用右侧按钮导航。";
+    }
+    update();
+  } catch (error) { received = 0; update(); message.textContent = error.message; }
+  setTimeout(poll, 150);
+}
+setInterval(update, 500);
+poll();
 </script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 package xyz.chouxuewei.mobile_agent.device.bridge
 
+import android.app.KeyguardManager
 import android.graphics.Bitmap
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -7,6 +8,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import xyz.chouxuewei.mobile_agent.core.AgentLog
 import xyz.chouxuewei.mobile_agent.core.DeviceGateway
 import xyz.chouxuewei.mobile_agent.core.DeviceResult
@@ -35,6 +38,7 @@ class BridgeController(
 
     /** 预览暂停（用户认证接管等）时 MJPEG 停止采帧，控制通道不受影响。 */
     val screenPaused = AtomicBoolean(false)
+    private val actionMutex = Mutex()
 
     suspend fun handle(request: Request): Response = try {
         when {
@@ -46,12 +50,17 @@ class BridgeController(
             request.method == "POST" && request.path == "/action" -> action(request)
             request.method == "GET" && request.path == "/apps" -> apps()
             request.method == "POST" && request.path == "/screen/pause" -> {
+                // Reject queued actions immediately, then drain any action already executing.
                 screenPaused.set(true)
-                Response(200, JSONObject().put("ok", true).put("paused", true))
+                actionMutex.withLock {
+                    Response(200, JSONObject().put("ok", true).put("paused", true))
+                }
             }
             request.method == "POST" && request.path == "/screen/resume" -> {
-                screenPaused.set(false)
-                Response(200, JSONObject().put("ok", true).put("paused", false))
+                actionMutex.withLock {
+                    screenPaused.set(false)
+                    Response(200, JSONObject().put("ok", true).put("paused", false))
+                }
             }
             else -> Response(404, BridgeProtocol.errorJson("not_found", "unknown route"))
         }
@@ -71,6 +80,8 @@ class BridgeController(
             .put("accessibility", accessibility)
             .put("session_open", sessionOpen)
             .put("screen_paused", screenPaused.get())
+            .put("phone_locked", AgentAccessibilityService.connected
+                ?.getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true)
         if (sessionOpen) body.put("session_id", openSessionId)
         return Response(200, body)
     }
@@ -114,8 +125,14 @@ class BridgeController(
         val mode = body.optString("mode", "both")
         val includeNodes = mode == "tree" || mode == "both" || !screenshot
         val includeScreenshot = screenshot && (mode == "screenshot" || mode == "both")
+        if (includeScreenshot && screenPaused.get()) {
+            return Response(409, BridgeProtocol.errorJson("preview_paused", "resume after authentication before capturing images"))
+        }
         val maxNodes = body.optInt("max_nodes", 200).coerceIn(1, 500)
         val result = if (includeScreenshot) gateway.observe(sessionId) else gateway.inspect(sessionId)
+        if (includeScreenshot && screenPaused.get()) {
+            return Response(409, BridgeProtocol.errorJson("preview_paused", "capture interrupted by authentication handoff"))
+        }
         val (status, json) = BridgeProtocol.deviceResultToJson(result) { observation ->
             BridgeProtocol.observationToJson(
                 observation.copy(screenshot = if (includeScreenshot) observation.screenshot else null),
@@ -126,17 +143,20 @@ class BridgeController(
         return Response(status, json)
     }
 
-    private suspend fun action(request: Request): Response {
+    private suspend fun action(request: Request): Response = actionMutex.withLock {
+        if (screenPaused.get()) {
+            return@withLock Response(409, BridgeProtocol.errorJson("preview_paused", "resume after authentication before controlling the phone"))
+        }
         val body = request.body
-            ?: return Response(400, BridgeProtocol.errorJson("invalid_argument", "missing body"))
+            ?: return@withLock Response(400, BridgeProtocol.errorJson("invalid_argument", "missing body"))
         val sessionId = body.optString("session_id").takeIf { it.isNotEmpty() }
-            ?: return Response(400, BridgeProtocol.errorJson("invalid_argument", "missing session_id"))
+            ?: return@withLock Response(400, BridgeProtocol.errorJson("invalid_argument", "missing session_id"))
         val rawAction = body.optJSONObject("action")
-            ?: return Response(400, BridgeProtocol.errorJson("invalid_argument", "missing action"))
+            ?: return@withLock Response(400, BridgeProtocol.errorJson("invalid_argument", "missing action"))
         val action = BridgeProtocol.actionFromJson(rawAction)
         val observationId = body.optString("observation_id").takeIf { it.isNotEmpty() }
         val result = gateway.execute(sessionId, observationId, action)
-        return Response(BridgeProtocol.httpStatusFor(result), BridgeProtocol.actionResultToJson(result))
+        Response(BridgeProtocol.httpStatusFor(result), BridgeProtocol.actionResultToJson(result))
     }
 
     private suspend fun apps(): Response {
@@ -170,7 +190,7 @@ class BridgeController(
                 try {
                     ByteArrayOutputStream().use { output ->
                         scaled.compress(Bitmap.CompressFormat.JPEG, quality, output)
-                        output.toByteArray()
+                        if (screenPaused.get()) null else output.toByteArray()
                     }
                 } finally {
                     if (scaled !== bitmap) scaled.recycle()
