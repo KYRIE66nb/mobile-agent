@@ -191,7 +191,7 @@ The on-phone agent can act by itself — or **lend its hands to an agent on your
 
 - **Safety boundaries by design**: HTTP is loopback-only; the Bearer pairing token can only be read through `adb shell`; the service is non-exported and the App settings toggle is authoritative; bridge sessions are exclusive and the desktop client never blind-retries a possibly-executed action — a dropped connection reports "uncertain", never a duplicate tap.
 - **21 `aua_*` tools**: `observe` (node tree + screenshot), `find` / `tap` / `long_press` / `drag` / `swipe` / `type_text` / `press_button` / `launch_app`, `screenshot` (system capture saved in the phone gallery), plus `batch`, `scroll_find`, `collect_list`, `apps`, `screen` (interactive local preview), and the `setup` / `ready` / `doctor` / `metrics` provisioning suite.
-- **Same gateway as the in-app agent**: selectors resolve accessibility nodes by text/description/id/type/regex and fall back to screenshot pixel coordinates; Unicode text splits at grapheme boundaries, scrolls and batches are verified rather than assumed.
+- **Shared device capability contract and implementation**: the desktop bridge has its own gateway, session, and operation lock; run in-app and desktop tasks at separate times. Selectors support text/description/id/type/regex and screenshot pixel coordinates; Unicode text splits at grapheme boundaries, and scrolls and batches include execution checks.
 
 Desktop 0.2.0 adapts iPhone-use 0.3.15: target-bound input continuation, shared-session preview controls, and readiness checks that fail when required observations are missing. The desktop bridge requires Android 11+. See [usage, upstream comparison and validation limits](docs/desktop-control.md).
 
@@ -310,6 +310,8 @@ Stack: Kotlin 2.0 + Jetpack Compose (Material3) + Room + DataStore + Coil + libs
 
 Grab the APK from [Releases](https://github.com/KYRIE66nb/mobile-agent/releases/latest), or update in-app via **Settings → About → Check for updates**.
 
+The current stable release is **v0.1.20** (versionCode 20), including the Android Use desktop 0.2.0 fixes verified on a real device. [Download the release APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.20/app-release.apk). The release also includes `SHA256SUMS` and `release-info.json` for the artifact hash, signing certificate and source revision. The app requires Android 7.0+; the desktop bridge requires Android 11+.
+
 ### Build from source
 
 ```bash
@@ -317,6 +319,8 @@ git clone https://github.com/KYRIE66nb/mobile-agent.git
 cd mobile-agent
 ./gradlew :app:assembleDebug    # APK lands in app/build/outputs/apk/debug/
 ```
+
+Configure your own signing key for a release build. See the [release guide](docs/RELEASING.md) for build, verification and publishing steps. Public updates use the release variant.
 
 ### Configure a model (Zhipu example)
 

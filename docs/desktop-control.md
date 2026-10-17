@@ -1,6 +1,6 @@
 # 用电脑控制 Android 手机
 
-桌面端版本：0.2.0。更新对照：iPhone-use 0.3.15（`8000688`，2026-10-16）。
+桌面端版本：0.2.0，随 App 0.1.20（versionCode 20）提供正式安装包。更新对照：iPhone-use 0.3.15（`8000688`，2026-10-16）。
 
 ## 代码分析与更新取舍
 
@@ -78,6 +78,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s desktop/tests -v
 
 2026-10-17 已在型号 2604FRK1EC、Android 16 / API 36、1280×2772 真机验证：升级保留数据，前台窗口识别、已安装应用查询、坐标点框、中文/Emoji 逐字回读、720 字符两次续传、UTF-16 超限无写入、测试草稿清理、应用启动、滚动位移、显式拖动、实时预览、浏览器主屏幕按钮及系统截图相册落盘。相册新增一张 1280×2772 图片；暂停等待在途操作约 1.2 秒，暂停期间控制/图像/READY 均被拒绝，恢复后取得新帧。浏览器闲置 35 秒后的首次 Home 请求成功，随后读取确认手机前台为 `com.miui.home`。
 
-自动验证：桌面 99 项测试通过（`ResourceWarning` 视为错误）；`:device` 13 项与 `:agent-core` 184 项 JVM 测试通过；Android instrumentation 编译和 `:app:assembleDebug` 成功。`:device:lintDebug` 仍报告 30 个基线已有调用的错误，不能声称 lint 通过。
+0.1.20 正式 release APK 另完成保留数据覆盖升级、读屏、中文/Emoji 输入及 810 字符两次续传精确回读；测试草稿已清理，设备返回桌面。
+
+自动验证：桌面 104 项测试通过（含安装脚本，`ResourceWarning` 视为错误），另有 9 项发布校验 CLI 测试；`:device` 13 项与 `:agent-core` 184 项 JVM 测试已覆盖设备控制改动。正式 release APK 的版本、签名、非调试属性及模型默认值为空均已校验。`:device:lintDebug` 仍报告 30 个基线已有调用的错误，不能声称全量 lint 通过。发布构建步骤见 [发布指南](RELEASING.md)。
 
 测试运行器限制：Gradle UTP 运行器所需的镜像依赖缺失；原生测试 APK 安装又被手机系统拒绝，因此 instrumentation 用例未实际运行。采用已升级主 App 的真实 HTTP 桥完成上述端到端检查，没有绕过系统安装限制。当前仅覆盖这台设备，其他 OEM/Android 版本仍需分别验证。

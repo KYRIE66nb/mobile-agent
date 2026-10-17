@@ -3,11 +3,12 @@
 本项目所有值得记录的变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本。安装包见 [Releases](https://github.com/KYRIE66nb/mobile-agent/releases)。
 
-## [Unreleased]
+## [0.1.20] - 2026-10-17
 
 - **Android Use 桌面端 0.2.0**：对照 iPhone-use 0.3.15，增加共享会话的浏览器点按/拖动/滚轮及导航、系统截图保存到手机相册；暂停认证接管保留最后画面，拒绝新图像和动作。
 - **输入与就绪可靠性**：续传绑定 session/App/视口/字段/焦点/已写前缀，按 Android UTF-16 限额在写入前校验；安装清单和缓存保守校验；读取失败不再误报 ready；自定义转发端口与旧连接释放修正。
 - **真机修复**：应用窗口前台识别、输入框布局变化身份与回读等待、滚动边界锚点、闲置 HTTP 连接、导出 Activity 激活桥，以及异常 Unicode 不再中断 MCP worker；Android 16 完成真机端到端验证。
+- **发布与安装维护**：正式 APK 提升到 versionCode 20；发布校验包名、版本、签名和非调试属性，并提供 SHA256SUMS 与构建来源信息。桌面安装脚本支持自定义 ADB 和特殊字符路径；产品、架构、隐私与安全说明同步当前桌面桥能力。
 - 使用及验证边界见 [桌面控制说明](docs/desktop-control.md)。
 
 ## [0.1.19] - 2026-10-12
