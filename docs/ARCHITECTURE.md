@@ -1,12 +1,12 @@
 # Mobile Agent 技术架构
 
-更新日期：2026-09-26。状态：目标实现；以 [产品定义](PRODUCT.md) 和 [UI 与主题规范](DESIGN.md) 为输入。
+更新日期：2026-10-17。状态：目标实现；以 [产品定义](PRODUCT.md) 和 [UI 与主题规范](DESIGN.md) 为输入。桌面桥的实际验证范围见 [桌面控制说明](desktop-control.md#验证范围)。
 
 ## 1. 架构目标
 
-提供可独立使用的 AI 聊天核心，并通过公共接口接入本地及远端工具。聊天、模型供应商、运行时和功能模块分别承担职责；没有工具或没有 Root 时，普通聊天仍可运行。
+提供可独立使用的 AI 聊天核心，并通过公共接口接入本地及远端工具。聊天、模型供应商、运行时和功能模块分别承担职责；没有工具或没有 Root 时，普通聊天仍可运行。App 内设备工具与桌面 Android Use Bridge 是两条独立的设备通道。
 
-同一 APK 内包含全部首版模块。设备控制单独检测 Root 和兼容性；主题属于展示设置，不参与模型决策或工具调度。
+同一 APK 内包含全部首版手机模块。App 内设备控制单独检测 Root 和兼容性；桌面 Android Use Bridge 在 Android 11+ 单独检测无障碍和桥状态；主题属于展示设置，不参与模型决策或工具调度。
 
 ## 2. 职责与依赖
 
@@ -35,7 +35,7 @@
 | :agent-core | 纯业务会话/执行契约、上下文管理、模型接口、调度、状态规则及跨模块中英文选择 |
 | :model | 模型服务适配、流式响应、工具调用格式转换 |
 | :data | Room、设置持久化、授权记录、产物索引及密钥保护 |
-| :device | Root 状态检测、设备会话、界面/节点识别、语义动作与复杂触控 |
+| :device | Root 与无障碍状态检测、设备会话、界面/节点识别、语义动作、复杂触控和桌面桥 |
 | :tools | 历史、文件、SVG/PNG/GIF 图像渲染、网络、设备、剪贴板、通知、系统和询问用户工具，以及能力组启用与权限持久化 |
 | :capability-api | 按需抽出的公共工具接口，供运行时和各提供者依赖 |
 | :capabilities-core | 首批文件、网络、图片等提供者；内部仍分别注册、测试与初始化 |
@@ -51,7 +51,7 @@
 - 可选结果渲染器不能接管整个聊天、输入区或授权逻辑。
 - 模块初始化失败转为能力不可用，不阻止基础 App 启动。
 - 模块自身释放资源，运行时统一传播取消与超时。
-- Root 只存在于设备模块及其受控进程边界。
+- Root 只存在于 App 内设备模块及其受控进程边界；桌面桥使用独立的无 Root 无障碍通道。
 
 ## 4. 会话与执行
 
@@ -194,11 +194,11 @@ ContextManager 是运行时中的独立职责，通过模型接口请求摘要�
 - 永久授权按能力组持久保存并可撤销；需要用户选择的运行方式以及另行定义的高风险动作仍单独确认。
 - 网页、文件、工具返回的文本视为数据，不能替换系统指令或增加权限。
 
-## 6. Root 设备模块
+## 6. App 内 Root 设备模块
 
-保持同 APK 的 :device 模块。RootService 可在独立工作进程中通过 Binder/AIDL 提供类型化操作，校验调用方；这属于内部隔离，不要求另装应用。
+保持同 APK 的 :device 模块。App 内 RootService 可在独立工作进程中通过 Binder/AIDL 提供类型化操作，校验调用方；这属于内部隔离，不要求另装应用。桌面桥不使用这个 RootService。
 
-设备模块负责检测 Root、系统兼容性和授权状态。启动不触发 su 授权弹窗；通用设置读取当前状态，且只在用户打开 Root 开关时触发授权。开关选择持久保存；新进程尚未建立 Root Shell 时保留开启状态，实际使用时再确认系统授权。本机没有可执行的 su 环境时开关禁用。关闭开关会阻止新设备会话并清理当前会话。启动应用只依赖活动设备会话和应用列表返回的真实包名；点击、输入、滑动等界面动作必须绑定最近一次界面识别的准确 ID，动作执行后该识别结果立即失效。
+设备模块负责检测 Root、系统兼容性和授权状态。启动不触发 su 授权弹窗；通用设置读取当前状态，且只在用户打开 Root 开关时触发授权。开关选择持久保存；新进程尚未建立 Root Shell 时保留开启状态，实际使用时再确认系统授权。本机没有可执行的 su 环境时开关禁用。关闭开关会阻止 App 内 Root 设备会话并清理当前会话。启动应用只依赖活动设备会话和应用列表返回的真实包名；点击、输入、滑动等界面动作必须绑定最近一次界面识别的准确 ID，动作执行后该识别结果立即失效。
 
 暴露受控的会话创建、应用列表读取、界面识别、节点语义动作、坐标动作、复杂触控、文本输入、系统导航、应用启动、批量执行与关闭。批量执行器在本地为每个步骤轻量重新读取节点，按文字、描述或 view_id 重新定位并验证前台应用，不复用旧 node_ref；最多二十步且声明时长不超过六十秒，任一步失败立即停止并返回最新界面。识别同时返回临时截图、坐标范围和节点快照；截图以 JPEG 质量 82 编码但保持原坐标尺寸，批量步骤与状态轮询只读节点，仅在最终或失败时编码一张截图。截图只进入紧接着的一次模型请求，不写入数据库；模型完成该次决策后，截图移除且节点结果替换为占位符。
 
@@ -212,13 +212,19 @@ ContextManager 是运行时中的独立职责，通过模型接口请求摘要�
 
 不依赖 Root 的系统能力按剪贴板、通知和系统功能三个独立能力组注册。剪贴板支持受授权的读取、写入和清空；通知依赖 Android 通知使用权，支持读取、打开、按钮操作和清除，验证码与账户安全通知会隐藏内容并禁止自动按钮或清除；系统功能通过类型化参数打开深链接/系统面板、分享文字、读取和调整音量，并在 Android 授予“修改系统设置”后调整亮度与旋转。文件工具可对当前对话内已有文件打开系统分享面板。以上接口不接受任意 Shell、任意文件路径或未在当前对话中的文件引用。
 
-### 6.1 桌面控制桥（Android Use Bridge）
+### 6.1 桌面控制桥（Android Use Bridge 0.2.0）
 
-`device/bridge/` 把设备控制能力经一条受控 HTTP 通道暴露给电脑端 Agent。`BridgeService` 为前台服务、不可导出（`exported=false`），在 `127.0.0.1:17325` 上提供手写 loopback HTTP/1.1 服务；`BridgeController` 路由 `/status`、`/session`、`/observe`、`/inspect`、`/action`、`/apps`、`/screen` 与暂停/恢复，全部转发给现有 `DeviceGateway`——桌面端与 App 内 Agent 复用同一条无障碍/Root 通道，不另起控制栈。新增 `AccessibilityDeviceGateway` 以无障碍通道驱动主屏：Android 11+ `takeScreenshot` 采集显示帧（硬件位图解码为可编码 Bitmap）、`dispatchGesture` 坐标点按/长按、全局动作（Home/Back/Recents）与音量键。
+`device/bridge/` 把设备控制能力经一条受控 HTTP 通道暴露给电脑端 Agent。`BridgeService` 是 `exported=false` 的前台服务，在 `127.0.0.1:17325` 上提供手写 loopback HTTP/1.1 服务；桌面端不能直接启动它，只能通过 `adb_setup.py` 启动公开的 `MainActivity`，再由 App 按 `desktop_bridge` 开关恢复服务。`BridgeController` 路由 `/status`、`/session`、`/observe`、`/inspect`、`/action`、`/apps`、`/screen` 与暂停/恢复。
 
-安全边界：所有请求须带 `Bearer` 配对 token（`/screen` 预览允许 `?token=` 等价凭据以兼容浏览器 `<img>`，并处理 CORS/OPTIONS）；token 仅经 `BridgePairingProvider` 对 `SHELL_UID` 的 `content call` 发放，本机其他应用调用抛 SecurityException；开关仅存应用私有 SharedPreferences（`desktop_bridge`），`PrototypeApplication` 启动时按开关恢复桥；桥会话排他，重复打开返回 `session_busy`。
+桥服务每次启动都新建独立的 `AccessibilityDeviceGateway`，只在 Android 11+ 通过无障碍服务驱动主屏：`takeScreenshot` 采集显示帧，`dispatchGesture` 执行坐标点按/长按与复杂手势，并提供全局导航、音量和应用启动。它不创建虚拟屏、不要求 Root；App 内 Agent 仍由 `PrototypeApplication` 单独持有 `AndroidDeviceGateway`，Root 检测和授权仍是 App 内设备工具的前置条件。两入口不共享 gateway 实例或 App 全局任务锁，桌面任务与 App 内任务应分时运行。
 
-桌面侧 `desktop/server/` 为零依赖 Python：`adb_client.py` 持久 HTTP 客户端（只读可重试、动作不盲重放，`action_uncertain` 结构化暴露不确定性）；`adb_controller.py` 选择器解析（文本/描述/id/类型/正则/索引）、截图兜底、字素安全分段续传、滚动锚点校验、批量预检；`adb_setup.py` 经 adb 完成 discover→configure→enable_accessibility→pair→forward→ready 装配；`adb_screen.py` 维护单条 `/screen` MJPEG 流并缓存最新帧供 `aua_screen*` 与 `phone_preview.html` 预览；`android_use.py` 以 MCP stdio JSON-RPC 暴露 19 个 `aua_*` 工具，串行执行设备操作并以 `operation.lock` 防多实例并发。MIUI 等 ROM 会拦截非导出组件的 `am start-foreground-service` 及后台 FGS 启动，故开启桥的权威路径是 App 前台状态下的设置页开关；部分 ROM 在 force-stop 后撤销经 adb 授予的无障碍服务，需重新 `enable_accessibility`。
+安全边界：所有请求须带 `Bearer` 配对 token（`/screen` 预览允许 `?token=` 等价凭据以兼容浏览器 `<img>`）；token 仅经 `BridgePairingProvider` 对 `SHELL_UID` 的 `content call` 发放，本机其它应用调用抛 `SecurityException`。开关与 token 存在应用私有 `SharedPreferences`；桥会话排他，重复打开返回 `session_busy`。
+
+桌面侧 `desktop/server/` 为零依赖 Python：`adb_setup.py` 经 adb 完成 discover→configure→enable_accessibility→pair→start_bridge→forward→ready；`android_use.py` 以 MCP stdio JSON-RPC 暴露 21 个 `aua_*` 工具，串行执行设备操作并以进程内与 `operation.lock` 防多实例并发。桌面运行时和 `adb_preview.py` 的浏览器页面共享同一桌面会话、最新帧和操作锁，页面同源且不把配对 token 写入 HTML；这份共享不延伸到 App 内 gateway。
+
+预览暂停先拒绝排队动作并等待已接受动作结束；暂停期间手机桥不产生新的 MJPEG 帧，观察中的图像和控制请求返回 `preview_paused`，桌面侧保留最后一帧但禁用控制。恢复后必须等待新帧，旧帧坐标不能继续使用。`aua_observe` 的截图在桌面状态目录下按权限保存有限数量的 JPG；`aua_screenshot` 则请求 Android 系统把图片保存到手机相册/Screenshots，系统接受请求不等于相册内容已核验。
+
+真实限制包括 Android 11 以下不支持该桌面桥主屏会话、无障碍服务断开、锁屏时系统截图被拒绝、部分 OEM 可能回收无障碍或限制后台服务，以及 instrumentation/其它机型尚未覆盖；完整安装说明、验证范围与已知限制见 [桌面控制说明](desktop-control.md)。
 
 ## 7. 主题与展示层
 

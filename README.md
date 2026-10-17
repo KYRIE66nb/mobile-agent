@@ -191,7 +191,7 @@ https://github.com/user-attachments/assets/2d88800f-3ffe-45b2-bfee-56f474d6c136
 
 - **安全边界是硬设计**：HTTP 只绑 loopback，Bearer token 配对且只能经 `adb shell` 取到；服务不可导出，开关在 App 设置页显式掌控；桥会话排他，桌面端对可能已执行的动作绝不盲重放——断线只会报"不确定成没成"，不会重复点两次。
 - **21 个 `aua_*` 工具**：`observe`（节点树 + 截图）、`find` / `tap` / `long_press` / `drag` / `swipe` / `type_text` / `press_button` / `launch_app`，`screenshot`（保存系统截图到手机相册），以及 `batch`、`scroll_find`、`collect_list`、`apps`、`screen`（可点按/拖动/滚轮的本地预览）与 `setup` / `ready` / `doctor` / `metrics` 装配诊断全套。
-- **与 App 内 Agent 同一条网关**：选择器按文本/描述/id/类型/正则命中无障碍节点，命中不了回退截图像素坐标；Unicode 文本按字素分段续传，滚动与批量动作都带执行校验。
+- **复用设备能力契约与实现**：桌面桥持有独立网关、会话和操作锁，App 内任务与桌面任务应分时运行。选择器支持文本/描述/id/类型/正则与截图像素坐标；Unicode 文本按字素分段续传，滚动与批量动作带执行校验。
 
 桌面端 0.2.0 对照 iPhone-use 0.3.15 更新：长文本续传绑定原目标，预览控制复用 Agent 会话，截图/树读取失败不误报就绪。桌面桥要求 Android 11+；[使用说明、更新对照与验证边界](docs/desktop-control.md)。
 
@@ -309,6 +309,8 @@ python3 desktop/server/android_use.py   # 作为 MCP stdio 服务注册进客户
 
 从 [Releases](https://github.com/KYRIE66nb/mobile-agent/releases/latest) 下载 APK，或在 App 内 **设置 → 关于 → 检查更新** 直接升级。
 
+当前正式版 **v0.1.20**（versionCode 20），包含 Android Use 桌面端 0.2.0 的真机修复。[下载正式 APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.20/app-release.apk)；同一发布页提供 `SHA256SUMS` 和 `release-info.json`，可核对文件摘要、签名指纹及源码版本。Android App 要求 Android 7.0+，电脑控制桥要求 Android 11+。
+
 ### 自行构建
 
 ```bash
@@ -316,6 +318,8 @@ git clone https://github.com/KYRIE66nb/mobile-agent.git
 cd mobile-agent
 ./gradlew :app:assembleDebug    # 产物在 app/build/outputs/apk/debug/
 ```
+
+正式包需配置自己的签名；构建、校验和发布步骤见 [发布指南](docs/RELEASING.md)。不要把 debug 包当作公开更新包。
 
 ### 配置模型（以智谱为例）
 
