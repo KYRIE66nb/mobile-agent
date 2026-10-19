@@ -509,6 +509,30 @@ class SubstitutionScenarioTest {
         assertEquals(500L, start.anchorAtMs)
     }
 
+    @Test fun `both sides detect drops after different cells are briefly occluded`() {
+        val eng = engine()
+        feed(eng, 0, c(4), e(2))
+        feed(eng, 100, c(4), e(2))
+
+        // One expired unknown must not discard the other cells' visible changes.
+        val obscured = feed(eng, 501, cells(U, L, L, E), cells(U, E, E, L))
+        assertTrue(obscured.counts.isEmpty())
+        assertTrue(ev(obscured).none { it is TimerEvent.SubstitutionStarted })
+
+        val recovered = feed(eng, 600, cells(L, L, L, U), cells(E, E, U, L))
+        assertEquals(3, recovered.counts[TimerSide.SELF])
+        assertEquals(1, recovered.counts[TimerSide.ENEMY])
+        assertTrue(ev(recovered).none { it is TimerEvent.SubstitutionStarted })
+
+        val confirmed = feed(eng, 700, cells(L, L, L, U), cells(E, E, U, L))
+        val starts = ev(confirmed).filterIsInstance<TimerEvent.SubstitutionStarted>()
+        assertEquals(setOf(TimerSide.SELF, TimerSide.ENEMY), starts.map { it.side }.toSet())
+        assertEquals(2, starts.size)
+        assertTrue(starts.all { it.anchorAtMs == 600L })
+        assertEquals(15_600L, timerOf(eng, TimerSide.SELF)!!.endAtMs)
+        assertEquals(15_600L, timerOf(eng, TimerSide.ENEMY)!!.endAtMs)
+    }
+
     @Test fun `hole rows never reach the confirmer`() {
         val eng = engine()
         feed(eng, 0, c(4), null); feed(eng, 140, c(4), null)

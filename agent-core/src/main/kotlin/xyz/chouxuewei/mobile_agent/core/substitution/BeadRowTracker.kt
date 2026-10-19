@@ -28,8 +28,10 @@ internal class BeadRowTracker(private val cellHoldMs: Long) {
                 states += s
             } else {
                 val mem = heldNow[i]
-                if (mem.state == DotState.UNKNOWN || atMs - mem.atMs > cellHoldMs) return null
-                states += mem.state
+                // 整排暂不可读时仍保存后续格的有效采样，避免交错遮挡把掉豆证据丢掉。
+                states += if (mem.state == DotState.UNKNOWN || atMs - mem.atMs > cellHoldMs) {
+                    DotState.UNKNOWN
+                } else mem.state
             }
         }
         if (!canonicalShape(states)) return null
