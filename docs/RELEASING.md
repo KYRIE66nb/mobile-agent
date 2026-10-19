@@ -1,6 +1,6 @@
 # 构建与发布安装包
 
-当前正式版本：App **0.1.20 / versionCode 20**，Android Use 桌面插件 **0.2.0**。两者版本独立维护。App 的版本号定义在 `app/build.gradle.kts`，更新摘要在 `CHANGELOG.md`。
+当前正式版本：App **0.1.21 / versionCode 21**，Android Use 桌面插件 **0.2.0**。两者版本独立维护。App 的版本号定义在 `app/build.gradle.kts`，更新摘要在 `CHANGELOG.md`。
 
 ## 准备版本
 
@@ -14,7 +14,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 ./gradlew :device:testDebugUnitTest :agent-core:test :app:assembleRelease
 ```
 
-当前版本的真机范围及 instrumentation/lint 限制见 [桌面控制验证](desktop-control.md#验证范围)。`:app:assembleRelease` 的 lint vital 检查与全量 lint 不是同一范围。
+本版本已通过 `:agent-core:test`（188 项）、App 豆槽采样（6 项）、Kotlin 编译、发布工具 CLI（9 项）及正式 release 构建；APK 版本、签名、非调试属性和模型默认配置为空均已校验。本轮未新增整局真机验证。既有真机范围及 instrumentation/lint 限制见 [桌面控制验证](desktop-control.md#验证范围)。`:app:assembleRelease` 的 lint vital 检查与全量 lint 不是同一范围。
 
 ## 生成并校验产物
 
@@ -24,14 +24,14 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/tests
 python3 scripts/package-release.py \
   --apk app/build/outputs/apk/release/app-release.apk \
   --build-tools /path/to/Android/sdk/build-tools/36.0.0 \
-  --version 0.1.20 \
-  --version-code 20 \
+  --version 0.1.21 \
+  --version-code 21 \
   --expected-cert b26b19de23bde953be9d1a9faa6a5b2cbf03bc07335c2c72badd4cd5958cad90 \
   --revision "$(git rev-parse HEAD)" \
-  --output-dir build/releases/v0.1.20
+  --output-dir build/releases/v0.1.21
 ```
 
-此证书指纹与项目此前公开的 v0.1.19 安装包一致。独立 fork 应使用自己的发布证书；已有安装的覆盖升级要求签名连续一致，不能通过清除用户数据来掩盖签名不匹配。
+此证书指纹与项目此前公开的 v0.1.20 安装包一致。独立 fork 应使用自己的发布证书；已有安装的覆盖升级要求签名连续一致，不能通过清除用户数据来掩盖签名不匹配。
 
 工具拒绝包名、版本、版本码或证书不符，以及 debuggable、无效签名的 APK。成功生成：
 
@@ -41,7 +41,7 @@ python3 scripts/package-release.py \
 | `SHA256SUMS` | APK 的 SHA-256 摘要，格式兼容 `sha256sum -c` / `shasum -a 256 -c` |
 | `release-info.json` | 包名、版本、SDK 范围、签名证书指纹、文件摘要及源码提交 |
 
-打包时应使用干净且经过验证的源码。`sourceCommit` 来自显式 `--revision` 参数，不是从 APK 反推的源码证明。PR squash 合并后，若源码树与已验证构建一致，使用合并提交重新生成元数据，避免将候选分支或旧基线记为发布来源。
+打包时应使用干净且经过验证的源码。`sourceCommit` 来自显式 `--revision` 参数，不是从 APK 反推的源码证明。PR squash 合并后，若源码树与已验证构建一致，使用合并提交重新生成元数据，避免将候选分支或旧基线记为发布来源。若 APK 含 AGP 的 `META-INF/version-control-info.textproto`，还应在最终提交重新生成版本控制信息并构建，核对 APK 内部 revision 与发布来源一致。
 
 ## 发布到 GitHub
 
@@ -49,7 +49,7 @@ python3 scripts/package-release.py \
 
 1. 推送发布分支并创建 PR，记录实际测试范围；合并后同步本地 `main`，确认合并树与已验证源码一致。
 2. 用最终合并提交重新生成发布目录，核对 `release-info.json` 的 `sourceCommit` 和 APK 摘要。
-3. 将 `v0.1.20` 标签指向这个提交，推送标签后创建正式 Release。只上传上述三个发布文件，不上传 debug APK、密钥、本地配置或手机截图。
+3. 将 `v0.1.21` 标签指向这个提交，推送标签后创建正式 Release。只上传上述三个发布文件，不上传 debug APK、密钥、本地配置或手机截图。
 4. 下载已发布 APK，复核其 SHA-256 与本地一致，并检查 GitHub `releases/latest` 已指向新版本。
 5. 在已授权的测试设备覆盖安装，核对版本、签名和数据保留；不要为通过安装而卸载原应用。
 

@@ -3,7 +3,7 @@
 本项目所有值得记录的变更。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本。安装包见 [Releases](https://github.com/KYRIE66nb/mobile-agent/releases)。
 
-## [Unreleased]
+## [0.1.21] - 2026-10-19
 
 - **替身计时漏报修复**：交错遮挡时，一格读数过期不再丢弃后续格的有效采样；恢复可读后继续双帧确认。保留原有记忆时限、异常豆形过滤和防误报规则，补充双方漏计及过期边界回归。
 

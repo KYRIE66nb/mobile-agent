@@ -277,7 +277,7 @@ Say "read my schedule at 8 every morning" to create one; battery policies may de
 A purely **on-device** inference timer for the Substitution-jutsu cooldown in arena duels: no chat turn, no model call, no network — grant screen capture once, enter a match, and a countdown capsule floats above the game when either side's chakra dots drop:
 
 - **Root-free capture**: MediaProjection + a `mediaProjection`-typed foreground service reads the main display; ImageReader keeps only the newest frame (slow devices drop, never queue);
-- **Honest inference**: each side's dot slots are grid-sampled into HSV classification; a count is confirmed only after 3 consecutive frames agree, and only a stable `n→n−1` drop becomes a *suspected* substitution that starts a monotonic-clock cooldown — active skill costs, multi-dot jumps, flicker, and occlusions never masquerade as substitutes;
+- **Honest inference**: each side's dot slots are sampled and classified by RGB color ranges. By default, two agreeing readable observations confirm a count, and a stable `n→n−1` drop starts a monotonic-clock cooldown marked as a *suspected* substitution. Cooldown, cascade and rebound rules filter some interference; single-dot skill costs, effects and occlusions can still cause false positives or missed events;
 - **Explicit auto-start semantics**: opening the app idempotently walks grant → standby → monitoring; denial never re-prompts in a loop; pause-this-session and permanent-off are separate states; leaving the game hides the timer;
 - **Calibration-driven**: the settings page frames both dot rows on a real in-memory game frame; coordinates, cooldown, and thresholds are persisted and adjustable;
 - **Hard boundaries**: no input injection, no process memory reads, no detection bypass — it observes pixels and shows an estimated cooldown only (details: `docs/substitution-timer.md`).
@@ -310,7 +310,7 @@ Stack: Kotlin 2.0 + Jetpack Compose (Material3) + Room + DataStore + Coil + libs
 
 Grab the APK from [Releases](https://github.com/KYRIE66nb/mobile-agent/releases/latest), or update in-app via **Settings → About → Check for updates**.
 
-The current stable release is **v0.1.20** (versionCode 20), including the Android Use desktop 0.2.0 fixes verified on a real device. [Download the release APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.20/app-release.apk). The release also includes `SHA256SUMS` and `release-info.json` for the artifact hash, signing certificate and source revision. The app requires Android 7.0+; the desktop bridge requires Android 11+.
+The current stable release is **v0.1.21** (versionCode 21), with the Android Use desktop bridge still at 0.2.0. It fixes substitution-timer false negatives caused by interleaved occlusions. [Download the release APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.21/app-release.apk). The release also includes `SHA256SUMS` and `release-info.json` for the artifact hash, signing certificate and source revision. The app requires Android 7.0+; the desktop bridge requires Android 11+.
 
 ### Build from source
 

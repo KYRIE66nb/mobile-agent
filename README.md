@@ -276,7 +276,7 @@ python3 desktop/server/android_use.py   # 作为 MCP stdio 服务注册进客户
 决斗场「替身术」冷却的**纯本地**推断计时：不开聊天、不调用模型、不联网——打开 App 授权录屏后进入游戏自动识别，双方豆槽变化即出倒计时悬浮窗：
 
 - **无需 Root**：MediaProjection + `mediaProjection` 前台服务采集主屏，ImageReader 只留最新帧（慢设备丢帧不排队）；
-- **间接推断，如实标注**：对左右豆槽 ROI 网格采样做 HSV 分类，连续 3 帧确认计数，仅稳定 `n→n−1` 判为疑似替身启动单调钟倒计时；主动扣豆、多豆跳变、爆闪遮挡不误报，候选一律带"疑似"标记；
+- **间接推断，如实标注**：对左右豆槽 ROI 逐格采样，按 RGB 颜色范围分类；默认两次一致的可读观察确认计数，稳定 `n→n−1` 作为疑似替身启动单调钟倒计时。冷却、连扣与回弹规则过滤部分干扰；主动单豆消耗、特效和遮挡仍可能误报或漏报，计时带"疑似"标记；
 - **自动启动语义清晰**：打开 App 幂等进入授权→待机→识别流程，拒绝不循环弹窗；暂停本次与永久关闭分开，离开游戏自动隐藏；
 - **校准驱动**：设置页"豆槽校准"用游戏帧框选双方豆位（仅内存帧不落盘），坐标/冷却/阈值全部可持久化调整；
 - **安全边界**：不注入输入、不读游戏内存、不绕过检测——只观察像素并显示推测倒计时，是否封号由游戏规则决定（文档页见 `docs/substitution-timer.md`）。
@@ -309,7 +309,7 @@ python3 desktop/server/android_use.py   # 作为 MCP stdio 服务注册进客户
 
 从 [Releases](https://github.com/KYRIE66nb/mobile-agent/releases/latest) 下载 APK，或在 App 内 **设置 → 关于 → 检查更新** 直接升级。
 
-当前正式版 **v0.1.20**（versionCode 20），包含 Android Use 桌面端 0.2.0 的真机修复。[下载正式 APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.20/app-release.apk)；同一发布页提供 `SHA256SUMS` 和 `release-info.json`，可核对文件摘要、签名指纹及源码版本。Android App 要求 Android 7.0+，电脑控制桥要求 Android 11+。
+当前正式版 **v0.1.21**（versionCode 21），Android Use 桌面端仍为 0.2.0，并修复交错遮挡导致的替身漏报。[下载正式 APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.21/app-release.apk)；同一发布页提供 `SHA256SUMS` 和 `release-info.json`，可核对文件摘要、签名指纹及源码版本。Android App 要求 Android 7.0+，电脑控制桥要求 Android 11+。
 
 ### 自行构建
 
