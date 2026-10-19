@@ -41,7 +41,7 @@ python3 scripts/package-release.py \
 | `SHA256SUMS` | APK 的 SHA-256 摘要，格式兼容 `sha256sum -c` / `shasum -a 256 -c` |
 | `release-info.json` | 包名、版本、SDK 范围、签名证书指纹、文件摘要及源码提交 |
 
-打包时应使用干净且经过验证的源码。`sourceCommit` 来自显式 `--revision` 参数，不是从 APK 反推的源码证明。PR squash 合并后，若源码树与已验证构建一致，使用合并提交重新生成元数据，避免将候选分支或旧基线记为发布来源。
+打包时应使用干净且经过验证的源码。`sourceCommit` 来自显式 `--revision` 参数，不是从 APK 反推的源码证明。PR squash 合并后，若源码树与已验证构建一致，使用合并提交重新生成元数据，避免将候选分支或旧基线记为发布来源。若 APK 含 AGP 的 `META-INF/version-control-info.textproto`，还应在最终提交重新生成版本控制信息并构建，核对 APK 内部 revision 与发布来源一致。
 
 ## 发布到 GitHub
 
