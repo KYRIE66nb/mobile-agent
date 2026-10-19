@@ -309,7 +309,7 @@ python3 desktop/server/android_use.py   # 作为 MCP stdio 服务注册进客户
 
 从 [Releases](https://github.com/KYRIE66nb/mobile-agent/releases/latest) 下载 APK，或在 App 内 **设置 → 关于 → 检查更新** 直接升级。
 
-当前正式版 **v0.1.20**（versionCode 20），包含 Android Use 桌面端 0.2.0 的真机修复。[下载正式 APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.20/app-release.apk)；同一发布页提供 `SHA256SUMS` 和 `release-info.json`，可核对文件摘要、签名指纹及源码版本。Android App 要求 Android 7.0+，电脑控制桥要求 Android 11+。
+当前正式版 **v0.1.21**（versionCode 21），Android Use 桌面端仍为 0.2.0，并修复交错遮挡导致的替身漏报。[下载正式 APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.21/app-release.apk)；同一发布页提供 `SHA256SUMS` 和 `release-info.json`，可核对文件摘要、签名指纹及源码版本。Android App 要求 Android 7.0+，电脑控制桥要求 Android 11+。
 
 ### 自行构建
 

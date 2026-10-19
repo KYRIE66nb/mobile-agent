@@ -310,7 +310,7 @@ Stack: Kotlin 2.0 + Jetpack Compose (Material3) + Room + DataStore + Coil + libs
 
 Grab the APK from [Releases](https://github.com/KYRIE66nb/mobile-agent/releases/latest), or update in-app via **Settings → About → Check for updates**.
 
-The current stable release is **v0.1.20** (versionCode 20), including the Android Use desktop 0.2.0 fixes verified on a real device. [Download the release APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.20/app-release.apk). The release also includes `SHA256SUMS` and `release-info.json` for the artifact hash, signing certificate and source revision. The app requires Android 7.0+; the desktop bridge requires Android 11+.
+The current stable release is **v0.1.21** (versionCode 21), with the Android Use desktop bridge still at 0.2.0. It fixes substitution-timer false negatives caused by interleaved occlusions. [Download the release APK](https://github.com/KYRIE66nb/mobile-agent/releases/download/v0.1.21/app-release.apk). The release also includes `SHA256SUMS` and `release-info.json` for the artifact hash, signing certificate and source revision. The app requires Android 7.0+; the desktop bridge requires Android 11+.
 
 ### Build from source
 

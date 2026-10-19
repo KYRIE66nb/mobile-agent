@@ -54,6 +54,20 @@
 ## 参考与许可
 
 - 原理参考 K0NGCH4NG/Naruto_Mobile_Game_Tool 与 iam0range/TOOLS_HUOYING 的"豆数变化→替身候选"思路，及 frayy3344 实现的"冷却剩余 ≤1s 才受理新掉豆"冷却先验与"掉豆序列第一帧"锚点口径；前者 LICENSE 限制商用与二次发布——**未复制其代码、坐标表、图片或任何素材**，本实现独立编写。
+- 2026-10-19 补充研究：[naruto-substitute-timer](https://github.com/fangxiaobaiqaq1/naruto-substitute-timer/tree/main2) 的 [RGB 引擎](https://github.com/fangxiaobaiqaq1/naruto-substitute-timer/blob/main2/internal/engine/rgb/rgb.go) 与 [豆槽检测](https://github.com/fangxiaobaiqaq1/naruto-substitute-timer/blob/main2/internal/detect/beads.go) 提供有限偏移重采样、豆主体与槽位间隙对比等参考。其原创代码为 MIT，素材/模型另行授权；本轮未复制代码或资产，相关方法仍待本项目失败帧评估。
+- [OpenCV 模板匹配](https://docs.opencv.org/4.13.0/de/da9/tutorial_template_matching.html) 可作为 HUD 锚点定位的候选方案；本项目目前未引入 OpenCV，采用它会新增 Android native 依赖和包体成本。HSV 分离颜色分量也不能自动消除闪光、遮挡和相同扣豆动作的语义歧义。
+
+本次查看的同类实现仍主要根据豆数下降推测替身，没有找到可单凭掉豆唯一确认敌方替身的证据。无明确许可证或许可证限制二次发布的源码只作思路参考，不作为可直接复制的依赖。
+
+## 2026-10-19：交错遮挡漏计修正（v0.1.21）
+
+发现并修复一处双方共用的逐格记忆缺陷：某格为 UNKNOWN 且记忆过期时，`BeadRowTracker` 提前结束整行处理，丢掉后续仍清晰可见格子的新读数；下一帧遮挡换到别处时，这些本可保留的证据已经缺失，导致读数持续不可用。
+
+现改为继续保存本帧所有已知格，过期格仍输出 UNKNOWN。整行必须满足原有有效期与连续豆形检查才进入计数确认，不延长旧证据寿命，也不把遮挡本身当作掉豆。原有涨豆、连扣、冷却和转场过滤参数均未调整。
+
+回归序列：0/100ms 建立我方 `LLLL`、敌方 `EELL` 基线；501ms 分别读到 `ULLE`、`UEEL`；600/700ms 分别读到 `LLLU`、`EEUL`。旧实现丢掉 501ms 后面的有效格，无法读出 3/1；修复后双方均在两次可读确认后起算。这里 L/E/U 分别表示亮、灭、未知；这是合成遮挡回归，不是新对局录像。
+
+验证：新增 4 项回归，旧代码中 3 项明确失败，修复后全部通过；`:agent-core:test` 共 188 项通过，App 豆槽采样 6 项通过，App debug Kotlin 编译通过。其中替身核心 73 项，加采样共 79 项。v0.1.21 正式 release 构建（含 lint vital）、包版本、非调试属性、延续旧版的签名与模型默认配置为空均已校验。本轮 ADB 无连接设备，未完成新的整局真机漏报率评测；修复自 v0.1.21 开始分发，v0.1.20 不包含此修复。
 
 ## 测试记录（合成样本 + 真机录像）
 
