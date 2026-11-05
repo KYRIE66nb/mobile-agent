@@ -79,16 +79,25 @@ data class RgbBox(
 data class DetectionTuning(
     /** 点亮豆·青蓝盒（未满状态）。 */
     val litCyanBox: RgbBox = RgbBox(0, 120, 170, 225, 255, 255),
-    /** 点亮豆·金色盒（四颗全亮时整排变金）。 */
-    val litGoldBox: RgbBox = RgbBox(179, 19, 1, 255, 255, 206),
+    /**
+     * 点亮豆·金色盒（四颗全亮时整排变金）。G 下限与 B 上限刻意收紧：
+     * 红橙血条、受击火花（G 低）和肤色（B 高）不得算亮豆。
+     */
+    val litGoldBox: RgbBox = RgbBox(180, 140, 0, 255, 255, 110),
+    /** 金豆偏黄：G−B 至少该值（排除偏灰/偏白的高光）。 */
+    val goldMinGMinusB: Int = 80,
+    /** 金豆偏黄：R−G 至多该值（爆炸/血条偏红，R 远大于 G）。 */
+    val goldMaxRMinusG: Int = 85,
     /** 熄灭豆槽颜色盒（深藏青）。 */
     val dimBox: RgbBox = RgbBox(0, 0, 0, 90, 100, 150),
     /** 近黑下限：max(r,g,b) 不超过该值的像素既不算亮也不算灭（黑屏转场防"假全灭"）。 */
     val blackFloor: Int = 10,
-    /** 格内命中点亮盒的像素占比 ≥ 该值且占优 → LIT。 */
-    val litPixelMinRatio: Float = 0.12f,
-    /** 格内命中熄灭盒的像素占比 ≥ 该值且占优 → EMPTY。 */
+    /** 菱形核心内命中点亮盒的像素占比 ≥ 该值且领先暗占比 [classifyMargin] → LIT。 */
+    val litPixelMinRatio: Float = 0.25f,
+    /** 菱形核心内命中熄灭盒的像素占比 ≥ 该值且领先亮占比 [classifyMargin] → EMPTY。 */
     val dimPixelMinRatio: Float = 0.40f,
+    /** 亮/暗占比的最小领先差：胶着帧归 UNKNOWN 丢帧，防止边界豆反复横跳。 */
+    val classifyMargin: Float = 0.15f,
     /** 每格采样网格（grid×grid 像素）。 */
     val sampleGrid: Int = 7,
     /** 格子内缩比例：只采样中心区域，避开豆间分隔与 HUD 边缘。 */
@@ -122,33 +131,58 @@ data class DetectionTuning(
 class DotClassifier(private val tuning: DetectionTuning = DetectionTuning()) {
     data class Result(val state: DotState, val confidence: Float, val litRatio: Float, val dimRatio: Float)
 
+    /**
+     * argb 为 n×n 网格（行优先）时只统计内接菱形核心的采样点：豆本体是菱形，
+     * 四角属于豆间隙/背景，混进来会稀释亮豆信号或把背景色当票。非方阵输入全量统计。
+     */
     fun classify(argb: IntArray, side: TimerSide): Result {
         if (argb.isEmpty()) return Result(DotState.UNKNOWN, 0f, 0f, 0f)
-        // 点亮豆双色：未满=青蓝、满四=金色——任一盒命中都算点亮
+        val n = gridSide(argb.size)
         var lit = 0
         var dim = 0
-        for (px in argb) {
-            if (tuning.litCyanBox.contains(px) || tuning.litGoldBox.contains(px)) lit++
+        var total = 0
+        for (i in argb.indices) {
+            if (n > 0 && !inDiamond(i % n, i / n, n)) continue
+            total++
+            val px = argb[i]
+            // 点亮豆双色：未满=青蓝、满四=金色——任一盒命中都算点亮
+            if (tuning.litCyanBox.contains(px) || isGold(px)) lit++
             else if (nearBlack(px, tuning.blackFloor)) continue      // 黑屏转场像素不投票
             else if (tuning.dimBox.contains(px)) dim++
         }
-        val n = argb.size.toFloat()
-        val litRatio = lit / n
-        val dimRatio = dim / n
-        // 亮/暗比优势：谁先过线听谁会让边界豆反复横跳（实测 lit0.12/dim0.47
-        // 被判 LIT → 豆数 3↔2 狂抖）。必须占比占优才定性，胶着归 UNKNOWN 丢帧。
+        val litRatio = lit / total.toFloat()
+        val dimRatio = dim / total.toFloat()
+        // 亮/暗必须占比过线且领先对方 classifyMargin：谁先过线听谁会让边界豆反复横跳
+        // （实测 lit0.12/dim0.47 被判 LIT → 豆数 3↔2 狂抖），胶着归 UNKNOWN 丢帧。
         return when {
-            litRatio >= tuning.litPixelMinRatio && litRatio > dimRatio ->
+            litRatio >= tuning.litPixelMinRatio && litRatio - dimRatio >= tuning.classifyMargin ->
                 Result(DotState.LIT, litRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
-            dimRatio >= tuning.dimPixelMinRatio && dimRatio > litRatio ->
+            dimRatio >= tuning.dimPixelMinRatio && dimRatio - litRatio >= tuning.classifyMargin ->
                 Result(DotState.EMPTY, dimRatio.coerceIn(0.05f, 1f), litRatio, dimRatio)
             else -> Result(DotState.UNKNOWN, 0f, litRatio, dimRatio)
         }
     }
 
+    private fun isGold(argb: Int): Boolean {
+        if (!tuning.litGoldBox.contains(argb)) return false
+        val r = argb shr 16 and 0xFF; val g = argb shr 8 and 0xFF; val b = argb and 0xFF
+        return g - b >= tuning.goldMinGMinusB && r - g <= tuning.goldMaxRMinusG
+    }
+
     private fun nearBlack(argb: Int, floor: Int): Boolean {
         val r = argb shr 16 and 0xFF; val g = argb shr 8 and 0xFF; val b = argb and 0xFF
         return maxOf(r, g, b) <= floor
+    }
+
+    /** size 是 ≥3 的完全平方数 → 边长；否则 0（不做菱形裁剪）。 */
+    private fun gridSide(size: Int): Int {
+        val n = Math.round(sqrt(size.toDouble())).toInt()
+        return if (n >= 3 && n * n == size) n else 0
+    }
+
+    private fun inDiamond(x: Int, y: Int, n: Int): Boolean {
+        val c = (n - 1) / 2f
+        return abs(x - c) + abs(y - c) <= n / 2f
     }
 }
 
@@ -280,7 +314,7 @@ data class TimerConfig(
     val showSelfTimer: Boolean = true,
     /** 决斗场替身术冷却。开源实现常用经验值 13.5s；如有偏差可在设置页调整。 */
     val cooldownMs: Long = 15_000,
-    val frameIntervalMs: Long = 100,
+    val frameIntervalMs: Long = 66,
     val layout: TimerLayout = TimerLayout(),
     val tuning: DetectionTuning = DetectionTuning(),
     /** 校准完成后才允许进入识别；默认布局只是校准起点。 */

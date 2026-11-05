@@ -19,6 +19,9 @@ import xyz.chouxuewei.mobile_agent.core.substitution.RgbBox
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerConfig
 import xyz.chouxuewei.mobile_agent.core.substitution.TimerLayout
 
+/** 采样间隔下限：低于此值收益递减（投影帧本身约 60fps），徒增 CPU 与单帧闪烁误确认。 */
+private const val MIN_FRAME_INTERVAL_MS = 40L
+
 private val Context.substitutionDataStore by preferencesDataStore("substitution_timer")
 
 /**
@@ -56,7 +59,7 @@ class SubstitutionTimerRepository(context: Context) {
             gamePackage = p[Keys.GAME_PACKAGE] ?: "",
             showSelfTimer = p[Keys.SHOW_SELF] ?: true,
             cooldownMs = p[Keys.COOLDOWN_MS] ?: 15_000,
-            frameIntervalMs = (p[Keys.FRAME_INTERVAL_MS] ?: 100).coerceIn(80, 500),
+            frameIntervalMs = (p[Keys.FRAME_INTERVAL_MS] ?: 66).coerceIn(MIN_FRAME_INTERVAL_MS, 500),
             calibrated = p[Keys.CALIBRATED] ?: false,
             layout = decodeLayout(p[Keys.LAYOUT]),
             swapSides = p[Keys.SWAP_SIDES] ?: false,
@@ -84,7 +87,7 @@ class SubstitutionTimerRepository(context: Context) {
         edit { it[Keys.COOLDOWN_MS] = value.coerceIn(1_000, 120_000) }
 
     suspend fun setFrameIntervalMs(value: Long) =
-        edit { it[Keys.FRAME_INTERVAL_MS] = value.coerceIn(80, 500) }
+        edit { it[Keys.FRAME_INTERVAL_MS] = value.coerceIn(MIN_FRAME_INTERVAL_MS, 500) }
 
     suspend fun saveLayout(layout: TimerLayout) =
         edit {
