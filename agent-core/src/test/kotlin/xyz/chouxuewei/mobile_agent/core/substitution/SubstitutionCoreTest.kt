@@ -12,6 +12,12 @@ private fun noisy(): IntArray = IntArray(16) { i ->
     if (i % 2 == 0) (0xFF shl 24) or 0x963C50 else (0xFF shl 24) or 0x3C963C
 }
 
+// n×n 网格（行优先）中与分类器一致的内接菱形核心下标：|dx|+|dy| ≤ n/2。
+private fun diamondIndices(n: Int): List<Int> {
+    val c = (n - 1) / 2f
+    return (0 until n * n).filter { kotlin.math.abs(it % n - c) + kotlin.math.abs(it / n - c) <= n / 2f }
+}
+
 class SubstitutionCoreTest {
 
     // ---- 逐像素颜色盒分类器 ----
@@ -67,6 +73,37 @@ class SubstitutionCoreTest {
         val pixels = IntArray(49) { i -> if (i < 6) 0xFFF0AA32.toInt() else 0xFF14141A.toInt() }
         val r = DotClassifier().classify(pixels, TimerSide.SELF)
         assertEquals(DotState.EMPTY, r.state)
+    }
+
+    @Test
+    fun `red orange effects and skin tones never count as lit`() {
+        // 受击火花/红橙血条（G 低）与肤色（B 高）曾落进过宽的金色盒被当亮豆
+        for ((r, g, b) in listOf(Triple(255, 30, 10), Triple(255, 120, 30), Triple(230, 180, 150), Triple(255, 200, 190))) {
+            val res = DotClassifier().classify(solid(r, g, b), TimerSide.SELF)
+            assertEquals("($r,$g,$b)", DotState.UNKNOWN, res.state)
+            assertEquals("($r,$g,$b)", 0f, res.litRatio, 0.0001f)
+        }
+    }
+
+    @Test
+    fun `lit and dim ratios without enough margin classified UNKNOWN`() {
+        // 49 点网格中菱形核心 25 点：10 亮 / 9 暗 → 亮 0.40、暗 0.36，差 0.04 < 0.15 → 胶着丢帧
+        val core = diamondIndices(7)
+        val pixels = IntArray(49) { 0xFF963C50.toInt() } // 填充色落在亮/暗盒之外
+        core.take(10).forEach { pixels[it] = 0xFFF0AA32.toInt() }
+        core.drop(10).take(9).forEach { pixels[it] = 0xFF14141A.toInt() }
+        assertEquals(DotState.UNKNOWN, DotClassifier().classify(pixels, TimerSide.SELF).state)
+    }
+
+    @Test
+    fun `grid corners outside the diamond core do not vote`() {
+        // 亮色只在四角（豆间隙/背景）、核心全暗 → EMPTY，不能被角上的亮色拉成 LIT
+        val core = diamondIndices(7).toSet()
+        val cornerLit = IntArray(49) { if (it in core) 0xFF14141A.toInt() else 0xFFF0AA32.toInt() }
+        assertEquals(DotState.EMPTY, DotClassifier().classify(cornerLit, TimerSide.SELF).state)
+        // 反过来：核心亮、四角暗 → LIT
+        val coreLit = IntArray(49) { if (it in core) 0xFFF0AA32.toInt() else 0xFF14141A.toInt() }
+        assertEquals(DotState.LIT, DotClassifier().classify(coreLit, TimerSide.SELF).state)
     }
 
     @Test
