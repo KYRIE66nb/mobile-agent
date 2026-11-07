@@ -42,12 +42,14 @@ class OpenAiChatGateway(
         val payload = buildJsonObject {
             put("model", model);
             put("stream", true);
+            // 智谱等严格后端不接受 max_tokens 与 max_completion_tokens 同时出现（1215），
+            // 其官方参数名为 max_tokens，故只发这一个。
             put("max_tokens", request.maxOutputTokens)
-            put("max_completion_tokens", request.maxOutputTokens)
             // OpenAI 兼容流式接口默认可能不返回用量；显式请求后，vLLM 会在 [DONE] 前追加 usage 尾包。
             putJsonObject("stream_options") { put("include_usage", true) }
-            // 始终显式传 tools，避免 LocalServer 将“字段缺失”解释为启用服务器 MCP。
-            putJsonArray("tools") {
+            // 仅在确有工具时下发 tools。空数组会被智谱/阿里云等严格后端以 minItems=1 拒绝（400）。
+            // 本地 LocalServer 若依赖“缺字段即启用 MCP”，需由后端改为显式开关，此处不再发空数组。
+            if (request.tools.isNotEmpty()) putJsonArray("tools") {
                 request.tools.forEach { tool ->
                     add(buildJsonObject {
                         put("type", "function")
@@ -62,10 +64,13 @@ class OpenAiChatGateway(
                     })
                 }
             }
-            request.reasoningEffort?.takeIf(String::isNotBlank)?.let { effort ->
-                config.reasoningEffortField.takeIf(String::isNotBlank)
-                    ?.let { field -> put(field, effort) }
-            }
+            // “none/off”与空白都视为“不指定思考强度”，不要下发非法取值（智谱仅接受 low/high/max）。
+            request.reasoningEffort
+                ?.takeUnless { it.isBlank() || it.equals("none", true) || it.equals("off", true) }
+                ?.let { effort ->
+                    config.reasoningEffortField.takeIf(String::isNotBlank)
+                        ?.let { field -> put(field, effort) }
+                }
             putJsonArray("messages") {
                 request.messages.forEach { turn ->
                     add(buildJsonObject {
@@ -207,10 +212,20 @@ class OpenAiChatGateway(
                                         )
                                     }
                                     // 只扫描错误体里的溢出标识字段做分类，正文内容不回显（可能含密钥或隐私）。
+                                    // 但保留服务端业务错误码（error.code）随消息上抛并按级别记录，便于定位根因。
+                                    val errorBody = it.body?.string()?.take(16_384)
+                                    val serverCode = runCatching {
+                                        Json.parseToJsonElement(errorBody ?: "{}")
+                                            .jsonObject["error"]
+                                            ?.jsonObject?.get("code")
+                                            ?.jsonPrimitive?.contentOrNull
+                                    }.getOrNull()
+                                    AgentLog.e("Model") { "http_error code=${it.code} server=${serverCode ?: "n/a"}" }
                                     val overflow = runCatching {
-                                        detectContextOverflow(it.code, it.body?.string()?.take(16_384))
+                                        detectContextOverflow(it.code, errorBody)
                                     }.getOrDefault(it.code == 413)
-                                    send(ModelEvent.Error("$message (HTTP ${it.code})", contextOverflow = overflow)); return@use
+                                    val serverTag = serverCode?.let { " · $it" }.orEmpty()
+                                    send(ModelEvent.Error("$message (HTTP ${it.code}$serverTag)", contextOverflow = overflow)); return@use
                                 }
                                 val source = it.body?.source() ?: throw IOException("empty body")
                                 val data = StringBuilder()

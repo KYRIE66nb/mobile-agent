@@ -20,8 +20,8 @@ fun userFacingMessage(message: String?, fallback: String = localizedText("操作
             localizedText("请求过于频繁或账户额度不足，请稍后重试或检查账户额度", "Too many requests or insufficient account quota. Try again later or check your quota.")
         Regex("(?i)HTTP\\s*5\\d\\d").containsMatchIn(value) ->
             localizedText("模型服务暂时不可用，请稍后重试", "The model service is temporarily unavailable. Please try again later.")
-        Regex("(?i)HTTP\\s*4\\d\\d").containsMatchIn(value) ->
-            localizedText("模型服务拒绝了本次请求，请检查模型与参数设置", "The model service rejected this request. Check the model and parameter settings.")
+        // 注意：HTTP 4xx 不再统一改写成“模型服务拒绝了本次请求”，否则会吞掉状态码与服务端业务错误码，
+        // 让“模型设置”类问题无法定位。4xx 消息由网关自身生成（已含 HTTP 状态码与 error.code），原样透传即可。
         value.contains("Unable to resolve host", ignoreCase = true) ||
             value.contains("UnknownHost", ignoreCase = true) || value.contains("DNS", ignoreCase = true) ->
             localizedText("无法连接服务，请检查网络和服务地址", "Could not connect to the service. Check your network and service URL.")
