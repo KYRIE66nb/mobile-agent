@@ -66,7 +66,9 @@ data class ResolvedModelConfiguration(
     val policy: ContextPolicy,
 )
 
-val DEFAULT_REASONING_EFFORTS = listOf("low", "medium", "high", "xhigh", "max")
+// 默认下拉选项限定为智谱 GLM 等严格后端支持的 low/high/max，避免手动选到 medium/xhigh 触发 400。
+// 具体模型版本仍可用 ChatSettings 里的预设（如 GLM-5.2 的 minimal/medium/xhigh）扩展。
+val DEFAULT_REASONING_EFFORTS = listOf("low", "high", "max")
 /** 内置“关闭”选项对应 OpenAI 兼容协议的 none；null 仍表示不发送该参数。 */
 const val REASONING_EFFORT_OFF = "none"
 const val MAX_MODEL_PROFILES = 20
