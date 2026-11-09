@@ -21,6 +21,9 @@ import okio.ByteString.Companion.toByteString
 import xyz.chouxuewei.mobile_agent.core.*
 
 /** 与设备动作协议完全独立的文本 SSE 适配器。取消 Flow 会同时关闭 Call 和响应体。 */
+private fun isSafeServerErrorCode(value: String): Boolean =
+    value.length <= 64 && Regex("[A-Za-z0-9][A-Za-z0-9._:-]*").matches(value)
+
 class OpenAiChatGateway(
     private val config: ModelConfig,
     private val client: OkHttpClient,
@@ -64,9 +67,13 @@ class OpenAiChatGateway(
                     })
                 }
             }
-            // “none/off”与空白都视为“不指定思考强度”，不要下发非法取值（智谱仅接受 low/high/max）。
+            // “off”在通用 OpenAI 兼容协议中对应 none；但 GLM-5.3 系列不支持关闭思考，
+            // 发送 none 会触发 1214/400，只能省略参数并由默认 low/high/max 语义接管。
+            val alwaysReasoningModel = model.contains("glm-5.3", ignoreCase = true)
             request.reasoningEffort
-                ?.takeUnless { it.isBlank() || it.equals("none", true) || it.equals("off", true) }
+                ?.takeUnless { effort ->
+                    effort.isBlank() || (effort.equals("none", true) || effort.equals("off", true)) && alwaysReasoningModel
+                }
                 ?.let { effort ->
                     config.reasoningEffortField.takeIf(String::isNotBlank)
                         ?.let { field -> put(field, effort) }
@@ -224,7 +231,8 @@ class OpenAiChatGateway(
                                     val overflow = runCatching {
                                         detectContextOverflow(it.code, errorBody)
                                     }.getOrDefault(it.code == 413)
-                                    val serverTag = serverCode?.let { " · $it" }.orEmpty()
+                                    val safeServerCode = serverCode?.takeIf(::isSafeServerErrorCode)
+                                    val serverTag = safeServerCode?.let { " · $it" }.orEmpty()
                                     send(ModelEvent.Error("$message (HTTP ${it.code}$serverTag)", contextOverflow = overflow)); return@use
                                 }
                                 val source = it.body?.source() ?: throw IOException("empty body")

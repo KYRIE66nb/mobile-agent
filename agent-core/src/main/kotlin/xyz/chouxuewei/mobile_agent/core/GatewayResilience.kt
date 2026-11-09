@@ -17,7 +17,7 @@ private fun ModelEvent.isContent() =
 
 private class AttemptAborted(override val message: String) : Exception(message)
 
-private val HTTP_CODE = Regex("\\(HTTP (\\d{3})\\)")
+private val HTTP_CODE = Regex("\\(HTTP\\s*(\\d{3})(?:\\s*·\\s*[^)]*)?\\)")
 private val INTERRUPTED_MARKERS = listOf("中断", "interrupted", "timeout", "timed out")
 
 /**

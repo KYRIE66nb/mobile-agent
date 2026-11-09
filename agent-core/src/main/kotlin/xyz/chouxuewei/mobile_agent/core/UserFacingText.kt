@@ -4,24 +4,56 @@ package xyz.chouxuewei.mobile_agent.core
  * 把可能来自网络、模型或工具实现的异常转换为用户能理解的说明。
  * 原始异常仍可由调用方写入诊断日志，聊天界面只展示影响和可执行的下一步。
  */
-fun userFacingMessage(message: String?, fallback: String = localizedText("操作未完成，请重试", "The operation was not completed. Please try again.")): String {
+private val STRUCTURED_HTTP_DIAGNOSTIC = Regex("""\(HTTP\s*(\d{3})(?:\s*·\s*([^)]*))?\)""")
+private val LOOSE_HTTP_STATUS = Regex("""HTTP\s*(\d{3})""")
+private val SAFE_SERVER_ERROR_CODE = Regex("""[A-Za-z0-9][A-Za-z0-9._:-]*""")
+
+private fun safeHttpDiagnostic(value: String): Pair<Int, String>? {
+    val structured = STRUCTURED_HTTP_DIAGNOSTIC.find(value) ?: return null
+    val status = structured.groupValues[1].toIntOrNull() ?: return null
+    val serverCode = structured.groupValues[2].takeIf { it.isNotEmpty() }
+        ?.takeIf { it.length <= 64 && SAFE_SERVER_ERROR_CODE.matches(it) }
+    return status to "(HTTP $status${serverCode?.let { " · $it" }.orEmpty()})"
+}
+
+private fun statusOnlyDiagnostic(value: String): Pair<Int, String>? {
+    val status = LOOSE_HTTP_STATUS.find(value)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+    return status to "(HTTP $status)"
+}
+
+private fun httpDiagnostic(value: String): Pair<Int, String>? =
+    safeHttpDiagnostic(value) ?: statusOnlyDiagnostic(value)
+
+fun userFacingMessage(
+    message: String?,
+    fallback: String = localizedText("操作未完成，请重试", "The operation was not completed. Please try again."),
+): String {
     val value = message?.trim().orEmpty()
     if (value.isBlank()) return fallback
+    val diagnostic = httpDiagnostic(value)
+    val status = diagnostic?.first
+    fun explain(text: String) = diagnostic
+        ?.let { text + " " + it.second }
+        ?: text
     return when {
-        Regex("(?i)HTTP\\s*(401|403)").containsMatchIn(value) ->
+        status == 401 || status == 403 -> explain(
             localizedText("API 密钥无效或没有访问权限，请检查模型设置", "The API key is invalid or lacks access. Check Model settings.")
-        Regex("(?i)HTTP\\s*404").containsMatchIn(value) ->
+        )
+        status == 404 -> explain(
             localizedText("没有找到该服务或模型，请检查服务地址和模型 ID", "The service or model was not found. Check the service URL and model ID.")
-        Regex("(?i)HTTP\\s*408").containsMatchIn(value) || value.contains("超时") ->
+        )
+        status == 408 || (status == null && value.contains("超时")) -> explain(
             localizedText("请求超时，请稍后重试", "The request timed out. Please try again later.")
-        Regex("(?i)HTTP\\s*413").containsMatchIn(value) ->
+        )
+        status == 413 -> explain(
             localizedText("本次发送的内容过大，请减少附件或缩短输入后重试", "This message is too large. Remove attachments or shorten the input and try again.")
-        Regex("(?i)HTTP\\s*429").containsMatchIn(value) ->
+        )
+        status == 429 -> explain(
             localizedText("请求过于频繁或账户额度不足，请稍后重试或检查账户额度", "Too many requests or insufficient account quota. Try again later or check your quota.")
-        Regex("(?i)HTTP\\s*5\\d\\d").containsMatchIn(value) ->
+        )
+        status in 500..599 -> explain(
             localizedText("模型服务暂时不可用，请稍后重试", "The model service is temporarily unavailable. Please try again later.")
-        // 注意：HTTP 4xx 不再统一改写成“模型服务拒绝了本次请求”，否则会吞掉状态码与服务端业务错误码，
-        // 让“模型设置”类问题无法定位。4xx 消息由网关自身生成（已含 HTTP 状态码与 error.code），原样透传即可。
+        )
         value.contains("Unable to resolve host", ignoreCase = true) ||
             value.contains("UnknownHost", ignoreCase = true) || value.contains("DNS", ignoreCase = true) ->
             localizedText("无法连接服务，请检查网络和服务地址", "Could not connect to the service. Check your network and service URL.")
@@ -37,7 +69,7 @@ fun userFacingMessage(message: String?, fallback: String = localizedText("操作
             localizedText("无法读取已保存的 API 密钥，请在模型设置中重新填写", "The saved API key could not be read. Enter it again in Model settings.")
         value.contains("JSON", ignoreCase = true) || value.contains("choices[") ||
             value.contains("finish_reason", ignoreCase = true) || value.contains("reasoning_chars") ->
-            localizedText("模型响应格式不兼容，请检查服务配置后重试", "The model response format is incompatible. Check the service configuration and try again.")
+            localizedText("模型响应格式不兼容，请检查服务配置后重试", "The response format is incompatible. Check the service configuration and try again.")
         value.contains("URI", ignoreCase = true) || value.contains("artifact_id") ||
             value.contains("tool_call_id") || value.contains("observation_id") ||
             value.contains("session_id") || value.contains("Binder") || value.contains("Surface") ||
@@ -51,5 +83,7 @@ fun userFacingMessage(message: String?, fallback: String = localizedText("操作
     }
 }
 
-fun userFacingMessage(error: Throwable, fallback: String = localizedText("操作未完成，请重试", "The operation was not completed. Please try again.")): String =
-    userFacingMessage(error.message, fallback)
+fun userFacingMessage(
+    error: Throwable,
+    fallback: String = localizedText("操作未完成，请重试", "The operation was not completed. Please try again."),
+): String = userFacingMessage(error.message, fallback)
