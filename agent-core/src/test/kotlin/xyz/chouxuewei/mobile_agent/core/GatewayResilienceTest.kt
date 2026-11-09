@@ -39,6 +39,37 @@ class GatewayResilienceTest {
         assertFalse(events.any { it is ModelEvent.Error })
     }
 
+    @Test fun retryableHttpStatusesAreRecognizedWithAndWithoutBusinessCodes() {
+        listOf(408, 429, 500, 503, 599).forEach { status ->
+            listOf("(HTTP $status)", "(HTTP $status · server_busy)", "(HTTP $status · 1302)").forEach { diagnostic ->
+                assertTrue(diagnostic, isRetryableModelError("模型请求失败 $diagnostic"))
+            }
+        }
+    }
+
+    @Test fun otherHttpStatusesDoNotRetryEvenWhenMessageMentionsTimeout() {
+        listOf(200, 400, 401, 403, 404, 409, 413, 499, 600).forEach { status ->
+            listOf("(HTTP $status)", "(HTTP $status · permission_denied)").forEach { diagnostic ->
+                assertFalse(diagnostic, isRetryableModelError("timeout 中断 $diagnostic"))
+            }
+        }
+    }
+
+    @Test fun retryingGatewayRecoversFromTransientErrorWithBusinessCode() = runBlocking {
+        listOf("(HTTP 408 · request_timeout)", "(HTTP 429 · 1302)", "(HTTP 503 · server_busy)").forEach { diagnostic ->
+            var calls = 0
+            val upstream = ChatModelGateway { flow {
+                calls++
+                if (calls == 1) emit(ModelEvent.Error("模型请求失败 $diagnostic"))
+                else { emit(ModelEvent.TextDelta("恢复")); emit(ModelEvent.Completed("stop")) }
+            } }
+            val events = RetryingGateway(upstream, maxAttempts = 2, sleeper = {}).stream(request()).toList()
+            assertEquals(diagnostic, 2, calls)
+            assertEquals("恢复", events.filterIsInstance<ModelEvent.TextDelta>().joinToString("") { it.text })
+            assertFalse(diagnostic, events.any { it is ModelEvent.Error })
+        }
+    }
+
     @Test fun retryingGatewayDoesNotRetryPermanentError() = runBlocking {
         var calls = 0
         val upstream = ChatModelGateway { calls++; failing("API 密钥无效 (HTTP 401)").stream(it) }

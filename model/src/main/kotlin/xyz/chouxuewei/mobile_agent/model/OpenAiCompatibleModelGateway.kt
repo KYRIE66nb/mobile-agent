@@ -203,7 +203,9 @@ private class OpenAiApiClient(private val client: OkHttpClient) {
 
     private fun apiBase(value: String): String {
         val base = value.trim().trimEnd('/')
-        return if (base.endsWith("/v1")) base else "$base/v1"
+        // 与 OpenAiChatGateway 保持一致：地址已自带版本后缀（如智谱 /api/paas/v4）时原样保留，
+        // 否则补 OpenAI 默认 /v1。原先只识别 /v1 结尾，会把 /v4 这类地址错拼成 /v4/v1 导致 404。
+        return if (Regex("/v\\d+$").containsMatchIn(base)) base else "$base/v1"
     }
 
     private fun ModelRequest.userContent(): JsonElement = buildJsonArray {

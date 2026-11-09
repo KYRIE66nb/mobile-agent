@@ -36,7 +36,10 @@ class OpenAiChatGatewayTest {
             assertTrue(body.contains("什么颜色")); assertTrue(body.contains("assistant")); assertFalse(body.contains("observation"))
             assertTrue(json["stream"]!!.jsonPrimitive.boolean)
             assertTrue(json["stream_options"]!!.jsonObject["include_usage"]!!.jsonPrimitive.boolean)
-            assertTrue(json["tools"]!!.jsonArray.isEmpty())
+            // 无工具时不再下发 tools 字段（空数组会被严格后端以 minItems=1 拒绝）。
+            assertNull(json["tools"])
+            // max_completion_tokens 不再与 max_tokens 同时下发。
+            assertFalse(json.containsKey("max_completion_tokens"))
         }
     }
     @Test fun partialDisconnectRetainsDeltaAndReportsError() = runBlocking {
